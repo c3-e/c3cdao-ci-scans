@@ -1,0 +1,9 @@
+**/jsconfig.json
+**/gen/cache/**
+**/build/**
+**/dist/**
+**/vendor/**
+**/*.min.js
+**/ui/content/**
+**/c3standards/**
+**/c3pkg.lock.json

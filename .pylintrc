@@ -1,0 +1,28 @@
+[FORMAT]
+max-line-length=120
+
+[MESSAGES CONTROL]
+# See list of all messages here: https://pylint.readthedocs.io/en/v3.0.2/user_guide/messages/index.html
+disable=invalid-name,                 # Module name "SklearnScoringMetric" doesn't conform to snake_case naming style
+        import-outside-toplevel,      # Import outside toplevel (inspect)
+        import-error,                 # Python action runtimes have different libraries, hard to configure pylint for this
+        missing-function-docstring,   # Missing function or method docstring
+        missing-module-docstring,     # Missing module docstring
+        no-member,                    # Allow for Python object members that are created dynamically
+        attribute-defined-outside-init, # Pylint doesn't have context of the classes defined in libraries
+        fixme                         # Ignore TODO comments
+
+[VARIABLES]
+# The c3 namespace is resolved by the C3 platform. Since the namespace is not explicitly imported,
+# we want to prevent 'variable-undefined errors' when c3 types are being referenced in python code.
+additional-builtins=c3
+
+[DESIGN]
+# Argument names that match this expression will be ignored. Default to name with leading underscore.
+# For c3, also ignore cls and this which are default parameters for static and member methods respectively.
+ignored-argument-names=(cls|this|_.*)
+
+[MASTER]
+ignore-paths=
+    c3standards/scripts/c3standards-upgrader/c3standards-upgrader.py,
+    c3standards/scripts/semantic-version-manager/semantic-version-manager.py

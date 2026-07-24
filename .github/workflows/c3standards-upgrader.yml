@@ -1,0 +1,85 @@
+name: c3standards-upgrader
+run-name: c3standards Upgrader
+
+on:
+  workflow_dispatch:
+#   # [Configuration] Set the cron schedule to auto-update your repository with the latest from c3standards.
+#   #                 By default, the auto-update is performed at midnight every Sunday.
+#   schedule:
+#     # The cron expression is in UTC. 7:00 UTC corresponds to midnight PDT.
+#     - cron: '0 7 * * SUN'
+
+permissions:
+  contents: write
+  actions: write
+
+env:
+  # The source branch from the c3standards repository to merge from.
+  source_branch: 'support/v8.10'
+
+jobs:
+  c3standards-upgrader:
+    runs-on: ubuntu-latest
+
+    timeout-minutes: 5
+
+    steps:
+      - name: Validate GitHub Token Access
+        run: |
+          echo "Validating access to repositories and permissions..."
+
+          # Check access to current repository and validate push permissions
+          REPO_PERMS=$(curl -H "Authorization: token ${{ secrets.AUTOMATION_GITHUB_TOKEN }}" \
+            -s https://api.github.com/repos/${{ github.repository }})
+
+          # Check if we got a valid JSON response with permissions
+          if ! echo "$REPO_PERMS" | jq -e '.permissions' > /dev/null; then
+            echo "Error: Cannot access the current repository with the provided token."
+            exit 1
+          fi
+
+          # Check for push permission
+          if ! echo "$REPO_PERMS" | jq -e '.permissions.push == true' > /dev/null; then
+            echo "Error: Token does not have push permissions to the current repository."
+            exit 1
+          fi
+
+          # Check access to c3standards repository
+          C3_PERMS=$(curl -H "Authorization: token ${{ secrets.AUTOMATION_GITHUB_TOKEN }}" \
+            -s https://api.github.com/repos/c3-e/c3standards)
+
+          if ! echo "$C3_PERMS" | jq -e '.permissions' > /dev/null; then
+            echo "Error: Cannot access the c3standards repository with the provided token."
+            exit 1
+          fi
+
+          echo "Token validation successful."
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          path: main
+          token: ${{ secrets.AUTOMATION_GITHUB_TOKEN }}
+
+      - uses: actions/setup-python@v3
+        with:
+          python-version: '3.12'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Run the update workflow
+        run: |
+          npm config set "@c3-e:registry" https://npm.pkg.github.com
+          npm config set "//npm.pkg.github.com/:_authToken" "${{ secrets.AUTOMATION_GITHUB_TOKEN }}"
+          cd ${{ github.workspace }}/main
+          git config --global user.email "engx@c3.ai"
+          git config --global user.name "ENG-X Automation"
+          chmod +x c3standards.sh
+          pip install requests
+          TARGET_BRANCH=$(git branch --show-current)
+          ./c3standards.sh update-github ${{ env.source_branch }} $TARGET_BRANCH ${{ secrets.AUTOMATION_GITHUB_TOKEN }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.AUTOMATION_GITHUB_TOKEN }}
+          GITHUB_CONTEXT: ${{ toJson(github) }}

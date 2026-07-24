@@ -1,0 +1,7 @@
+---
+extends: existence
+message: 'There should be no spaces before the closing brace of @link.'
+level: error
+nonword: true
+tokens:
+  - '{@link [^}\r\n]+ +}'

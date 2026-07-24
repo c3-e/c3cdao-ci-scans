@@ -1,0 +1,12 @@
+---
+extends: existence
+level: warning
+message: "Do not start sentences with '%s'."
+scope: paragraph
+action:
+  name: remove
+tokens:
+  - ^And
+  - ^But
+  - ^Or
+  - ^So

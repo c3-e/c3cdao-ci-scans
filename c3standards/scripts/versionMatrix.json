@@ -1,0 +1,20 @@
+{
+  "baseFiles": [
+    "STANDARDS.md",
+    ".github/workflows/c3standards-ci.yml",
+    ".github/workflows/c3standards-upgrader.yml",
+    ".github/workflows/c3standards-pr-checks.yml",
+    ".github/workflows/c3standards-policy-p0p1.yml",
+    ".github/scripts/c3standards-pr-checks.js",
+    ".github/scripts/c3standards-policy-p0p1-jira.js",
+    "c3standards/",
+    ".pre-commit-config.yaml",
+    "c3standards.sh"
+  ],
+  "versionMatrix": {
+    "8.9": {
+      "include": [],
+      "exclude": []
+    }
+  }
+}

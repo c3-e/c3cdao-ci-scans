@@ -1,0 +1,9 @@
+---
+extends: existence
+message: "'%s' has no closing brace."
+level: error
+scope: raw
+nonword: true
+tokens:
+  - '{@link(?= [^}]+$)'
+  - '{@link(?= [^}]+{@link)'

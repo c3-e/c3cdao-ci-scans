@@ -1,0 +1,11 @@
+nvm_version: 0.38.0
+node_version: "20.18.0"
+miniconda:
+  version: "25.5.1-1"
+  python: "312"
+  base_url: "https://repo.anaconda.com/miniconda"
+  env_name: "c3apps"
+python_version: "3.12"
+vale_version: "3.7.0"
+apps_dir: "{{ ansible_env.HOME }}/.c3/standards/apps"
+miniconda_install_path: "{{ apps_dir }}/conda"

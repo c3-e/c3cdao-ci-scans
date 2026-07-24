@@ -1,0 +1,68 @@
+name: c3standards CI
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 'c3standards-feature/**'
+  pull_request:
+    branches:
+      - 'c3standards-feature/**'
+
+jobs:
+  build:
+    if: github.repository == 'c3-e/c3standards'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.AUTOMATION_GITHUB_TOKEN }}
+      - uses: actions/setup-python@v3
+        with:
+          python-version: '3.12'
+      - name: Check package-lock.json
+        run: |
+          if [ -f package-lock.json ]; then
+            echo "Error: package-lock.json found. Please remove it."
+            exit 1
+          fi
+      - name: Run the setup script
+        run: |
+          cd ${{ github.workspace }}/c3standards/setup
+          npm config set "@c3-e:registry" https://npm.pkg.github.com
+          npm config set "//npm.pkg.github.com/:_authToken" "${{ secrets.AUTOMATION_GITHUB_TOKEN }}"
+          make githubci
+      - name: Run the pre-commit script
+        run: |
+          cd ${{ github.workspace }}
+          direnv allow
+          source .envrc
+          cd ${{ github.workspace }}/c3standards/setup
+          make install
+          cd ${{ github.workspace }}
+          pre-commit run --all-files
+          status=$?
+          if [[ ! -z $status ]]; then
+            pre-commit run --all-files
+          fi
+      - name: Run c3standards tests
+        run: |
+          cd ${{ github.workspace }}
+          npx jest c3standards/
+      - name: Check for uncommitted changes
+        run: |
+          # Get the list of modified files, excluding package-lock.json
+          # (since it's auto-generated and can be ignored)
+          # Run `git status --porcelain` to get a list of modified files in a machine-readable format
+          MODIFIED_FILES=$(git status --porcelain | grep -v "package-lock.json" || true)
+
+          # If there are any modified files, error out and print them
+          if [ -n "$MODIFIED_FILES" ]; then
+            echo "Error: Uncommitted changes found in the following files:"
+            echo "$MODIFIED_FILES"
+            exit 1
+          else
+            echo "No uncommitted changes found (apart from package-lock.json)."
+          fi
+        continue-on-error: false

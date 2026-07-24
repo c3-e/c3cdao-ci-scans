@@ -1,0 +1,101 @@
+# c3standards/pr-checks gate workflow
+#
+# Purpose:
+# - Publishes a single commit status context: "c3standards/pr-checks" (recommended as the ONLY required check).
+# - Aggregates (worst-state-wins) across:
+#   - Jarvis (context prefix: "continuous-integration/jarvis")
+#   - C3 AI Code Analyzer (context prefix: "C3 AI Code Analyzer")
+#   - Jira P0/P1 policy (context: "policy/p0p1")
+#
+# Implementation:
+# - Delegates aggregation to .github/scripts/c3standards-pr-checks.js
+# - Always checks out a trusted ref to avoid executing untrusted PR code.
+
+name: c3standards/pr-checks
+
+env:
+  # Override these if your status context names differ.
+  JARVIS_PREFIX: continuous-integration/jarvis
+  CODE_ANALYSIS_PREFIX: C3 AI Code Analyzer
+  P0P1_CONTEXT: policy/p0p1
+  GATE_CONTEXT: c3standards/pr-checks
+
+on:
+  status:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: Commit SHA to evaluate
+        required: true
+
+permissions:
+  contents: read
+  statuses: write
+
+concurrency:
+  group: pr-checks-${{ github.event.pull_request.head.sha || github.event.sha || inputs.sha }}
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    name: gate
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'pull_request' ||
+      (
+        github.event_name == 'status' &&
+        github.event.context != 'c3standards/pr-checks'
+      )
+    runs-on: ubuntu-latest
+    steps:
+      - name: Determine whether to publish ${{ env.GATE_CONTEXT }}
+        id: should_publish
+        run: |
+          if [[ "${{ github.event_name }}" != "status" ]]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          ctx="${{ github.event.context }}"
+
+          if [[ "$ctx" == "$GATE_CONTEXT" ]]; then
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [[ "$ctx" == "$P0P1_CONTEXT" || "$ctx" == "${JARVIS_PREFIX}"* || "$ctx" == "${CODE_ANALYSIS_PREFIX}"* ]]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout workflow scripts (trusted ref)
+        if: steps.should_publish.outputs.run == 'true'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.repository.default_branch }}
+
+      - name: Verify gate script exists on checked-out ref
+        id: gate_script
+        if: steps.should_publish.outputs.run == 'true'
+        run: |
+          if [[ -f ".github/scripts/c3standards-pr-checks.js" ]]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Skipping ${GATE_CONTEXT}: .github/scripts/c3standards-pr-checks.js not present on checked-out ref."
+          fi
+
+      - name: Setup Node.js
+        if: steps.should_publish.outputs.run == 'true' && steps.gate_script.outputs.present == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Publish commit status - ${{ env.GATE_CONTEXT }}
+        if: steps.should_publish.outputs.run == 'true' && steps.gate_script.outputs.present == 'true'
+        run: node .github/scripts/c3standards-pr-checks.js
+        env:
+          GITHUB_TOKEN: ${{ github.token }}

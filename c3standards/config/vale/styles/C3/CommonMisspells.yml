@@ -1,0 +1,61 @@
+---
+extends: substitution
+message: "Consider using '%s' instead of '%s'."
+ignorecase: false
+level: error
+swap:
+  # https://docs.microsoft.com/en-us/style-guide/a-z-word-list-term-collections/d/dropdown
+  'drop[ -]down(?: menu)?':                  dropdown menu
+  fill-in:                                   fill in
+  on[ -]?prem(?:ise)?:                       on-premises
+  (?i)c3[. ]?ai:                             C3 AI
+  c3 [aA][iI]:                               C3 AI
+  '[cC]3 a[iI]':                             C3 AI
+  '[cC]3 [aA]i':                             C3 AI
+  '(?i)c3[. ]?(?:ai )?suite':                C3 AI Platform
+  (?i)c3 iot:                                C3 AI Platform
+  (?i)c3 platform:                           C3 AI Platform
+  '(?i)c3[. ]?(?:ai )?application platform': C3 AI Platform
+  click:                                     select
+  Click:                                     Select
+  java[ -]?scripts?:                         JavaScript
+  type[ -]?scripts?:                         TypeScript
+  Minikube:                                  minikube
+  '[dD]ouble click':                         double-click
+  '[rR]ight click':                          right-click
+  in order to:                               to
+  In order to:                               To
+  for the purpose of:                        to
+  For the purpose of:                        To
+  bugfix:                                    bug fix
+  hit:                                       press|type
+  url:                                       URL
+  w/o:                                       without
+  id:                                        ID
+  ids:                                       IDs
+  (?i)w\.r\.t\.:                             with respect to
+  moreover:                                  also
+  Moreover:                                  Also
+  via:                                       through|by|from|on|using
+  glyph:                                     symbol
+  Glyph:                                     Symbol
+  (?i)graphana:                              Grafana
+  (?i)postgress:                             Postgres
+  convertable:                               convertible
+  persistible:                               persistable
+  (?i)meta data:                             metadata
+  Aws:                                       AWS
+  aws:                                       AWS
+  (?i)will need to be:                       must be
+  (?i)needs? to be:                          must be
+  (?i)needs? to:                             must
+  (?i)is the fact that:                      is that
+  (?i)as well as:                            and also
+  (?i)as well:                               also
+  vs ?code:                                  VS Code
+  To[dD][oO]:                                TODO
+  FixMe:                                     FIXME
+  '[Zz]ulu time':                            Coordinated Universal Time
+  a\.?k\.?a\.?:                              also known as
+  A\.?K\.?A\.?:                              Also known as
+  (?i)vscode:                                VS Code

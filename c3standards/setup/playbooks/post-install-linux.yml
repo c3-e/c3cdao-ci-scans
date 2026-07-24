@@ -1,0 +1,28 @@
+---
+- name: Post Install - install pre-commit if not in WSL
+  hosts: localhost
+  gather_facts: no
+
+  tasks:
+    - name: WSL/Windows check
+      command: cat /proc/version
+      register: version_info
+
+    - name: Set fact if system is WSL
+      set_fact:
+        is_wsl: "{{ 'Microsoft' in version_info.stdout or 'WSL' in version_info.stdout }}"
+
+    - name: Skipping installation if WSL
+      debug:
+        msg: "Skipping pre-commit installation on WSL"
+      when: is_wsl
+
+    - name: Install pre-commit using pip3
+      pip:
+        name: pre-commit
+        executable: pip3
+      when: not is_wsl
+
+    - name: Run `pre-commit install`
+      command: pre-commit install
+      when: not is_wsl

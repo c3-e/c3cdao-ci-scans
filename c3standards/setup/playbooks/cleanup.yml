@@ -1,0 +1,12 @@
+---
+- hosts: localhost
+  gather_facts: true
+  vars_files:
+    - vars/main.yml
+  
+  tasks:
+    - block:
+      - name: Include cleanup role
+        include_role:
+          name: cleanup
+      become: false

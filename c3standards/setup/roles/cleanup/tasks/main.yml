@@ -1,0 +1,38 @@
+---
+
+- name: Get current user name
+  ansible.builtin.command: whoami
+  register: current_user
+  changed_when: false
+
+- name: Get current user group
+  ansible.builtin.command: id -gn
+  register: current_group
+  changed_when: false
+
+- name: Get current ownership of the apps directory
+  ansible.builtin.stat:
+    path: "{{ apps_dir }}"
+  register: apps_dir_stat
+
+- name: Print current user and group
+  ansible.builtin.debug:
+    msg: "The current user is {{ current_user.stdout }} and the current group is {{ current_group.stdout }}."
+
+- block:
+  - name: Change ownership of the apps directory to the current user
+    ansible.builtin.file:
+      path: "{{ apps_dir }}"
+      state: directory
+      owner: "{{ current_user.stdout }}"
+      group: "{{ current_group.stdout }}"
+      recurse: yes # Change the ownership of all files and subdirectories
+  when:
+    - apps_dir_stat.stat.exists
+    - (apps_dir_stat.stat.pw_name != current_user.stdout or apps_dir_stat.stat.gr_name != current_group.stdout)
+  become: true # Use privilege escalation to change the ownership
+
+- name: Output message if the directory does not exist
+  ansible.builtin.debug:
+    msg: "The apps directory does not exist."
+  when: not apps_dir_stat.stat.exists

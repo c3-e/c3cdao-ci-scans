@@ -1,0 +1,10 @@
+---
+
+- name: Setup environment variables for workstations
+  blockinfile:
+    path: "{{ ansible_env.HOME }}/.bashrc"
+    block: |
+      # Set path variables for standards
+      PATH=$PATH:{{ ansible_env.HOME }}/.local/bin
+    marker: "# {mark} ANSIBLE MANAGED BLOCK for workstations"
+  when: ansible_os_family in ['Debian', 'RedHat']

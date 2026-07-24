@@ -1,0 +1,105 @@
+# c3standards/policy-p0p1 publisher workflow (Jira)
+#
+# Purpose:
+# - For PRs targeting master/release/release/vX.Y/support/vX.Y, validate the PR title includes a Jira key (e.g., ABC-1234).
+# - Validate the Jira issue is a Bug with an allowed P0/P1 priority.
+# - Publish a commit status context: "policy/p0p1" (consumed by "c3standards/pr-checks").
+
+name: c3standards/policy-p0p1
+
+on:
+  pull_request_target:
+    types: [opened, edited, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+  statuses: write
+
+jobs:
+  publish:
+    name: jira
+    runs-on: ubuntu-latest
+    steps:
+      - name: Determine whether policy applies (target branch)
+        id: policy_required
+        run: |
+          base_ref="${{ github.event.pull_request.base.ref }}"
+          if [[ "$base_ref" == "master" || "$base_ref" == "release" || "$base_ref" =~ ^release/v[0-9]+\.[0-9]+$ || "$base_ref" =~ ^support/v[0-9]+\.[0-9]+$ ]]; then
+            echo "required=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "required=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout base commit (trusted)
+        uses: actions/checkout@v4
+        if: steps.policy_required.outputs.required == 'true'
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+
+      - name: Verify policy script exists on checked-out ref
+        id: policy_script
+        if: steps.policy_required.outputs.required == 'true'
+        run: |
+          if [[ -f ".github/scripts/c3standards-policy-p0p1-jira.js" ]]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Skipping policy/p0p1: .github/scripts/c3standards-policy-p0p1-jira.js not present on checked-out ref."
+          fi
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        if: steps.policy_required.outputs.required == 'true' && steps.policy_script.outputs.present == 'true'
+        with:
+          node-version: 20
+
+      - name: Validate Jira Bug priority (policy/p0p1)
+        id: jira_validation
+        if: steps.policy_required.outputs.required == 'true' && steps.policy_script.outputs.present == 'true'
+        run: node .github/scripts/c3standards-policy-p0p1-jira.js
+        env:
+          JIRA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
+          JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
+          JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+          ALLOWED_PRIORITIES: "P0 - Blocker,P1 - Urgent with no workaround"
+
+      - name: Publish commit status - policy/p0p1
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const sha = context.payload.pull_request.head.sha;
+            const required = '${{ steps.policy_required.outputs.required }}' === 'true';
+            const scriptPresent = '${{ steps.policy_script.outputs.present }}' === 'true';
+            const outcome = '${{ steps.jira_validation.outcome }}';
+            const contextName = 'policy/p0p1';
+
+            let state = 'success';
+            let description = 'policy/p0p1 not required for this target branch';
+
+            if (required) {
+              if (!scriptPresent) {
+                state = 'success';
+                description = 'policy/p0p1 skipped: not installed on base branch';
+              } else if (outcome === 'success') {
+                state = 'success';
+                description = 'policy/p0p1 satisfied';
+              } else if (outcome === 'failure') {
+                state = 'failure';
+                description = 'policy/p0p1 failed';
+              } else {
+                state = 'error';
+                description = 'policy/p0p1 errored';
+              }
+            }
+
+            await github.rest.repos.createCommitStatus({
+              owner,
+              repo,
+              sha,
+              state,
+              context: contextName,
+              description,
+              target_url: `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`
+            });

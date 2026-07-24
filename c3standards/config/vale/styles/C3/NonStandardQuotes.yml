@@ -1,0 +1,11 @@
+---
+extends: substitution
+message: "'%s' should be '%s'. Use standard single quotes or double quotes only."
+level: warning
+nonword: true
+scope: raw
+action:
+  name: replace
+swap:
+  ‘|’: "'"
+  “|”|‟|″|‶: '"'

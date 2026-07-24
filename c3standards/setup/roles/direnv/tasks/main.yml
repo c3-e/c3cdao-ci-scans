@@ -1,0 +1,39 @@
+- name: Check if direnv is installed
+  command: direnv version
+  register: direnv_installed
+  failed_when: false
+  changed_when: false
+
+- name: Install direnv (Debian/Ubuntu)
+  shell: curl -sfL https://direnv.net/install.sh | bash
+  when: ansible_os_family == 'Debian' and direnv_installed.rc != 0
+
+- name: Install direnv (RedHat/CentOS)
+  yum:
+    name: direnv
+    state: latest
+  when: ansible_os_family == 'RedHat' and direnv_installed.rc != 0
+
+- name: Install direnv (macOS)
+  homebrew:
+    name: direnv
+    state: latest
+  when: ansible_os_family == 'Darwin' and direnv_installed.rc != 0
+
+- name: Configure direnv hook in bashrc
+  blockinfile:
+    path: "{{ ansible_env.HOME }}/.bashrc"
+    block: |
+      # direnv setup
+      eval "$(direnv hook bash)"
+    marker: "# {mark} ANSIBLE MANAGED BLOCK for direnv"
+  when: ansible_os_family in ['Debian', 'RedHat']
+
+- name: Configure direnv hook in zshrc for macOS
+  blockinfile:
+    path: "{{ ansible_env.HOME }}/.zshrc"
+    block: |
+      # direnv setup
+      eval "$(direnv hook zsh)"
+    marker: "# {mark} ANSIBLE MANAGED BLOCK for direnv"
+  when: ansible_os_family == 'Darwin'

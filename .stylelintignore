@@ -1,0 +1,7 @@
+**/gen/cache/**
+**/build/**
+**/dist/**
+**/vendor/**
+**/*.min.css
+**/*.min.scss
+**/ui/content/**

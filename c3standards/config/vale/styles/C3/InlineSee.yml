@@ -1,0 +1,7 @@
+---
+extends: existence
+message: 'Do not use @see in inline documentation. Each use of @see should be on its own line with no other content. For inline links, use {@link Type#field label} or [label](Type#field).'
+level: error
+nonword: true
+tokens:
+  - '(?<!^\s*)@see'

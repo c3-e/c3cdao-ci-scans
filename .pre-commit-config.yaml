@@ -1,0 +1,150 @@
+---
+# See https://pre-commit.com for more information
+# See https://pre-commit.com/hooks.html for more hooks
+repos:
+- repo: https://github.com/pre-commit/pre-commit-hooks
+  rev: v5.0.0
+  hooks:
+  - id: check-merge-conflict
+    name: Unresolved merge conflicts
+  - id: end-of-file-fixer
+    name: (Non-binary) files end with a new-line
+  - id: check-case-conflict
+    name: Conflict in case-insensitive filesystems
+  - id: check-symlinks
+    name: Broken symlinks
+  - id: trailing-whitespace
+    name: Trim trailing whitespace
+    files: |
+      (?x)^(
+        (.*)\.(c3typ|py|js|json|jsx|tsx|ts|less|css|scss|csv)
+      )
+    exclude: |
+      (?x)(
+        .*\/Translation\/.*\.csv
+      )
+  - id: check-added-large-files
+    name: Check for large files
+    args:
+      - --maxkb=10240
+- repo: https://gitlab.com/bmares/check-json5
+  rev: v1.0.0
+  hooks:
+  - id: check-json5
+    name: Lint JSON files
+    files: .*/(c3|ui|metadata|seed|source)/.*\.json
+- repo: https://github.com/psf/black
+  rev: 23.7.0
+  hooks:
+  - id: black
+    name: Python formatter
+    types:
+      - python
+    files: |
+      (?x)^(
+        (.*)\.py
+      )
+    args: ["-l 120"]
+- repo: https://github.com/Lucas-C/pre-commit-hooks
+  rev: v1.5.5
+  hooks:
+    - id: insert-license
+      name: Remove old license
+      files: \.(java|c3typ|js|jsx|ts|tsx|css|scss)$
+      args:
+        - --license-filepath
+        - c3standards/licenses/OLD_LICENSE
+        - --comment-style
+        - /*| *| */
+        - --use-current-year
+        - --remove-header
+    - id: insert-license
+      name: Remove old license (Python)
+      files: \.py$
+      args:
+        - --license-filepath
+        - c3standards/licenses/OLD_LICENSE
+        - --comment-style
+        - "#"
+        - --use-current-year
+        - --remove-header
+    - id: insert-license
+      name: Insert license
+      files: \.(java|c3typ|js|jsx|ts|tsx|css|scss)$
+      args:
+        - --license-filepath
+        - c3standards/licenses/LICENSE
+        - --comment-style
+        - /*| *| */
+        - --use-current-year
+    - id: insert-license
+      name: Insert license (Python)
+      files: \.py$
+      args:
+        - --license-filepath
+        - c3standards/licenses/LICENSE
+        - --comment-style
+        - "#"
+        - --use-current-year
+- repo: local
+  hooks:
+  - id: c3typ-lint
+    name: C3 Type linter
+    entry: ./c3standards/scripts/hooks/c3typ-lint/c3typ-lint.sh
+    language: script
+    files: |
+      (?x)(
+        .*\.c3typ
+      )
+  - id: npm-lint
+    name: npm linter
+    entry: ./c3standards/scripts/hooks/npm-lint.sh
+    pass_filenames: false
+    language: script
+    files: |
+      (?x)^(
+        (.*)\.(js|json|jsx|tsx|ts|vue|less|css|scss|md)$
+      )
+  - id: c3-pylint
+    name: C3 Python linter
+    entry: ./c3standards/scripts/hooks/py-lint.sh
+    language: script
+    verbose: true
+    types:
+      - python
+  - id: c3-semantic-version
+    name: C3 semantic version validation
+    entry: python3 c3standards/scripts/helpers/semantic-version-manager.py
+    language: python
+    verbose: true
+    args:
+      - precommit-version-validate
+    files: |
+      (?x)^(
+        (.*)\.(c3pkg.json)$
+      )
+  - id: vale-lint
+    name: Vale (prose) linter
+    entry: vale
+    language: system
+    files: |
+      (?x)^(
+        (.*)\.c3doc\.md$
+      )
+  - id: translation
+    name: Translation linter
+    entry: ./c3standards/scripts/hooks/translation-lint.sh
+    language: script
+    files: |
+      (?x)^(
+        (.*)\/Translation\/.*\.csv
+      )
+# Exclude the following files from all hooks
+exclude: |
+  (?x)^(
+    \.vale\/.* |
+    c3standards\/config\/vale\/.* |
+    \.git\/.* |
+    .*\/ui\/content\/.* |
+    (.*\/)?c3pkg\.lock\.json
+  )

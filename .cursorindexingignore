@@ -1,0 +1,2 @@
+# Override .gitignore to make .vs-cache visible to Cursor AI
+!.vs-cache

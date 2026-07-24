@@ -1,0 +1,13 @@
+---
+extends: existence
+message: "'%s' should have one space."
+link: https://docs.microsoft.com/en-us/style-guide/punctuation/periods
+level: error
+nonword: true
+tokens:
+  - '[a-z0-9][.?!] {2,}[a-zA-Z0-9]'
+  # Don't match lowercase letters after punctuation since they could be part of a URL.
+  - '[a-z0-9][?!][A-Z0-9]'
+  # Don't match numbers before period since that could form a valid phone number.
+  # Don't match capital letters after period since that could be an inner type (e.g., Nested.Inner.Type).
+  - '[a-z]\.[0-9]'

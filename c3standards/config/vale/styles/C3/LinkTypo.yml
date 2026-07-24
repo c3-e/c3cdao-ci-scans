@@ -1,0 +1,27 @@
+---
+extends: substitution
+message: "Use '%s' instead of '%s'."
+level: error
+nonword: true
+swap:
+  # {@link
+  - '{@(?!link )\w*':         '{@link'
+  - '(?i){[link]{3,5}':       '{@link'
+  - '(?i)(?<!{)@[link]{3,5}': '{@link'
+  - '(?i)@{[link]{3,5}':      '{@link'
+  - '(?i){ +@[link]{3,5}':    '{@link'
+
+  # @see
+  # See InlineSee.yml for more rules on @see.
+  # These shouldn't conflict with @ser, @search, or @settings.
+  - '@see(?! )\w*':       '@see'
+  - '@S[sSeE]{1,3}':      '@see'
+  - '@s[sSE][sSeE]{0,2}': '@see'
+  - '@se[sSE]{1,2}':      '@see'
+  - '(?i)@e[se]{1,3}':    '@see'
+  - '(?i)@ see':          '@see'
+  - '(?i)@s ee':          '@see'
+  - '(?i)@se e':          '@see'
+  - '(?i)s@ee':           '@see'
+  - '(?i)se@e':           '@see'
+  - '(?i)see@':           '@see'

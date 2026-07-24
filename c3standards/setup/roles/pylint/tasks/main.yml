@@ -1,0 +1,8 @@
+---
+
+- name: Install Pylint in Conda environment
+  shell: >
+    source {{ miniconda_install_path }}/bin/activate {{ miniconda.env_name }} && 
+    pip install black && pip install pylint
+  args:
+    executable: /bin/bash

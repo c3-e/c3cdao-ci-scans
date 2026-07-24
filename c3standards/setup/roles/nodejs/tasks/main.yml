@@ -1,0 +1,37 @@
+---
+
+- name: "nvm fact-gathering pre-step"
+  set_fact:
+    is_nvm_up_to_date: false
+
+- name: nvm functions
+  set_fact:
+    nvm_sh: "{{ ansible_env.HOME }}/.nvm/nvm.sh"
+
+- name: npm managed by nvm
+  set_fact:
+    npm: ". {{nvm_sh}} && npm"
+
+- name: Determine installed nvm version
+  shell: "if [ -r {{nvm_sh}} ]; then . {{nvm_sh}} && nvm --version; fi" # nvm is a function defined in {{nvm_sh}}
+  register: nvm_version_installed
+  changed_when: false
+
+- name: Check if nvm is up-to-date
+  set_fact: is_nvm_up_to_date="{{nvm_version_installed.stdout == nvm_version}}"
+
+- name: Install NVM (Node Version Manager)
+  shell: >
+    curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v{{ nvm_version }}/install.sh | bash
+  args:
+    creates: "${HOME}/.nvm/nvm.sh"
+  when: not is_nvm_up_to_date
+
+- name: Install specific Node.js version
+  shell: >
+    source ${HOME}/.nvm/nvm.sh && 
+    nvm install {{ node_version }} && 
+    nvm use {{ node_version }} && 
+    nvm alias default {{ node_version }}
+  args:
+    executable: /bin/bash

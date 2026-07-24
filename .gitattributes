@@ -1,0 +1,7 @@
+*.c3doc.md linguist-language=Markdown
+*.c3doc.md linguist-documentation=true
+.c3standardsrc linguist-language=JSON
+.envrc linguist-language=Shell
+.eslintrc.js linguist-language=JavaScript
+.prettierrc.js linguist-language=JavaScript
+.stylelintrc.js linguist-language=JavaScript

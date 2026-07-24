@@ -1,0 +1,11 @@
+---
+extends: existence
+message: "'%s' should use '#' instead of '.' to link to a C3 Type field."
+level: error
+nonword: false
+tokens:
+  # (?:[A-Z_][a-z0-9_]*)+ -> One or more words starting with an uppercase letter or underscore.
+  # (?:\.(?:[A-Z_][a-z0-9_]*)+)* -> Zero or more occurrences of a period followed by the above (to support inner Types).
+  # (?!(png|svg|jpe?g)\W) -> Ensure the dot isn't followed by an image file extension since those are valid links.
+  # [a-z_]\w* -> A '.' followed by a lowercase letter or underscore, followed by zero or more word characters.
+  - (?:[A-Z_][a-z0-9_]*)+(?:\.(?:[A-Z_][a-z0-9_]*)+)*\.(?!(png|svg|jpe?g)\W)[a-z_]\w*

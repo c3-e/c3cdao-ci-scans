@@ -1,0 +1,44 @@
+---
+- hosts: localhost
+  gather_facts: true
+  vars_files:
+    - vars/main.yml
+
+  vars_prompt:
+    - name: use_custom_conda_env
+      prompt: "Do you want to use a custom, self-managed conda environment? Select (no) to automatically setup. (yes/no)"
+      private: false
+
+  pre_tasks:
+    - name: Delete existing .envrc.local file
+      ansible.builtin.file:
+        path: "{{ playbook_dir }}/../../.envrc.local"
+        state: absent
+      ignore_errors: true
+
+    - name: Set environment variable to indicate if custom conda environment is to be used
+      ansible.builtin.lineinfile:
+        path: "{{ playbook_dir }}/../../.envrc.local"
+        line: "export C3_STD_CUSTOM_CONDA=true"
+        create: yes
+      when: use_custom_conda_env == "yes"
+
+  roles:
+    - role: workstation
+      become: false
+
+    - role: direnv
+      become: false
+
+    - role: nodejs
+      become: false
+
+    - role: conda
+      when: use_custom_conda_env != "yes"
+      become: false
+
+    - role: pylint
+      become: false
+
+    - role: vale
+      become: false

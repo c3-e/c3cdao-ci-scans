@@ -1,0 +1,41 @@
+---
+
+- name: Set named Miniconda version
+  set_fact:
+    miniconda_named_version: "Miniconda3-py{{ miniconda.python }}_{{ miniconda.version }}"
+
+- name: Set Miniconda download URL with version
+  set_fact:
+    miniconda_url_with_version: "{{ miniconda.base_url }}/Miniconda3-py{{ miniconda.python }}_{{ miniconda.version }}"
+
+- name: Set Miniconda download URL for Linux
+  set_fact:
+    miniconda_url: "{{ miniconda_url_with_version }}-Linux-x86_64.sh"
+  when: ansible_facts['os_family'] == "Debian" or ansible_facts['os_family'] == "RedHat"
+
+- name: Set Miniconda download URL for Intel macOS
+  set_fact:
+    miniconda_url: "{{ miniconda_url_with_version }}-MacOSX-x86_64.sh"
+  when: ansible_facts['os_family'] == "Darwin" and ansible_machine == "x86_64"
+
+- name: Set Miniconda download URL for arm64 (M1, M2, etc.) macOS
+  set_fact:
+    miniconda_url: "{{ miniconda_url_with_version }}-MacOSX-arm64.sh"
+  when: ansible_facts['os_family'] == "Darwin" and ansible_machine == "arm64"
+
+- name: Download Miniconda Installer
+  get_url:
+    url: "{{ miniconda_url }}"
+    dest: "/tmp/{{ miniconda_named_version }}.sh"
+    mode: '0755'
+
+- name: Install Miniconda
+  shell: bash /tmp/{{ miniconda_named_version }}.sh -b -p {{ miniconda_install_path }}
+  args:
+    creates: "{{ miniconda_install_path }}"
+
+- name: Create Conda Environment with specific Python version
+  shell: >
+    {{ miniconda_install_path }}/bin/conda create -n {{ miniconda.env_name }} python={{ python_version }} -y
+  args:
+    creates: "{{ miniconda_install_path }}/envs/{{ miniconda.env_name }}"
