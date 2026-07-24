@@ -92,7 +92,7 @@ The template ships with `@main` for the pilot window. In production, pin a
 release tag:
 
 ```yaml
-uses: c3-joshchiu/c3cdao-ci-scans/.github/workflows/reusable-security-gate.yml@v0.5.0
+uses: c3-e/c3cdao-ci-scans/.github/workflows/reusable-security-gate.yml@v0.5.0
 ```
 
 `@main` is acceptable only during the pilot migration window.

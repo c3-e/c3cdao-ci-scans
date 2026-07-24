@@ -196,7 +196,7 @@ jobs:
       # Callee tooling (lint script + contract) at the resolved ref.
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
         with:
-          repository: c3-joshchiu/c3cdao-ci-scans
+          repository: c3-e/c3cdao-ci-scans
           ref: ${{ steps.calleeref.outputs.ref }}
           path: .ci-scans-lint
 
@@ -333,7 +333,7 @@ jobs:
 
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
         with:
-          repository: c3-joshchiu/c3cdao-ci-scans
+          repository: c3-e/c3cdao-ci-scans
           ref: ${{ steps.calleeref.outputs.ref }}
           path: .ci-scans
 
@@ -712,7 +712,7 @@ jobs:
 
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
         with:
-          repository: c3-joshchiu/c3cdao-ci-scans
+          repository: c3-e/c3cdao-ci-scans
           ref: ${{ steps.calleeref.outputs.ref }}
           path: .ci-scans
 
@@ -1049,7 +1049,7 @@ jobs:
 
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
         with:
-          repository: c3-joshchiu/c3cdao-ci-scans
+          repository: c3-e/c3cdao-ci-scans
           ref: ${{ steps.calleeref.outputs.ref }}
           path: .ci-scans
 
@@ -1119,7 +1119,7 @@ jobs:
 
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
         with:
-          repository: c3-joshchiu/c3cdao-ci-scans
+          repository: c3-e/c3cdao-ci-scans
           ref: ${{ steps.calleeref.outputs.ref }}
           path: .ci-scans
 

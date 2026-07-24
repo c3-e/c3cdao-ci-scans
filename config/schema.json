@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/c3-joshchiu/c3cdao-ci-scans/config/schema.json",
+  "$id": "https://github.com/c3-e/c3cdao-ci-scans/config/schema.json",
   "title": "Repo onboarding config",
   "type": "object",
   "required": [
