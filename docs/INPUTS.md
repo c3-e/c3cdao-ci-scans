@@ -26,7 +26,7 @@ The common case: one backend image, one chart, everything declared by
 ```yaml
 jobs:
   security-scan:
-    uses: c3-e/c3cdao-ci-scans/.github/workflows/reusable-security-gate.yml@v0.5.0
+    uses: c3-e/c3cdao-ci-scans/.github/workflows/reusable-security-gate.yml@v0.5.1
     with:
       scan_image: app:local
       contract_file: Makefile.ci
@@ -63,7 +63,7 @@ CI fixture literals (never real credentials) as a JSON array in a multiline
 ```yaml
 jobs:
   security-scan:
-    uses: c3-e/c3cdao-ci-scans/.github/workflows/reusable-security-gate.yml@v0.5.0
+    uses: c3-e/c3cdao-ci-scans/.github/workflows/reusable-security-gate.yml@v0.5.1
     with:
       scan_image: app:local
       smoke_secrets: |

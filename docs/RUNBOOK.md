@@ -92,7 +92,7 @@ The template ships with `@main` for the pilot window. In production, pin a
 release tag:
 
 ```yaml
-uses: c3-e/c3cdao-ci-scans/.github/workflows/reusable-security-gate.yml@v0.5.0
+uses: c3-e/c3cdao-ci-scans/.github/workflows/reusable-security-gate.yml@v0.5.1
 ```
 
 `@main` is acceptable only during the pilot migration window.
@@ -160,7 +160,7 @@ From the ci-scans clone. `configs/local/` is gitignored — real ops configs (or
 names, local paths) live there.
 
 ```bash
-cp configs/examples/example-monorepo.yaml configs/local/<repo>.yaml
+cp configs/examples/example.yaml configs/local/<repo>.yaml
 # edit target.* / ci_scans.* / ruleset.*
 
 ./scripts/setup-ruleset.sh --config configs/local/<repo>.yaml            # create, disabled

@@ -28,7 +28,7 @@ jobs:
       contents: read
       pull-requests: write
       actions: write
-    uses: c3-e/c3cdao-ci-scans/.github/workflows/reusable-security-gate.yml@main  # ← pin a release tag (vX.Y.Z, e.g. v0.5.0) in prod; @main only during pilot migration
+    uses: c3-e/c3cdao-ci-scans/.github/workflows/reusable-security-gate.yml@main  # ← pin a release tag (vX.Y.Z, e.g. v0.5.1) in prod; @main only during pilot migration
     # Explicit mapping, never the inherit form — inherit only works when caller
     # and callee share an org/enterprise; across owners it silently passes
     # nothing. Explicit values evaluate in the caller's context and always work.
