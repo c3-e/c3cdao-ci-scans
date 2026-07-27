@@ -88,14 +88,15 @@ Two invariants the caller lint enforces — do not break them:
 
 ### Version pin
 
-The template ships with `@main` for the pilot window. In production, pin a
-release tag:
+The template ships pinned to a release tag:
 
 ```yaml
 uses: c3-e/c3cdao-ci-scans/.github/workflows/reusable-security-gate.yml@v0.5.1
 ```
 
-`@main` is acceptable only during the pilot migration window.
+`@main` is acceptable only during the pilot migration window (caller lint
+emits a stderr notice); a missing or placeholder ref is a blocking `uses-ref`
+violation.
 
 **You should see:** every `with:` value traced to its provenance source, trigger
 branches set (per the [branch conventions](#branch-conventions-decide-first) if
@@ -384,7 +385,9 @@ When `require_hardened_bases` is true (default), `caller-lint` also fails
 closed if neither Chainguard (`CGR_PULL_*`) nor Iron Bank (`IRONBANK_*`)
 complete pull credential pairs are present, so docker/kind never start on a
 missing-credentials run. Rule ids:
-`no-secrets-inherit`, `no-caller-concurrency`, `unknown-input`, `type-mismatch`,
+`no-secrets-inherit`, `no-caller-concurrency`, `uses-ref` (the gate `uses:`
+must carry a pinned @ref that is not a placeholder; `@main` is a pilot-window
+stderr notice, not a violation), `unknown-input`, `type-mismatch`,
 `missing-secret-map`, `image-values-mismatch`, `unreadable-caller`, the
 **blocking** contract validators `ci-contract-file`, `ci-contract-target`,
 `ci-contract-manifest` (a missing optional `ci-secctx` target is a notice),
