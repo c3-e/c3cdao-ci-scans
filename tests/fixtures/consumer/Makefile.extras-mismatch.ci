@@ -1,0 +1,5 @@
+# Lint fixture contract variant: extras manifest whose values_local pins only
+# the primary tag — the worker extra's worker:local is absent
+# (extras-values-mismatch must fire, blocking).
+VALUES_LOCAL := helm/app/values-local.yaml
+include Makefile.extras.ci

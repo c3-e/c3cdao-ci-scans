@@ -76,4 +76,6 @@ root), `ci-contract-target` (`make -n` cannot resolve `ci-manifest` /
 run, prints invalid JSON, or is off the required shape). A missing
 `ci-secctx` is a stderr notice. The `image-values-mismatch` rule reads
 `chart.values_local` from the manifest and requires `scan_image` to be
-pinned there.
+pinned there. The `extras-values-mismatch` rule applies the same pin check
+to every manifest extra (`images[1:]`), tagged by its optional `image` key
+or `<name>:local`.
