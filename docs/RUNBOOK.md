@@ -384,8 +384,9 @@ When `require_hardened_bases` is true (default), `caller-lint` also fails
 closed if neither Chainguard (`CGR_PULL_*`) nor Iron Bank (`IRONBANK_*`)
 complete pull credential pairs are present, so docker/kind never start on a
 missing-credentials run. Rule ids:
-`no-secrets-inherit`, `no-caller-concurrency`, `unknown-input`, `type-mismatch`,
-`missing-secret-map`, `image-values-mismatch`, `unreadable-caller`, the
+`gate-job-id`, `no-secrets-inherit`, `no-caller-concurrency`, `unknown-input`,
+`type-mismatch`, `missing-secret-map`, `image-values-mismatch`,
+`unreadable-caller`, the
 **blocking** contract validators `ci-contract-file`, `ci-contract-target`,
 `ci-contract-manifest` (a missing optional `ci-secctx` target is a notice),
 plus the `smoke_secrets` validators `smoke-secrets-json`, `smoke-secrets-name`,

@@ -27,7 +27,7 @@ Rules skipped for a stated reason print to stderr as
 ``notice: skip: <rule-id>: <reason>``; file-touching rules announce an active
 run as ``notice: active: <rule-id>: checked <path>``.
 
-Rule ids: no-secrets-inherit, no-caller-concurrency, unknown-input,
+Rule ids: gate-job-id, no-secrets-inherit, no-caller-concurrency, unknown-input,
 type-mismatch, missing-secret-map, unreadable-caller, smoke-secrets-json,
 smoke-secrets-name, smoke-secrets-duplicate, smoke-secrets-literals,
 ci-contract-file, ci-contract-target, ci-contract-manifest,
@@ -495,6 +495,14 @@ def lint(
     gate_id, gate_job = gate
 
     violations: list[str] = []
+
+    if gate_id != "security-scan":
+        violations.append(
+            f"gate-job-id: gate job id is '{gate_id}', must be 'security-scan' — "
+            "the job id is half of the required check context "
+            "'security-scan / Security Gate'; a different id reports under a "
+            "different context and the ruleset no longer matches"
+        )
 
     for job_id, job in jobs.items():
         if isinstance(job, dict) and job.get("secrets") == "inherit":
