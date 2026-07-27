@@ -115,6 +115,7 @@ def find_gate_job(jobs: dict[str, Any]) -> tuple[str, dict[str, Any]] | None:
 
 
 _USES_REF_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]*$")
+_RELEASE_TAG_RE = re.compile(r"^v\d")
 
 
 def check_uses_ref(gate_id: str, uses: str) -> list[str]:
@@ -123,8 +124,8 @@ def check_uses_ref(gate_id: str, uses: str) -> list[str]:
     Simple heuristic: the ref must be non-empty, match _USES_REF_RE, and look
     like a real ref, not a placeholder (``vX.Y.Z`` / ``EDIT-ME`` / ``<...>``
     — flagged via the placeholder chars ``<``, ``>``, ``X`` and the literal
-    ``EDIT-ME``). ``main`` is pilot-window-only: a stderr notice, never a
-    violation.
+    ``EDIT-ME``). Any non-release ref (``main`` or a branch) is
+    pilot-window-only: a stderr notice, never a violation.
     """
     rule = "uses-ref"
     _, sep, ref = uses.rpartition("@")
@@ -135,14 +136,6 @@ def check_uses_ref(gate_id: str, uses: str) -> list[str]:
                 "pin a release tag (vX.Y.Z)"
             )
         ]
-    if ref == "main":
-        notice(
-            "warn",
-            rule,
-            "@main is pilot-window only — pin a release tag (vX.Y.Z) "
-            "before promoting to trunk",
-        )
-        return []
     if (
         not _USES_REF_RE.match(ref)
         or any(c in ref for c in "<>X")
@@ -154,6 +147,13 @@ def check_uses_ref(gate_id: str, uses: str) -> list[str]:
                 "placeholder — pin a real release tag (vX.Y.Z)"
             )
         ]
+    if not _RELEASE_TAG_RE.match(ref):
+        notice(
+            "warn",
+            rule,
+            f"@{ref} is not a release tag — branch refs are pilot-window "
+            "only; pin a release tag (vX.Y.Z) before promoting to trunk",
+        )
     return []
 
 

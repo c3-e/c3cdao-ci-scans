@@ -24,7 +24,14 @@ def test_main_ok_with_notice(capsys):
     assert check_uses_ref("security-scan", f"{USES}@main") == []
     err = capsys.readouterr().err
     assert "notice: warn: uses-ref" in err
-    assert "pilot-window only" in err
+    assert "pilot-window" in err
+
+
+def test_branch_ref_ok_with_notice(capsys):
+    assert check_uses_ref("security-scan", f"{USES}@feat/footgun-enforcement") == []
+    err = capsys.readouterr().err
+    assert "notice: warn: uses-ref" in err
+    assert "not a release tag" in err
 
 
 def test_missing_ref_violation():

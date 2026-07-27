@@ -216,6 +216,10 @@ and scope both the trigger and the ruleset to it, using your name from the
   ci-scans` (the ruleset then targets that literal ref, independent of the
   repo's default branch) — re-run step 6 if you re-target
 
+Prefer landing caller/contract edits on `ci-scans` via a PR rather than
+pushing to the branch directly — direct pushes skip caller lint until the
+next canary run (advisory, not enforced).
+
 Full scratch-branch walkthrough:
 [CI CD Workflow runbook](https://c3energy.atlassian.net/wiki/spaces/CCA/pages/10910040079/).
 
@@ -394,8 +398,9 @@ closed if neither Chainguard (`CGR_PULL_*`) nor Iron Bank (`IRONBANK_*`)
 complete pull credential pairs are present, so docker/kind never start on a
 missing-credentials run. Rule ids:
 `gate-job-id`, `no-secrets-inherit`, `no-caller-concurrency`, `uses-ref` (the
-gate `uses:` must carry a pinned @ref that is not a placeholder; `@main` is a
-pilot-window stderr notice, not a violation), `unknown-input`, `type-mismatch`,
+gate `uses:` must carry a pinned @ref that is not a placeholder; `@main` or a
+branch ref is a pilot-window stderr notice, not a violation), `unknown-input`,
+`type-mismatch`,
 `missing-secret-map`, `image-values-mismatch`, `extras-values-mismatch`,
 `unreadable-caller`, the
 **blocking** contract validators `ci-contract-file`, `ci-contract-target`,
