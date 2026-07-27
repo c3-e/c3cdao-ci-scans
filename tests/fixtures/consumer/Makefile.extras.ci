@@ -1,0 +1,40 @@
+# Lint fixture contract variant: manifest lists a primary (backend) plus one
+# extra (worker, no "image" key -> worker:local). values_local defaults to the
+# extras values file that pins both tags; Makefile.extras-mismatch.ci
+# overrides it to one that omits the worker tag.
+
+SHELL := /bin/bash
+
+VALUES_LOCAL ?= helm/app/values-local-extras.yaml
+
+.PHONY: ci-manifest ci-build ci-secctx ci-smoke-env
+
+define CI_MANIFEST_JSON
+{
+  "images": [
+    {"name": "backend", "dockerfile": "containers/backend/Dockerfile", "context": "."},
+    {"name": "worker", "dockerfile": "containers/worker/Dockerfile", "context": "."}
+  ],
+  "chart": {
+    "path": "helm/app",
+    "values": "helm/app/values.yaml",
+    "values_local": "$(VALUES_LOCAL)",
+    "release": "app-ci",
+    "namespace": "app-ci"
+  },
+  "health": {"path": "/health", "port": "8000", "workload_match": "backend"}
+}
+endef
+export CI_MANIFEST_JSON
+
+ci-manifest:
+	@printf '%s\n' "$$CI_MANIFEST_JSON"
+
+ci-build:
+	@echo noop
+
+ci-secctx:
+	@echo noop
+
+ci-smoke-env:
+	@echo noop

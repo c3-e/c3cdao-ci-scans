@@ -388,7 +388,8 @@ missing-credentials run. Rule ids:
 `gate-job-id`, `no-secrets-inherit`, `no-caller-concurrency`, `uses-ref` (the
 gate `uses:` must carry a pinned @ref that is not a placeholder; `@main` is a
 pilot-window stderr notice, not a violation), `unknown-input`, `type-mismatch`,
-`missing-secret-map`, `image-values-mismatch`, `unreadable-caller`, the
+`missing-secret-map`, `image-values-mismatch`, `extras-values-mismatch`,
+`unreadable-caller`, the
 **blocking** contract validators `ci-contract-file`, `ci-contract-target`,
 `ci-contract-manifest` (a missing optional `ci-secctx` target is a notice),
 plus the `smoke_secrets` validators `smoke-secrets-json`, `smoke-secrets-name`,
@@ -401,7 +402,9 @@ consumer checkout supplied, file-touching rules announce
 `notice: active: <rule>: checked <path>`. The image-values rule reads the
 values-local path from the manifest's `chart.values_local` and parses it as
 YAML: a string `image` equal to `scan_image`, or `repository` + `tag` that
-join to it, both pass; a comment-only mention does not.
+join to it, both pass; a comment-only mention does not. The extras-values
+rule applies the same pin check to each manifest extra's tag (its optional
+`image` key or `<name>:local`).
 
 ### D. Job order and fail-fast (Actions minutes)
 

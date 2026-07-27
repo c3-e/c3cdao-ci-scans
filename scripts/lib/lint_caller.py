@@ -32,7 +32,7 @@ unknown-input,
 type-mismatch, missing-secret-map, unreadable-caller, smoke-secrets-json,
 smoke-secrets-name, smoke-secrets-duplicate, smoke-secrets-literals,
 ci-contract-file, ci-contract-target, ci-contract-manifest,
-image-values-mismatch.
+image-values-mismatch, extras-values-mismatch.
 
 The consumer build contract is the only build path, so contract validation is
 BLOCKING: a missing contract file, a missing required make target
@@ -42,6 +42,9 @@ optional target (the gate's bundled restricted-PSS assertion is the floor) —
 its absence is a stderr notice. The image-values rule reads the values-local
 path from the manifest's chart.values_local and requires scan_image to be
 pinned there (skipped when image_only or when the manifest is unavailable).
+The extras-values rule applies the same pin check to every manifest extra
+(images[1:]), tagged by its optional ``image`` key or <name>:local — a
+mismatched extra is ErrImageNeverPull at smoke time.
 An unreadable caller (missing/unparseable file, or no job whose ``uses:``
 matches the reusable gate workflow) fails closed.
 """
@@ -227,6 +230,51 @@ def check_image_values(
     if values_pin_scan_image(data, str(scan_image)):
         return []
     return [f"{rule}: scan_image '{scan_image}' not found in {values_path}"]
+
+
+def check_extras_values(
+    with_map: dict[str, Any],
+    props: dict[str, Any],
+    consumer_root: Path | None,
+    manifest: dict[str, Any] | None,
+) -> list[str]:
+    """Each manifest extra's tag must be pinned in chart.values_local YAML.
+
+    Extras (images[1:]) are tagged exactly as manifest_containers() tags them:
+    the entry's optional ``image`` key or <name>:local. An unpinned extra is
+    ErrImageNeverPull at smoke time.
+    """
+    rule = "extras-values-mismatch"
+    image_only = contract_value(with_map, props, "image_only")
+    if image_only is True:
+        notice("skip", rule, "image_only is true")
+        return []
+    if consumer_root is None:
+        notice("skip", rule, "--consumer-root not given")
+        return []
+    if manifest is None:
+        notice("skip", rule, "manifest unavailable (see ci-contract violations)")
+        return []
+    extras = manifest["images"][1:]
+    if not extras:
+        return []
+    values_file = (manifest.get("chart") or {}).get("values_local")
+    values_path = consumer_root / str(values_file)
+    try:
+        data = yaml.safe_load(values_path.read_text())
+    except (OSError, yaml.YAMLError):
+        # image-values-mismatch already reports the unreadable/invalid file.
+        return []
+    notice("active", rule, f"checked {values_path}")
+    violations: list[str] = []
+    for entry in extras:
+        name = entry["name"]
+        tag = str(entry.get("image") or f"{name}:local")
+        if not values_pin_scan_image(data, tag):
+            violations.append(
+                f"{rule}: extra '{name}' tag '{tag}' not found in {values_path}"
+            )
+    return violations
 
 
 _SMOKE_SECRET_ALLOWED_KEYS = {"name", "literals"}
@@ -596,6 +644,7 @@ def lint(
     contract_violations, manifest = check_ci_contract(with_map, props, consumer_root)
     violations.extend(contract_violations)
     violations.extend(check_image_values(with_map, props, consumer_root, manifest))
+    violations.extend(check_extras_values(with_map, props, consumer_root, manifest))
     return violations
 
 

@@ -1,0 +1,8 @@
+# Extras fixture values-local: pins the primary tag (app:local) AND the
+# worker extra's default tag (worker:local) — the pullPolicy: Never pair.
+backend:
+  image: app:local
+  imagePullPolicy: Never
+worker:
+  image: worker:local
+  imagePullPolicy: Never
