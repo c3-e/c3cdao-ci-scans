@@ -27,7 +27,8 @@ Rules skipped for a stated reason print to stderr as
 ``notice: skip: <rule-id>: <reason>``; file-touching rules announce an active
 run as ``notice: active: <rule-id>: checked <path>``.
 
-Rule ids: gate-job-id, no-secrets-inherit, no-caller-concurrency, unknown-input,
+Rule ids: gate-job-id, no-secrets-inherit, no-caller-concurrency, uses-ref,
+unknown-input,
 type-mismatch, missing-secret-map, unreadable-caller, smoke-secrets-json,
 smoke-secrets-name, smoke-secrets-duplicate, smoke-secrets-literals,
 ci-contract-file, ci-contract-target, ci-contract-manifest,
@@ -108,6 +109,49 @@ def find_gate_job(jobs: dict[str, Any]) -> tuple[str, dict[str, Any]] | None:
         ):
             return job_id, job
     return None
+
+
+_USES_REF_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]*$")
+
+
+def check_uses_ref(gate_id: str, uses: str) -> list[str]:
+    """The gate job's ``uses:`` must carry a pinned @ref (BLOCKING when not).
+
+    Simple heuristic: the ref must be non-empty, match _USES_REF_RE, and look
+    like a real ref, not a placeholder (``vX.Y.Z`` / ``EDIT-ME`` / ``<...>``
+    — flagged via the placeholder chars ``<``, ``>``, ``X`` and the literal
+    ``EDIT-ME``). ``main`` is pilot-window-only: a stderr notice, never a
+    violation.
+    """
+    rule = "uses-ref"
+    _, sep, ref = uses.rpartition("@")
+    if not sep or not ref:
+        return [
+            (
+                f"{rule}: gate job '{gate_id}' uses: has no @ref — "
+                "pin a release tag (vX.Y.Z)"
+            )
+        ]
+    if ref == "main":
+        notice(
+            "warn",
+            rule,
+            "@main is pilot-window only — pin a release tag (vX.Y.Z) "
+            "before promoting to trunk",
+        )
+        return []
+    if (
+        not _USES_REF_RE.match(ref)
+        or any(c in ref for c in "<>X")
+        or "EDIT-ME" in ref.upper()
+    ):
+        return [
+            (
+                f"{rule}: gate job '{gate_id}' uses: ref '{ref}' looks like a "
+                "placeholder — pin a real release tag (vX.Y.Z)"
+            )
+        ]
+    return []
 
 
 def contract_value(with_map: dict[str, Any], props: dict[str, Any], key: str) -> Any:
@@ -503,6 +547,8 @@ def lint(
             "'security-scan / Security Gate'; a different id reports under a "
             "different context and the ruleset no longer matches"
         )
+
+    violations.extend(check_uses_ref(gate_id, str(gate_job.get("uses") or "")))
 
     for job_id, job in jobs.items():
         if isinstance(job, dict) and job.get("secrets") == "inherit":

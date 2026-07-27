@@ -83,7 +83,7 @@ def lint_rule_ids():
 
 def test_all_lint_rules_documented():
     rules = lint_rule_ids()
-    assert len(rules) == 15, f"expected 15 lint rule ids, parsed {rules}"
+    assert len(rules) == 16, f"expected 16 lint rule ids, parsed {rules}"
     text = RUNBOOK.read_text()
     missing = [r for r in rules if r not in text]
     assert not missing, f"lint rules missing from RUNBOOK.md: {missing}"

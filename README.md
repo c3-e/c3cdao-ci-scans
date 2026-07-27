@@ -62,8 +62,9 @@ Rule ids and local invocation: [docs/RUNBOOK.md](docs/RUNBOOK.md).
 
 ## Pin policy
 
-Consumers pin a release tag — `uses: …/reusable-security-gate.yml@vX.Y.Z`. `@main` is
-acceptable only during the pilot migration window.
+Consumers pin a release tag — `uses: …/reusable-security-gate.yml@vX.Y.Z`; the
+template ships pinned (`@v0.5.1`). `@main` is acceptable only during the pilot
+migration window (caller lint emits a stderr notice).
 
 ## Docs
 
