@@ -304,7 +304,8 @@ gh variable set SECURITY_SCAN_BLOCKING --body true --repo <owner>/<repo>
 ```
 
 **You should see:** the repo variable set to `true`, and subsequent gate runs
-hard-failing (not warning) on cluster-smoke / image-scan findings.
+hard-failing (not warning) on cluster-smoke / image-scan findings. Until then,
+the gate's job summary and log label each run with an advisory-mode warning.
 
 ## Migrating from modular scans (consumer + operator)
 

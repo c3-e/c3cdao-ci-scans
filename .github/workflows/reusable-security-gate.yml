@@ -1127,4 +1127,5 @@ jobs:
         env:
           NEEDS_JSON: ${{ toJSON(needs) }}
           IMAGE_ONLY: ${{ inputs.image_only }}
+          SECURITY_SCAN_BLOCKING: ${{ vars.SECURITY_SCAN_BLOCKING }}
         run: python3 .ci-scans/scripts/lib/evaluate_security_gate.py
