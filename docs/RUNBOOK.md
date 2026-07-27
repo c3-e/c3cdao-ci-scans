@@ -193,6 +193,13 @@ Settings → Rules → Rulesets, in the **disabled** state.
 `--enable` sets the ruleset to active so `security-scan / Security Gate`
 becomes a required check. The script is idempotent — re-run it to re-target.
 
+To check that the live ruleset still matches the config (drift detection —
+run it when inheriting a repo from another operator, since ops configs live
+gitignored in `configs/local/`), add `--diff`: it fetches the live ruleset,
+compares a normalized subset, and exits 0 when in sync or 3 with a unified
+diff on drift. `--diff` never writes; pass `--enable` alongside it when the
+ruleset is expected to be active.
+
 **You should see:** the ruleset flip to **active**, and
 `security-scan / Security Gate` listed as a required status check on the target
 branch.
