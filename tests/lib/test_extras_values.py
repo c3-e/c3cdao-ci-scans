@@ -10,7 +10,7 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "scripts" / "lib"))
 
-from lint_caller import check_extras_values
+from lint_caller import check_extras_values  # noqa: E402
 
 
 def _image(name: str, **extra) -> dict:
@@ -74,6 +74,17 @@ def test_no_extras_is_noop(tmp_path):
 
 def test_manifest_unavailable_skips(tmp_path):
     assert check_extras_values({}, {}, tmp_path, None) == []
+
+
+def test_unreadable_values_reported_even_when_image_values_skipped(tmp_path):
+    """Expression scan_image makes image-values skip before reading the file;
+    this rule must still surface a missing/invalid values_local."""
+    wm = {"scan_image": "${{ vars.SCAN_IMAGE }}"}
+    images = [_image("backend"), _image("worker")]
+    violations = check_extras_values(wm, {}, tmp_path, _manifest(images))
+    assert len(violations) == 1
+    assert violations[0].startswith("extras-values-mismatch:")
+    assert "unreadable or invalid YAML" in violations[0]
 
 
 if __name__ == "__main__":

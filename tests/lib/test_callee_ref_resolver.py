@@ -54,3 +54,23 @@ def test_resolver_ignores_commented_pins(tmp_path):
         check=True,
     ).stdout
     assert ref == "v0.5.1", f"resolver picked {ref!r} (commented pin hijack?)"
+
+
+def test_resolver_strips_quotes(tmp_path):
+    """The YAML-legal quoted form must not leak the quote into the ref."""
+    caller = tmp_path / "security-gate.yml"
+    caller.write_text(
+        "jobs:\n"
+        "  security-scan:\n"
+        '    uses: "c3-e/c3cdao-ci-scans/.github/workflows/'
+        'reusable-security-gate.yml@v0.5.1"\n'
+    )
+    (line,) = set(resolver_lines())
+    script = line.replace('"$caller"', f'"{caller}"')
+    ref = subprocess.run(
+        ["bash", "-c", script + '; printf %s "$ref"'],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    assert ref == "v0.5.1", f"resolver picked {ref!r} (quote leak?)"

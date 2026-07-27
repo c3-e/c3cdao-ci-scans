@@ -10,7 +10,7 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "scripts" / "lib"))
 
-from lint_caller import check_uses_ref
+from lint_caller import check_uses_ref  # noqa: E402
 
 USES = "c3-e/c3cdao-ci-scans/.github/workflows/reusable-security-gate.yml"
 

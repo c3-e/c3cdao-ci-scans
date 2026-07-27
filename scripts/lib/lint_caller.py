@@ -123,8 +123,8 @@ def check_uses_ref(gate_id: str, uses: str) -> list[str]:
 
     Simple heuristic: the ref must be non-empty, match _USES_REF_RE, and look
     like a real ref, not a placeholder (``vX.Y.Z`` / ``EDIT-ME`` / ``<...>``
-    — flagged via the placeholder chars ``<``, ``>``, ``X`` and the literal
-    ``EDIT-ME``). Any non-release ref (``main`` or a branch) is
+    — ``<``/``>`` fail _USES_REF_RE; the ``X.Y`` shape and literal ``EDIT-ME``
+    are matched explicitly). Any non-release ref (``main`` or a branch) is
     pilot-window-only: a stderr notice, never a violation.
     """
     rule = "uses-ref"
@@ -138,7 +138,7 @@ def check_uses_ref(gate_id: str, uses: str) -> list[str]:
         ]
     if (
         not _USES_REF_RE.match(ref)
-        or any(c in ref for c in "<>X")
+        or re.search(r"X\.Y", ref)
         or "EDIT-ME" in ref.upper()
     ):
         return [
@@ -262,9 +262,14 @@ def check_extras_values(
     values_path = consumer_root / str(values_file)
     try:
         data = yaml.safe_load(values_path.read_text())
-    except (OSError, yaml.YAMLError):
-        # image-values-mismatch already reports the unreadable/invalid file.
-        return []
+    except (OSError, yaml.YAMLError) as e:
+        # Duplicates image-values-mismatch when that rule also read the file,
+        # but image-values skips without reading when scan_image is an
+        # expression — this rule must still surface the broken file.
+        return [
+            f"{rule}: manifest chart.values_local '{values_file}' unreadable "
+            f"or invalid YAML under consumer root '{consumer_root}': {e}"
+        ]
     notice("active", rule, f"checked {values_path}")
     violations: list[str] = []
     for entry in extras:
