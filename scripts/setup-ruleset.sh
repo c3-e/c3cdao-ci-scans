@@ -7,21 +7,29 @@ source "$ROOT/scripts/lib/common.sh"
 
 usage() {
   cat <<'EOF'
-usage: setup-ruleset.sh --config <yaml> [--enable] [--dry-run]
+usage: setup-ruleset.sh --config <yaml> [--enable] [--dry-run] [--diff]
 
 Creates/updates ruleset requiring the security-scan / Security Gate check.
 Default enforcement: disabled (safe rollout).
+
+--diff: read-only drift check — fetch the live ruleset from GitHub and diff
+it against what this config would produce. Exit 0 when in sync, 3 on drift
+(prints a unified diff), dies if no live ruleset exists. The expected
+enforcement derives from --enable, so pass --enable with --diff when the
+ruleset is expected to be active.
 EOF
 }
 
 CONFIG=""
 ENABLE=0
 DRY_RUN=0
+DIFF=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --config) CONFIG="$2"; shift 2 ;;
     --enable) ENABLE=1; shift ;;
     --dry-run) DRY_RUN=1; shift ;;
+    --diff) DIFF=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) die "unknown arg: $1" ;;
   esac
@@ -83,6 +91,41 @@ payload="$(jq -n \
 if [[ "$DRY_RUN" -eq 1 ]]; then
   echo "$payload" | jq .
   exit 0
+fi
+
+if [[ "$DIFF" -eq 1 ]]; then
+  # Read-only: fetch the live ruleset and compare a normalized subset.
+  if [[ -n "$ruleset_id" && "$ruleset_id" != "null" ]]; then
+    live="$(gh api "repos/${owner}/${repo}/rulesets/${ruleset_id}")" \
+      || die "no live ruleset id=$ruleset_id on ${owner}/${repo}"
+  else
+    live_id="$(gh api "repos/${owner}/${repo}/rulesets" \
+      --jq "[.[] | select(.name == \"$ruleset_name\")][0].id // empty")" \
+      || die "failed to list rulesets on ${owner}/${repo}"
+    [[ -n "$live_id" ]] || die "no live ruleset named '$ruleset_name' on ${owner}/${repo}"
+    live="$(gh api "repos/${owner}/${repo}/rulesets/${live_id}")" \
+      || die "no live ruleset id=$live_id on ${owner}/${repo}"
+  fi
+  normalize='{
+    name, target, enforcement,
+    conditions: { ref_name: .conditions.ref_name },
+    bypass_actors: ((.bypass_actors // []) | sort_by(.actor_type, .actor_id, .bypass_mode)),
+    rules: [.rules[] | { type }
+      + (if .type == "required_status_checks"
+         then { required_status_checks:
+                  [.parameters.required_status_checks[] | { context, integration_id }] }
+         else {} end)]
+  }'
+  if diff -u \
+      --label "expected (config: $CONFIG, enforcement=$enforcement)" \
+      --label "live (github: ${owner}/${repo})" \
+      <(jq "$normalize" <<<"$payload") <(jq "$normalize" <<<"$live"); then
+    echo "in sync: live ruleset matches config"
+    exit 0
+  else
+    echo "drift: live ruleset differs from config" >&2
+    exit 3
+  fi
 fi
 
 if [[ -n "$ruleset_id" && "$ruleset_id" != "null" ]]; then

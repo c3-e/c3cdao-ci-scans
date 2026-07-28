@@ -27,11 +27,12 @@ Rules skipped for a stated reason print to stderr as
 ``notice: skip: <rule-id>: <reason>``; file-touching rules announce an active
 run as ``notice: active: <rule-id>: checked <path>``.
 
-Rule ids: no-secrets-inherit, no-caller-concurrency, unknown-input,
+Rule ids: gate-job-id, no-secrets-inherit, no-caller-concurrency, uses-ref,
+unknown-input,
 type-mismatch, missing-secret-map, unreadable-caller, smoke-secrets-json,
 smoke-secrets-name, smoke-secrets-duplicate, smoke-secrets-literals,
 ci-contract-file, ci-contract-target, ci-contract-manifest,
-image-values-mismatch.
+image-values-mismatch, extras-values-mismatch.
 
 The consumer build contract is the only build path, so contract validation is
 BLOCKING: a missing contract file, a missing required make target
@@ -41,6 +42,9 @@ optional target (the gate's bundled restricted-PSS assertion is the floor) —
 its absence is a stderr notice. The image-values rule reads the values-local
 path from the manifest's chart.values_local and requires scan_image to be
 pinned there (skipped when image_only or when the manifest is unavailable).
+The extras-values rule applies the same pin check to every manifest extra
+(images[1:]), tagged by its optional ``image`` key or <name>:local — a
+mismatched extra is ErrImageNeverPull at smoke time.
 An unreadable caller (missing/unparseable file, or no job whose ``uses:``
 matches the reusable gate workflow) fails closed.
 """
@@ -108,6 +112,49 @@ def find_gate_job(jobs: dict[str, Any]) -> tuple[str, dict[str, Any]] | None:
         ):
             return job_id, job
     return None
+
+
+_USES_REF_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]*$")
+_RELEASE_TAG_RE = re.compile(r"^v\d")
+
+
+def check_uses_ref(gate_id: str, uses: str) -> list[str]:
+    """The gate job's ``uses:`` must carry a pinned @ref (BLOCKING when not).
+
+    Simple heuristic: the ref must be non-empty, match _USES_REF_RE, and look
+    like a real ref, not a placeholder (``vX.Y.Z`` / ``EDIT-ME`` / ``<...>``
+    — ``<``/``>`` fail _USES_REF_RE; the ``X.Y`` shape and literal ``EDIT-ME``
+    are matched explicitly). Any non-release ref (``main`` or a branch) is
+    pilot-window-only: a stderr notice, never a violation.
+    """
+    rule = "uses-ref"
+    _, sep, ref = uses.rpartition("@")
+    if not sep or not ref:
+        return [
+            (
+                f"{rule}: gate job '{gate_id}' uses: has no @ref — "
+                "pin a release tag (vX.Y.Z)"
+            )
+        ]
+    if (
+        not _USES_REF_RE.match(ref)
+        or re.search(r"X\.Y", ref)
+        or "EDIT-ME" in ref.upper()
+    ):
+        return [
+            (
+                f"{rule}: gate job '{gate_id}' uses: ref '{ref}' looks like a "
+                "placeholder — pin a real release tag (vX.Y.Z)"
+            )
+        ]
+    if not _RELEASE_TAG_RE.match(ref):
+        notice(
+            "warn",
+            rule,
+            f"@{ref} is not a release tag — branch refs are pilot-window "
+            "only; pin a release tag (vX.Y.Z) before promoting to trunk",
+        )
+    return []
 
 
 def contract_value(with_map: dict[str, Any], props: dict[str, Any], key: str) -> Any:
@@ -183,6 +230,56 @@ def check_image_values(
     if values_pin_scan_image(data, str(scan_image)):
         return []
     return [f"{rule}: scan_image '{scan_image}' not found in {values_path}"]
+
+
+def check_extras_values(
+    with_map: dict[str, Any],
+    props: dict[str, Any],
+    consumer_root: Path | None,
+    manifest: dict[str, Any] | None,
+) -> list[str]:
+    """Each manifest extra's tag must be pinned in chart.values_local YAML.
+
+    Extras (images[1:]) are tagged exactly as manifest_containers() tags them:
+    the entry's optional ``image`` key or <name>:local. An unpinned extra is
+    ErrImageNeverPull at smoke time.
+    """
+    rule = "extras-values-mismatch"
+    image_only = contract_value(with_map, props, "image_only")
+    if image_only is True:
+        notice("skip", rule, "image_only is true")
+        return []
+    if consumer_root is None:
+        notice("skip", rule, "--consumer-root not given")
+        return []
+    if manifest is None:
+        notice("skip", rule, "manifest unavailable (see ci-contract violations)")
+        return []
+    extras = manifest["images"][1:]
+    if not extras:
+        return []
+    values_file = (manifest.get("chart") or {}).get("values_local")
+    values_path = consumer_root / str(values_file)
+    try:
+        data = yaml.safe_load(values_path.read_text())
+    except (OSError, yaml.YAMLError) as e:
+        # Duplicates image-values-mismatch when that rule also read the file,
+        # but image-values skips without reading when scan_image is an
+        # expression — this rule must still surface the broken file.
+        return [
+            f"{rule}: manifest chart.values_local '{values_file}' unreadable "
+            f"or invalid YAML under consumer root '{consumer_root}': {e}"
+        ]
+    notice("active", rule, f"checked {values_path}")
+    violations: list[str] = []
+    for entry in extras:
+        name = entry["name"]
+        tag = str(entry.get("image") or f"{name}:local")
+        if not values_pin_scan_image(data, tag):
+            violations.append(
+                f"{rule}: extra '{name}' tag '{tag}' not found in {values_path}"
+            )
+    return violations
 
 
 _SMOKE_SECRET_ALLOWED_KEYS = {"name", "literals"}
@@ -496,6 +593,16 @@ def lint(
 
     violations: list[str] = []
 
+    if gate_id != "security-scan":
+        violations.append(
+            f"gate-job-id: gate job id is '{gate_id}', must be 'security-scan' — "
+            "the job id is half of the required check context "
+            "'security-scan / Security Gate'; a different id reports under a "
+            "different context and the ruleset no longer matches"
+        )
+
+    violations.extend(check_uses_ref(gate_id, str(gate_job.get("uses") or "")))
+
     for job_id, job in jobs.items():
         if isinstance(job, dict) and job.get("secrets") == "inherit":
             violations.append(
@@ -542,6 +649,7 @@ def lint(
     contract_violations, manifest = check_ci_contract(with_map, props, consumer_root)
     violations.extend(contract_violations)
     violations.extend(check_image_values(with_map, props, consumer_root, manifest))
+    violations.extend(check_extras_values(with_map, props, consumer_root, manifest))
     return violations
 
 

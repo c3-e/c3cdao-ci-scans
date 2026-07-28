@@ -88,14 +88,15 @@ Two invariants the caller lint enforces — do not break them:
 
 ### Version pin
 
-The template ships with `@main` for the pilot window. In production, pin a
-release tag:
+The template ships pinned to a release tag:
 
 ```yaml
 uses: c3-e/c3cdao-ci-scans/.github/workflows/reusable-security-gate.yml@v0.5.1
 ```
 
-`@main` is acceptable only during the pilot migration window.
+`@main` is acceptable only during the pilot migration window (caller lint
+emits a stderr notice); a missing or placeholder ref is a blocking `uses-ref`
+violation.
 
 **You should see:** every `with:` value traced to its provenance source, trigger
 branches set (per the [branch conventions](#branch-conventions-decide-first) if
@@ -193,6 +194,13 @@ Settings → Rules → Rulesets, in the **disabled** state.
 `--enable` sets the ruleset to active so `security-scan / Security Gate`
 becomes a required check. The script is idempotent — re-run it to re-target.
 
+To check that the live ruleset still matches the config (drift detection —
+run it when inheriting a repo from another operator, since ops configs live
+gitignored in `configs/local/`), add `--diff`: it fetches the live ruleset,
+compares a normalized subset, and exits 0 when in sync or 3 with a unified
+diff on drift. `--diff` never writes; pass `--enable` alongside it when the
+ruleset is expected to be active.
+
 **You should see:** the ruleset flip to **active**, and
 `security-scan / Security Gate` listed as a required status check on the target
 branch.
@@ -207,6 +215,10 @@ and scope both the trigger and the ruleset to it, using your name from the
 - ops YAML: `target.trunk_branches: [ci-scans]` and `ruleset.target_branch:
   ci-scans` (the ruleset then targets that literal ref, independent of the
   repo's default branch) — re-run step 6 if you re-target
+
+Prefer landing caller/contract edits on `ci-scans` via a PR rather than
+pushing to the branch directly — direct pushes skip caller lint until the
+next canary run (advisory, not enforced).
 
 Full scratch-branch walkthrough:
 [CI CD Workflow runbook](https://c3energy.atlassian.net/wiki/spaces/CCA/pages/10910040079/).
@@ -304,7 +316,8 @@ gh variable set SECURITY_SCAN_BLOCKING --body true --repo <owner>/<repo>
 ```
 
 **You should see:** the repo variable set to `true`, and subsequent gate runs
-hard-failing (not warning) on cluster-smoke / image-scan findings.
+hard-failing (not warning) on cluster-smoke / image-scan findings. Until then,
+the gate's job summary and log label each run with an advisory-mode warning.
 
 ## Migrating from modular scans (consumer + operator)
 
@@ -384,8 +397,12 @@ When `require_hardened_bases` is true (default), `caller-lint` also fails
 closed if neither Chainguard (`CGR_PULL_*`) nor Iron Bank (`IRONBANK_*`)
 complete pull credential pairs are present, so docker/kind never start on a
 missing-credentials run. Rule ids:
-`no-secrets-inherit`, `no-caller-concurrency`, `unknown-input`, `type-mismatch`,
-`missing-secret-map`, `image-values-mismatch`, `unreadable-caller`, the
+`gate-job-id`, `no-secrets-inherit`, `no-caller-concurrency`, `uses-ref` (the
+gate `uses:` must carry a pinned @ref that is not a placeholder; `@main` or a
+branch ref is a pilot-window stderr notice, not a violation), `unknown-input`,
+`type-mismatch`,
+`missing-secret-map`, `image-values-mismatch`, `extras-values-mismatch`,
+`unreadable-caller`, the
 **blocking** contract validators `ci-contract-file`, `ci-contract-target`,
 `ci-contract-manifest` (a missing optional `ci-secctx` target is a notice),
 plus the `smoke_secrets` validators `smoke-secrets-json`, `smoke-secrets-name`,
@@ -398,7 +415,9 @@ consumer checkout supplied, file-touching rules announce
 `notice: active: <rule>: checked <path>`. The image-values rule reads the
 values-local path from the manifest's `chart.values_local` and parses it as
 YAML: a string `image` equal to `scan_image`, or `repository` + `tag` that
-join to it, both pass; a comment-only mention does not.
+join to it, both pass; a comment-only mention does not. The extras-values
+rule applies the same pin check to each manifest extra's tag (its optional
+`image` key or `<name>:local`).
 
 ### D. Job order and fail-fast (Actions minutes)
 
