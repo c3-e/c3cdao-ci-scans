@@ -48,6 +48,35 @@ entry — the frontend and any sidecars — so the multi-image scanning
 requirement is met. Single-image consumers declare one manifest image and run
 a one-leg matrix.
 
+### Suppression files: unsuppressed by default, consumer-owned overrides
+
+The spec's "no suppression of unfixed findings" is the gate's **default** posture:
+image-scan defaults empty `.trivyignore` / `.grype.yaml` when the consumer
+doesn't carry them. Consumer-carried suppression files are honored when
+present — the same ownership model as `require_hardened_bases: false`: the
+gate defaults to the spec posture, and a consumer that commits an ignore file
+explicitly owns the deviation in its own reviewable tree.
+
+### App build is subsumed into `ci-build` (no separate Phase-1 stage)
+
+The spec's Phase 1 sequences an app build (`pnpm build`) before the container
+build. The gate has no standalone app-build job — both live in the consumer's
+`make ci-build`, typically as a multi-stage Dockerfile whose builder stage
+runs the app build first. The fail-fast intent is preserved by DAG ordering
+(caller-lint → helm-check → build) plus Docker layer ordering; a first-class
+app-build stage would push toolchain knowledge onto the runner and grow the
+contract for no earlier signal.
+
+### Merge-gate enforcement is partial by default
+
+`setup-ruleset.sh` creates only the required-status-check rule. The spec's
+no-direct-push rule and merge queue are separate GitHub-side configuration
+the operator adds per repo (the caller template already carries the
+`merge_group:` trigger, so the gate is queue-ready), and the payload's bypass
+list (OrganizationAdmin + maintainer + admin roles) is broader than the
+spec's admin-only break-glass — trim `bypass_actors` where the spec posture
+is required. The gate itself needs no changes for any of this.
+
 ### Out of scope for the reusable gate (named, not silently missing)
 
 Two spec items are intentionally owned elsewhere:
