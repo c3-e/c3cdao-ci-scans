@@ -68,12 +68,15 @@ def test_design_site_explains_locked_design() -> None:
     text = INDEX.read_text()
     for phrase in (
         "docker buildx bake",
-        "S ⊆ B ∪ E",
+        "S \\ D ⊆ B",
+        "x-ci-scans",
+        "dependency-shape",
         "security-scan / Security Gate",
         "SECURITY_SCAN_BLOCKING",
-        "evidence-compile",
+        "Signed durable evidence",
     ):
         assert phrase in text
+    assert "evidence-compile" not in text
 
 
 def test_design_site_supports_browser_interaction() -> None:

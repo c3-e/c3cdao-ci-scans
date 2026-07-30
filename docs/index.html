@@ -8,7 +8,6 @@
       content="Architecture and onboarding design for the c3cdao central security gate."
     />
     <title>Central Security Gate · System Design</title>
-    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' fill='%23d8232a'/><text x='16' y='21' text-anchor='middle' font-family='sans-serif' font-size='12' font-weight='700' fill='white'>C3</text></svg>" />
     <link rel="stylesheet" href="site.css" />
   </head>
   <body>
@@ -16,7 +15,6 @@
 
     <header class="topbar">
       <a class="brand" href="#overview" aria-label="Central Security Gate home">
-        <span class="brand-mark" aria-hidden="true">C3</span>
         <span>
           <strong>Central Security Gate</strong>
           <small>System design</small>
@@ -45,7 +43,7 @@
           <a href="#architecture">Architecture</a>
           <a href="#contract">Consumer contract</a>
           <a href="#security">Security coverage</a>
-          <a href="#evidence">Evidence model</a>
+          <a href="#evidence">Run records</a>
           <a href="#rollout">Rollout</a>
           <p class="nav-label">Repository docs</p>
           <a href="RUNBOOK.md">Runbook <span>↗</span></a>
@@ -67,8 +65,8 @@
               <h1>Central Security Gate</h1>
               <p class="lede">
                 The reusable workflow reads a consumer's Compose file, Dockerfiles, Helm chart, and caller workflow.
-                It creates the build matrix, checks the rendered release, runs the existing scanners, and signs the
-                run record.
+                It creates the build matrix, checks the rendered release, runs the existing scanners, and publishes
+                one final verdict.
               </p>
             </div>
             <dl class="design-facts" aria-label="Proposed design facts">
@@ -110,16 +108,16 @@
                 <span class="tag">Derived contract</span>
                 <h3>Compose and Helm supply the contract</h3>
                 <p>
-                  Compose defines build and external images. The rendered chart defines deployment, readiness,
-                  and the HTTP smoke target. Lint blocks ambiguous projects before compute-heavy jobs start.
+                  Compose defines build images and digest-pinned runtime dependencies. The rendered chart defines
+                  deployment, readiness, and the HTTP smoke target. Lint blocks ambiguous projects before build.
                 </p>
               </article>
               <article>
-                <span class="tag">Audit</span>
-                <h3>The run produces signed evidence</h3>
+                <span class="tag">Run record</span>
+                <h3>GitHub retains the review artifacts</h3>
                 <p>
-                  A normalized plan digest binds source, images, base images, SBOMs, reports, tool versions,
-                  policy outcomes, and smoke results.
+                  The run publishes the normalized plan, scan-set diff, SBOMs, scanner reports, job summaries,
+                  and the required Security Gate verdict.
                 </p>
               </article>
             </div>
@@ -202,11 +200,7 @@
             </div>
             <div class="pipeline-arrow" aria-hidden="true">→</div>
             <div class="pipeline-column">
-              <span class="pipeline-label">Attest</span>
-              <div class="job">
-                <strong>evidence-compile</strong>
-                <span>verify · bind · sign · retain</span>
-              </div>
+              <span class="pipeline-label">Aggregate</span>
               <div class="job job-final">
                 <strong>Security Gate</strong>
                 <span>one required verdict</span>
@@ -243,7 +237,7 @@
                 <h3>Build services are explicit</h3>
                 <p>
                   Each non-local <code>build:</code> service supplies an <code>image:</code> tag and
-                  <code>healthcheck:</code>. An image-only service declares an external dependency.
+                  <code>healthcheck:</code>. A downloaded dependency declares its role and immutable digest.
                 </p>
               </article>
               <article class="rule">
@@ -289,45 +283,46 @@
       <span class="syntax-key">test:</span> [<span class="syntax-string">CMD</span>, <span class="syntax-string">/app/healthcheck</span>]
 
   <span class="syntax-name">postgres:</span>
-    <span class="syntax-comment"># image-only = declared external</span>
-    <span class="syntax-key">image:</span> pgvector/pgvector:pg16</code></pre>
+    <span class="syntax-key">image:</span> pgvector/pgvector@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    <span class="syntax-key">x-ci-scans:</span>
+      <span class="syntax-name">role:</span> dependency</code></pre>
             </div>
           </div>
 
           <div class="invariant">
             <div>
               <span class="eyebrow">Ship-set invariant</span>
-              <strong>S ⊆ B ∪ E</strong>
+              <strong>S \ D ⊆ B</strong>
             </div>
             <dl>
               <div><dt>S</dt><dd>Images scheduled by the rendered local chart</dd></div>
               <div><dt>B</dt><dd>Tags produced by non-local Compose build services</dd></div>
-              <div><dt>E</dt><dd>Tags declared by image-only Compose services</dd></div>
+              <div><dt>D</dt><dd>Declared digest-pinned runtime dependencies</dd></div>
             </dl>
             <p>
-              Exact normalized matching confirms that the gate built and scanned each application image loaded into
-              kind.
-              A built image absent from the chart produces a warning; a scheduled image absent from B ∪ E blocks.
+              The gate builds and scans every application image. Downloaded dependencies such as PostgreSQL support
+              smoke but are not release artifacts. A scheduled image outside B and D blocks.
             </p>
           </div>
 
           <details class="lint-panel">
             <summary>
               <span>Fail-closed lint catalog</span>
-              <small>12 design rules</small>
+              <small>13 design rules</small>
             </summary>
             <div class="lint-grid">
               <code>compose-missing</code><span>Canonical Compose file is absent.</span>
               <code>compose-no-builds</code><span>No non-local build service exists.</span>
               <code>compose-image-tag</code><span>A build service lacks an explicit image tag.</span>
               <code>compose-healthcheck</code><span>A build service lacks a healthcheck.</span>
+              <code>dependency-shape</code><span>A downloaded dependency lacks its role or immutable digest.</span>
               <code>build-input-explicit</code><span>Build input depends on ambient state or a secret channel.</span>
               <code>build-context-excludes</code><span>Docker context can include environment or key material.</span>
               <code>bake-resolve</code><span>Bake cannot print a normalized plan.</span>
               <code>hardened-args</code><span>Dockerfile lacks the blessed base ARG pair.</span>
               <code>chart-readiness</code><span>A rendered workload lacks readiness.</span>
               <code>smoke-target</code><span>The HTTP smoke target is missing or ambiguous.</span>
-              <code>ship-set</code><span>A scheduled image is neither built nor declared external.</span>
+              <code>ship-set</code><span>A scheduled image is neither built nor a declared dependency.</span>
               <code>smoke-resource-unknown</code><span>The caller selects an unknown gate resource.</span>
             </div>
           </details>
@@ -403,46 +398,43 @@
           <div class="section-heading">
             <div>
               <span class="section-number">05</span>
-              <h2 id="evidence-title">Evidence model</h2>
+              <h2 id="evidence-title">Run records</h2>
             </div>
-            <p>The runtime matrix executes work; one signed manifest supplies the durable audit record.</p>
+            <p>Version 0.6 keeps the existing GitHub Actions summary and artifact model.</p>
           </div>
 
           <div class="evidence-flow">
             <article>
               <span>1</span>
-              <h3>Normalize</h3>
-              <p>Canonicalize the annotated Bake plan and calculate its digest.</p>
+              <h3>Plan</h3>
+              <p>Publish the normalized Bake plan and scan-set diff.</p>
             </article>
             <article>
               <span>2</span>
-              <h3>Bind</h3>
-              <p>Each leg records image, base, SBOM, report, scanner database, and verdict digests.</p>
+              <h3>Build</h3>
+              <p>Publish image archives and SBOMs for each matrix leg.</p>
             </article>
             <article>
               <span>3</span>
-              <h3>Compile</h3>
-              <p>Reject missing, duplicate, unexpected, or plan-mismatched records.</p>
+              <h3>Scan</h3>
+              <p>Publish scanner reports and job summaries.</p>
             </article>
             <article>
               <span>4</span>
-              <h3>Sign and retain</h3>
-              <p>Store one signed manifest in a gate-controlled evidence repository.</p>
+              <h3>Aggregate</h3>
+              <p>Evaluate job results through the required Security Gate check.</p>
             </article>
           </div>
 
           <div class="evidence-record">
             <div>
-              <span class="eyebrow">Signed manifest</span>
-              <h3>Claims covered by the final verdict</h3>
+              <span class="eyebrow">Follow-up</span>
+              <h3>Signed durable evidence</h3>
             </div>
             <ul>
-              <li>Source commit and immutable gate revision</li>
-              <li>Normalized plan and resolved base-image digests</li>
-              <li>Produced image, SBOM, and scanner-report digests</li>
-              <li>Scanner and vulnerability-database versions</li>
-              <li>Policy verdicts, chart result, and smoke result</li>
-              <li>Applicable exclusions and checks skipped by image_only</li>
+              <li>Requires an approved signing identity and verification policy</li>
+              <li>Requires an approved evidence repository and retention policy</li>
+              <li>Requires a compliance need beyond existing Actions records</li>
             </ul>
           </div>
         </section>
@@ -468,7 +460,7 @@
               <span>02</span>
               <div>
                 <h3>Implement on a branch</h3>
-                <p>Add derivation, lint, resource catalog, separated jobs, and evidence compilation.</p>
+                <p>Add derivation, lint, resource catalog, separated jobs, and run-record publication.</p>
               </div>
             </li>
             <li>

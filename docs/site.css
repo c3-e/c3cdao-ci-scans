@@ -120,20 +120,8 @@ code {
 .brand {
   display: flex;
   align-items: center;
-  gap: 11px;
   text-decoration: none;
   line-height: 1.1;
-}
-
-.brand-mark {
-  width: 34px;
-  height: 34px;
-  display: grid;
-  place-items: center;
-  background: var(--accent);
-  color: #fff;
-  font-weight: 800;
-  letter-spacing: -0.04em;
 }
 
 .brand strong,
