@@ -245,7 +245,8 @@
                 <h3>Build inputs stay explicit</h3>
                 <p>
                   Build args use literal mapping values. The gate alone overrides <code>BUILDER_IMAGE</code> and
-                  <code>RUNTIME_IMAGE</code>. Caller lint rejects host pass-through, build secrets, and SSH in v1.
+                  <code>RUNTIME_IMAGE</code>, and every build targets <code>linux/amd64</code>. Caller lint rejects
+                  host pass-through, build secrets, and SSH in v1.
                 </p>
               </article>
               <article class="rule">
@@ -308,7 +309,7 @@
           <details class="lint-panel">
             <summary>
               <span>Fail-closed lint catalog</span>
-              <small>13 design rules</small>
+              <small>14 design rules</small>
             </summary>
             <div class="lint-grid">
               <code>compose-missing</code><span>Canonical Compose file is absent.</span>
@@ -318,6 +319,7 @@
               <code>dependency-shape</code><span>A downloaded dependency lacks its role or immutable digest.</span>
               <code>build-input-explicit</code><span>Build input depends on ambient state or a secret channel.</span>
               <code>build-context-excludes</code><span>Docker context can include environment or key material.</span>
+              <code>compose-platform</code><span>A service pins a platform other than linux/amd64.</span>
               <code>bake-resolve</code><span>Bake cannot print a normalized plan.</span>
               <code>hardened-args</code><span>Dockerfile lacks the blessed base ARG pair.</span>
               <code>chart-readiness</code><span>A rendered workload lacks readiness.</span>
