@@ -1,0 +1,513 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="Architecture and onboarding design for the c3cdao central security gate."
+    />
+    <title>Central Security Gate · System Design</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' fill='%23d8232a'/><text x='16' y='21' text-anchor='middle' font-family='sans-serif' font-size='12' font-weight='700' fill='white'>C3</text></svg>" />
+    <link rel="stylesheet" href="site.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#content">Skip to content</a>
+
+    <header class="topbar">
+      <a class="brand" href="#overview" aria-label="Central Security Gate home">
+        <span class="brand-mark" aria-hidden="true">C3</span>
+        <span>
+          <strong>Central Security Gate</strong>
+          <small>System design</small>
+        </span>
+      </a>
+      <div class="topbar-actions">
+        <span class="status"><span></span> Variant B · proposed</span>
+        <button class="icon-button" type="button" data-theme-toggle aria-label="Switch color theme">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12 3a9 9 0 1 0 9 9c0-.46-.04-.91-.1-1.35A7 7 0 0 1 12 3Z" />
+          </svg>
+        </button>
+        <button class="icon-button menu-toggle" type="button" data-menu-toggle aria-label="Open navigation">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M4 7h16M4 12h16M4 17h16" />
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <div class="shell">
+      <aside class="sidebar" data-sidebar>
+        <nav aria-label="Design documentation">
+          <p class="nav-label">Design</p>
+          <a href="#overview">Overview</a>
+          <a href="#architecture">Architecture</a>
+          <a href="#contract">Consumer contract</a>
+          <a href="#security">Security coverage</a>
+          <a href="#evidence">Evidence model</a>
+          <a href="#rollout">Rollout</a>
+          <p class="nav-label">Repository docs</p>
+          <a href="RUNBOOK.md">Runbook <span>↗</span></a>
+          <a href="INPUTS.md">Inputs <span>↗</span></a>
+          <a href="CI-CONTRACT.md">Current contract <span>↗</span></a>
+          <a href="REQUIREMENTS-MAP.md">Requirements map <span>↗</span></a>
+        </nav>
+        <div class="sidebar-note">
+          <span>Required check</span>
+          <code>security-scan / Security Gate</code>
+        </div>
+      </aside>
+
+      <main id="content">
+        <section class="hero" id="overview">
+          <div class="eyebrow">Architecture proposal / Variant B</div>
+          <div class="hero-grid">
+            <div>
+              <h1>Central Security Gate</h1>
+              <p class="lede">
+                The reusable workflow reads a consumer's Compose file, Dockerfiles, Helm chart, and caller workflow.
+                It creates the build matrix, checks the rendered release, runs the existing scanners, and signs the
+                run record.
+              </p>
+            </div>
+            <dl class="design-facts" aria-label="Proposed design facts">
+              <div><dt>Build engine</dt><dd>Buildx Bake</dd></div>
+              <div><dt>Consumer contract</dt><dd>Compose + Helm</dd></div>
+              <div><dt>Required check</dt><dd>Security Gate</dd></div>
+              <div><dt>Image count</dt><dd>Dynamic matrix</dd></div>
+            </dl>
+          </div>
+          <div class="hero-actions">
+            <a class="button primary" href="#architecture">Execution graph</a>
+            <a class="button secondary" href="REQUIREMENTS-MAP.md">Requirements map</a>
+          </div>
+        </section>
+
+        <section class="section" aria-labelledby="change-title">
+          <div class="section-heading">
+            <div>
+              <span class="section-number">01</span>
+              <h2 id="change-title">Current and proposed contracts</h2>
+            </div>
+            <div class="segmented-control" aria-label="Architecture version">
+              <button type="button" data-view="target" aria-pressed="true">Target</button>
+              <button type="button" data-view="current" aria-pressed="false">Current</button>
+            </div>
+          </div>
+
+          <div class="view-panel is-active" data-view-panel="target">
+            <div class="comparison-grid">
+              <article>
+                <span class="tag accent">Target</span>
+                <h3>The gate executes the plan</h3>
+                <p>
+                  <code>docker buildx bake --print</code> produces the reviewed plan. The gate executes the same
+                  targets with the same input, environment, tags, and base-image overrides.
+                </p>
+              </article>
+              <article>
+                <span class="tag">Derived contract</span>
+                <h3>Compose and Helm supply the contract</h3>
+                <p>
+                  Compose defines build and external images. The rendered chart defines deployment, readiness,
+                  and the HTTP smoke target. Lint blocks ambiguous projects before compute-heavy jobs start.
+                </p>
+              </article>
+              <article>
+                <span class="tag">Audit</span>
+                <h3>The run produces signed evidence</h3>
+                <p>
+                  A normalized plan digest binds source, images, base images, SBOMs, reports, tool versions,
+                  policy outcomes, and smoke results.
+                </p>
+              </article>
+            </div>
+          </div>
+
+          <div class="view-panel" data-view-panel="current" hidden>
+            <div class="comparison-grid">
+              <article>
+                <span class="tag muted">v0.5.x</span>
+                <h3>Consumer-owned execution</h3>
+                <p>
+                  <code>Makefile.ci</code> emits a JSON manifest and implements build, security-context, and smoke
+                  prerequisite targets. The gate verifies outputs after those scripts run.
+                </p>
+              </article>
+              <article>
+                <span class="tag muted">Positional</span>
+                <h3>Primary plus extras</h3>
+                <p>
+                  <code>scan_image</code> names the primary image. Remaining manifest entries become extras with
+                  separate artifact names and implicit local tags.
+                </p>
+              </article>
+              <article>
+                <span class="tag muted">Run-local</span>
+                <h3>Run-local evidence</h3>
+                <p>
+                  The current workflow stores plans, images, SBOMs, and reports as independent job outputs and
+                  Actions artifacts.
+                </p>
+              </article>
+            </div>
+          </div>
+        </section>
+
+        <section class="section" id="architecture" aria-labelledby="architecture-title">
+          <div class="section-heading">
+            <div>
+              <span class="section-number">02</span>
+              <h2 id="architecture-title">Execution architecture</h2>
+            </div>
+            <p>Build completes once. Smoke and vulnerability scans then run in parallel.</p>
+          </div>
+
+          <div class="pipeline" aria-label="Target GitHub Actions job graph">
+            <div class="pipeline-column">
+              <span class="pipeline-label">Preflight</span>
+              <div class="job job-accent">
+                <strong>plan</strong>
+                <span>lint · Bake plan · chart render</span>
+              </div>
+            </div>
+            <div class="pipeline-arrow" aria-hidden="true">→</div>
+            <div class="pipeline-column fan">
+              <span class="pipeline-label">Parallel work</span>
+              <div class="job">
+                <strong>build × N</strong>
+                <span>image · SBOM · digest</span>
+              </div>
+              <div class="job compact">
+                <strong>helm-check</strong>
+                <span>render · PSS</span>
+              </div>
+              <div class="job compact">
+                <strong>source scans</strong>
+                <span>secrets · SAST</span>
+              </div>
+            </div>
+            <div class="pipeline-arrow" aria-hidden="true">→</div>
+            <div class="pipeline-column fan">
+              <span class="pipeline-label">After build</span>
+              <div class="job">
+                <strong>image-scan × N</strong>
+                <span>Trivy · Grype</span>
+              </div>
+              <div class="job">
+                <strong>cluster-smoke</strong>
+                <span>kind · Helm · health</span>
+              </div>
+            </div>
+            <div class="pipeline-arrow" aria-hidden="true">→</div>
+            <div class="pipeline-column">
+              <span class="pipeline-label">Attest</span>
+              <div class="job">
+                <strong>evidence-compile</strong>
+                <span>verify · bind · sign · retain</span>
+              </div>
+              <div class="job job-final">
+                <strong>Security Gate</strong>
+                <span>one required verdict</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="callout">
+            <div class="callout-mark">i</div>
+            <div>
+              <strong>Build and scan remain separate jobs</strong>
+              <p>
+                GitHub Actions resolves dependencies at job boundaries. A combined job would delay cluster smoke
+                until vulnerability scanning finishes. Separate jobs let smoke and image scanning consume the same
+                build artifacts at the same time.
+              </p>
+            </div>
+          </div>
+        </section>
+
+        <section class="section" id="contract" aria-labelledby="contract-title">
+          <div class="section-heading">
+            <div>
+              <span class="section-number">03</span>
+              <h2 id="contract-title">Consumer contract</h2>
+            </div>
+            <p>Onboarding documentation states these conventions; caller lint enforces them.</p>
+          </div>
+
+          <div class="contract-layout">
+            <div class="contract-rules">
+              <article class="rule">
+                <span>Compose</span>
+                <h3>Build services are explicit</h3>
+                <p>
+                  Each non-local <code>build:</code> service supplies an <code>image:</code> tag and
+                  <code>healthcheck:</code>. An image-only service declares an external dependency.
+                </p>
+              </article>
+              <article class="rule">
+                <span>Dockerfile</span>
+                <h3>Build inputs stay explicit</h3>
+                <p>
+                  Build args use literal mapping values. The gate alone overrides <code>BUILDER_IMAGE</code> and
+                  <code>RUNTIME_IMAGE</code>. Caller lint rejects host pass-through, build secrets, and SSH in v1.
+                </p>
+              </article>
+              <article class="rule">
+                <span>Helm</span>
+                <h3>Runtime intent stays in the chart</h3>
+                <p>
+                  Deployable workloads define readiness. Exactly one Service-backed HTTP readiness target supplies
+                  the post-deploy smoke request.
+                </p>
+              </article>
+              <article class="rule">
+                <span>Caller</span>
+                <h3>The request stays thin</h3>
+                <p>
+                  The caller selects Compose/chart paths, release, namespace, <code>image_only</code>, and
+                  gate-owned smoke resources. It maps four registry secrets explicitly.
+                </p>
+              </article>
+            </div>
+
+            <div class="code-window" aria-label="Conforming Compose example">
+              <div class="code-title">
+                <span>docker-compose.yml</span>
+                <span>conforming build service</span>
+              </div>
+              <pre><code><span class="syntax-key">services:</span>
+  <span class="syntax-name">api:</span>
+    <span class="syntax-key">image:</span> app-api:ci
+    <span class="syntax-key">build:</span>
+      <span class="syntax-key">context:</span> .
+      <span class="syntax-key">dockerfile:</span> containers/api/Dockerfile
+      <span class="syntax-key">args:</span>
+        <span class="syntax-name">APP_PATH:</span> apps/api
+    <span class="syntax-key">healthcheck:</span>
+      <span class="syntax-key">test:</span> [<span class="syntax-string">CMD</span>, <span class="syntax-string">/app/healthcheck</span>]
+
+  <span class="syntax-name">postgres:</span>
+    <span class="syntax-comment"># image-only = declared external</span>
+    <span class="syntax-key">image:</span> pgvector/pgvector:pg16</code></pre>
+            </div>
+          </div>
+
+          <div class="invariant">
+            <div>
+              <span class="eyebrow">Ship-set invariant</span>
+              <strong>S ⊆ B ∪ E</strong>
+            </div>
+            <dl>
+              <div><dt>S</dt><dd>Images scheduled by the rendered local chart</dd></div>
+              <div><dt>B</dt><dd>Tags produced by non-local Compose build services</dd></div>
+              <div><dt>E</dt><dd>Tags declared by image-only Compose services</dd></div>
+            </dl>
+            <p>
+              Exact normalized matching confirms that the gate built and scanned each application image loaded into
+              kind.
+              A built image absent from the chart produces a warning; a scheduled image absent from B ∪ E blocks.
+            </p>
+          </div>
+
+          <details class="lint-panel">
+            <summary>
+              <span>Fail-closed lint catalog</span>
+              <small>12 design rules</small>
+            </summary>
+            <div class="lint-grid">
+              <code>compose-missing</code><span>Canonical Compose file is absent.</span>
+              <code>compose-no-builds</code><span>No non-local build service exists.</span>
+              <code>compose-image-tag</code><span>A build service lacks an explicit image tag.</span>
+              <code>compose-healthcheck</code><span>A build service lacks a healthcheck.</span>
+              <code>build-input-explicit</code><span>Build input depends on ambient state or a secret channel.</span>
+              <code>build-context-excludes</code><span>Docker context can include environment or key material.</span>
+              <code>bake-resolve</code><span>Bake cannot print a normalized plan.</span>
+              <code>hardened-args</code><span>Dockerfile lacks the blessed base ARG pair.</span>
+              <code>chart-readiness</code><span>A rendered workload lacks readiness.</span>
+              <code>smoke-target</code><span>The HTTP smoke target is missing or ambiguous.</span>
+              <code>ship-set</code><span>A scheduled image is neither built nor declared external.</span>
+              <code>smoke-resource-unknown</code><span>The caller selects an unknown gate resource.</span>
+            </div>
+          </details>
+        </section>
+
+        <section class="section" id="security" aria-labelledby="security-title">
+          <div class="section-heading">
+            <div>
+              <span class="section-number">04</span>
+              <h2 id="security-title">Preserved security coverage</h2>
+            </div>
+            <p>The redesign moves build and smoke logic into the gate while preserving scan coverage and enforcement.</p>
+          </div>
+
+          <div class="scan-table" role="table" aria-label="Security jobs">
+            <div class="scan-row scan-head" role="row">
+              <span role="columnheader">Job</span>
+              <span role="columnheader">Coverage</span>
+              <span role="columnheader">Posture</span>
+            </div>
+            <div class="scan-row" role="row">
+              <strong role="cell">secrets-scan</strong>
+              <span role="cell">TruffleHog verified-secret scan</span>
+              <span role="cell"><span class="tag">Ramp controlled</span></span>
+            </div>
+            <div class="scan-row" role="row">
+              <strong role="cell">sast-semgrep</strong>
+              <span role="cell">Semgrep source analysis</span>
+              <span role="cell"><span class="tag muted">Warn-only</span></span>
+            </div>
+            <div class="scan-row" role="row">
+              <strong role="cell">sast-sonarqube</strong>
+              <span role="cell">Ephemeral SonarQube analysis</span>
+              <span role="cell"><span class="tag muted">Warn-only</span></span>
+            </div>
+            <div class="scan-row" role="row">
+              <strong role="cell">helm-check</strong>
+              <span role="cell">Helm lint/template + restricted PSS</span>
+              <span role="cell"><span class="tag accent">Blocking</span></span>
+            </div>
+            <div class="scan-row" role="row">
+              <strong role="cell">image-scan × N</strong>
+              <span role="cell">Trivy + Grype image and SBOM scans</span>
+              <span role="cell"><span class="tag">Ramp controlled</span></span>
+            </div>
+            <div class="scan-row" role="row">
+              <strong role="cell">cluster-smoke</strong>
+              <span role="cell">kind deployment, readiness, HTTP probe</span>
+              <span role="cell"><span class="tag">Ramp controlled</span></span>
+            </div>
+          </div>
+
+          <div class="two-column">
+            <article>
+              <h3>Enforcement ramp</h3>
+              <p>
+                <code>SECURITY_SCAN_BLOCKING</code> keeps vulnerability findings and smoke failures advisory during
+                onboarding, then makes them blocking after the canary produces stable signal. Skipped, cancelled,
+                and infrastructure-failed blocking jobs still fail the aggregate gate.
+              </p>
+            </article>
+            <article>
+              <h3>Hardened bases</h3>
+              <p>
+                The gate handles Chainguard and Iron Bank authentication and failover. The major version requires
+                hardened bases for each consumer build.
+              </p>
+            </article>
+          </div>
+        </section>
+
+        <section class="section" id="evidence" aria-labelledby="evidence-title">
+          <div class="section-heading">
+            <div>
+              <span class="section-number">05</span>
+              <h2 id="evidence-title">Evidence model</h2>
+            </div>
+            <p>The runtime matrix executes work; one signed manifest supplies the durable audit record.</p>
+          </div>
+
+          <div class="evidence-flow">
+            <article>
+              <span>1</span>
+              <h3>Normalize</h3>
+              <p>Canonicalize the annotated Bake plan and calculate its digest.</p>
+            </article>
+            <article>
+              <span>2</span>
+              <h3>Bind</h3>
+              <p>Each leg records image, base, SBOM, report, scanner database, and verdict digests.</p>
+            </article>
+            <article>
+              <span>3</span>
+              <h3>Compile</h3>
+              <p>Reject missing, duplicate, unexpected, or plan-mismatched records.</p>
+            </article>
+            <article>
+              <span>4</span>
+              <h3>Sign and retain</h3>
+              <p>Store one signed manifest in a gate-controlled evidence repository.</p>
+            </article>
+          </div>
+
+          <div class="evidence-record">
+            <div>
+              <span class="eyebrow">Signed manifest</span>
+              <h3>Claims covered by the final verdict</h3>
+            </div>
+            <ul>
+              <li>Source commit and immutable gate revision</li>
+              <li>Normalized plan and resolved base-image digests</li>
+              <li>Produced image, SBOM, and scanner-report digests</li>
+              <li>Scanner and vulnerability-database versions</li>
+              <li>Policy verdicts, chart result, and smoke result</li>
+              <li>Applicable exclusions and checks skipped by image_only</li>
+            </ul>
+          </div>
+        </section>
+
+        <section class="section" id="rollout" aria-labelledby="rollout-title">
+          <div class="section-heading">
+            <div>
+              <span class="section-number">06</span>
+              <h2 id="rollout-title">Rollout and proof</h2>
+            </div>
+            <p>The major release removes Makefile.ci and moves consumers to the derived contract.</p>
+          </div>
+
+          <ol class="timeline">
+            <li>
+              <span>01</span>
+              <div>
+                <h3>Prove Bake semantics</h3>
+                <p>Verify profiles, ARG precedence, scrubbed environment behavior, tags, and N-image plans.</p>
+              </div>
+            </li>
+            <li>
+              <span>02</span>
+              <div>
+                <h3>Implement on a branch</h3>
+                <p>Add derivation, lint, resource catalog, separated jobs, and evidence compilation.</p>
+              </div>
+            </li>
+            <li>
+              <span>03</span>
+              <div>
+                <h3>Run a consumer canary</h3>
+                <p>
+                  Point a representative consumer's canary branch at the redesign. Compare baseline and redesign
+                  runs for the same commit: jobs, targets, artifacts, findings, posture, and final verdict.
+                </p>
+              </div>
+            </li>
+            <li>
+              <span>04</span>
+              <div>
+                <h3>Exercise the chart path</h3>
+                <p>
+                  An <code>image_only</code> canary cannot exercise Helm or cluster smoke. Use a chart-owning
+                  consumer to verify ship-set, readiness, resource-catalog, and cluster-smoke behavior.
+                </p>
+              </div>
+            </li>
+            <li>
+              <span>05</span>
+              <div>
+                <h3>Publish the major version</h3>
+                <p>Pin consumers to the immutable workflow revision and retain the stable required-check context.</p>
+              </div>
+            </li>
+          </ol>
+        </section>
+
+        <footer>
+          <p>Design source: <code>.plan/redesign-bake.md</code></p>
+          <p>Current implementation: <a href="https://github.com/c3-e/c3cdao-ci-scans/blob/main/.github/workflows/reusable-security-gate.yml">reusable-security-gate.yml</a></p>
+        </footer>
+      </main>
+    </div>
+
+    <script src="site.js"></script>
+  </body>
+</html>

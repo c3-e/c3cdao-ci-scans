@@ -21,8 +21,8 @@ steps 7–10 use these names.
 
 | Repo shape | Convention |
 |---|---|
-| **Single-app usecase repo** (one app per repo, e.g. `c3cdao-dsa-ecpilot`) | Scan target branch is the **bare** name **`ci-scans`**. There is only one usecase in the repo, so no token is needed. The helm-chart side mirrors this with a bare **`ci-chart`**. |
-| **Shared umbrella repo** (many usecases integrated in one repo, i.e. `c3cdao-apps`) | A token is required to avoid collisions — use **`ci-chart-<usecasename>`** (e.g. `ci-chart-ecpilot`) so each usecase's chart branch coexists. |
+| **Single-app usecase repo** (one app per repo) | Scan target branch is the **bare** name **`ci-scans`**. There is only one usecase in the repo, so no token is needed. The helm-chart side mirrors this with a bare **`ci-chart`**. |
+| **Shared umbrella repo** (many usecases integrated in one repo) | A token is required to avoid collisions. Use **`ci-chart-<usecasename>`** so each usecase's chart branch coexists. |
 | **Canary (trigger) branch** (all shapes) | The canonical name **`ci-scans-canary`** — a trigger-only branch cut off the scan target head (step 8). |
 
 Keep a single hyphenated branch as the scan target; a slash form like
@@ -233,8 +233,7 @@ a trigger-only PR into it from the canonical canary branch **`ci-scans-canary`**
    fire on drafts just the same, draft status signals "trigger vehicle, not a
    merge candidate", and it mutes the re-review churn a wildcard `CODEOWNERS`
    rule would otherwise generate on every push.
-4. Comment the per-job results table and run URL on the canary PR as evidence
-   (see `c3-e/c3cdao-ppubs#33` for the reference shape).
+4. Comment the per-job results table and run URL on the canary PR as evidence.
 
 **Fleet testing:** canary **one** consumer through a pin/secrets change before
 fanning out many repos. Do not re-trigger a full multi-repo Security Scan
@@ -415,8 +414,8 @@ This is DAG `needs:` wiring, not in-job cancellation. Prior runs on the same ref
 ### E. Why scan the shared umbrella repo at all?
 
 Each usecase repo already builds and scans its own images, so a gate run on
-`c3cdao-apps` is not primarily an image scan — image and SAST results there
-largely duplicate the source repos' runs. When onboarded, its purpose is a
+the shared umbrella repo is not primarily an image scan — image and SAST results
+there largely duplicate the source repos' runs. When onboarded, its purpose is a
 left-shifted final integration check on the composed umbrella chart before
 handoff to the SecondFront / Game Warden vendor pipeline: umbrella-level values
 overrides can silently regress a subchart's securityContext/PSS posture,
@@ -430,14 +429,12 @@ verify with SecondFront before relying on it.)
 
 ### F. Consumer onboarding blockers (checklist)
 
-Gate product gaps for full-cluster smoke are tracked as [#23](https://github.com/c3-joshchiu/c3cdao-ci-scans/issues/23)
-(manifest-extras kind-load) and [#24](https://github.com/c3-joshchiu/c3cdao-ci-scans/issues/24)
-(smoke Secrets contract). **Consumer-owned** readiness gaps that repeatedly turn
-Security Scan red — restricted PSS on charts, hardened-base Dockerfiles, registry
-pull-secret pairs, and the canary-before-fleet process — live in
-[#27](https://github.com/c3-joshchiu/c3cdao-ci-scans/issues/27). Point adoption
-PRs there instead of inventing per-repo mystery reds; do not fan out an 8-repo
-Security Scan matrix until one canary's real fail mode is fixed.
+Track gate product gaps for full-cluster smoke in the
+[central scanner issue tracker](https://github.com/c3-e/c3cdao-ci-scans/issues).
+Track consumer readiness gaps in the corresponding adoption issue, including
+restricted PSS on charts, hardened-base Dockerfiles, registry pull-secret pairs,
+and the canary-before-fleet process. Link adoption PRs to those issues. Expand
+the Security Scan matrix after one canary verifies the fix.
 
 ### G. Updating the reusable workflow (maintainer)
 
