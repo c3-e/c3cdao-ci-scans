@@ -69,7 +69,7 @@ def test_design_site_explains_locked_design() -> None:
     for phrase in (
         "docker buildx bake",
         "S \\ D ⊆ B",
-        "x-ci-scans",
+        "x-downloaded-dependency",
         "dependency-shape",
         "security-scan / Security Gate",
         "SECURITY_SCAN_BLOCKING",

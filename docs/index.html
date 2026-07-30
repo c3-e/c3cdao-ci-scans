@@ -237,7 +237,8 @@
                 <h3>Build services are explicit</h3>
                 <p>
                   Each non-local <code>build:</code> service supplies an <code>image:</code> tag and
-                  <code>healthcheck:</code>. A downloaded dependency declares its role and immutable digest.
+                  <code>healthcheck:</code>. A downloaded dependency declares its role, immutable digest, and
+                  chart-facing tag.
                 </p>
               </article>
               <article class="rule">
@@ -285,8 +286,8 @@
 
   <span class="syntax-name">postgres:</span>
     <span class="syntax-key">image:</span> pgvector/pgvector@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-    <span class="syntax-key">x-ci-scans:</span>
-      <span class="syntax-name">role:</span> dependency</code></pre>
+    <span class="syntax-key">x-downloaded-dependency:</span>
+      <span class="syntax-name">chart-tag:</span> <span class="syntax-string">0.8.1-pg17</span></code></pre>
             </div>
           </div>
 
@@ -309,14 +310,15 @@
           <details class="lint-panel">
             <summary>
               <span>Fail-closed lint catalog</span>
-              <small>14 design rules</small>
+              <small>15 design rules</small>
             </summary>
             <div class="lint-grid">
               <code>compose-missing</code><span>Canonical Compose file is absent.</span>
               <code>compose-no-builds</code><span>No non-local build service exists.</span>
+              <code>matrix-cap</code><span>More than ten non-local build services exist.</span>
               <code>compose-image-tag</code><span>A build service lacks an explicit image tag.</span>
               <code>compose-healthcheck</code><span>A build service lacks a healthcheck.</span>
-              <code>dependency-shape</code><span>A downloaded dependency lacks its role or immutable digest.</span>
+              <code>dependency-shape</code><span>A downloaded dependency lacks its role, immutable digest, or declared tag.</span>
               <code>build-input-explicit</code><span>Build input depends on ambient state or a secret channel.</span>
               <code>build-context-excludes</code><span>Docker context can include environment or key material.</span>
               <code>compose-platform</code><span>A service pins a platform other than linux/amd64.</span>
