@@ -159,10 +159,64 @@
               <span class="section-number">02</span>
               <h2 id="architecture-title">Execution architecture</h2>
             </div>
-            <p>Build completes once. Smoke and vulnerability scans then run in parallel.</p>
+            <p>Committed files feed one derivation. Build fans out per image; smoke and scans share its artifacts; one check aggregates.</p>
+          </div>
+
+          <p class="eyebrow">One file per concern</p>
+          <div class="evidence-flow">
+            <article>
+              <span>1</span>
+              <h3>App code</h3>
+              <p>
+                Reads its resources from the environment, such as <code>DATABASE_URL</code>. It never knows who
+                provided the database: a Compose container on a laptop, a pod in the smoke cluster, or a managed
+                service in production.
+              </p>
+            </article>
+            <article>
+              <span>2</span>
+              <h3>Compose holds build truth</h3>
+              <p>
+                The one place that says which images this repository produces (<code>build:</code>) and which it
+                merely downloads (<code>x-downloaded-dependency</code>). Local development runs this file daily,
+                so it cannot silently rot.
+              </p>
+            </article>
+            <article>
+              <span>3</span>
+              <h3>The chart holds runtime truth</h3>
+              <p>
+                The one place that says how images run: readiness, Services, environment wiring from Secrets.
+                Standard Kubernetes fields only. CI reads the chart and never extends it.
+              </p>
+            </article>
+            <article>
+              <span>4</span>
+              <h3>The caller is a pointer</h3>
+              <p>
+                Data, never behavior: which Compose file, which chart, which smoke resources, pinned to which gate
+                revision. The last cross-repository surface, and it is declarative.
+              </p>
+            </article>
           </div>
 
           <div class="pipeline" aria-label="Target GitHub Actions job graph">
+            <div class="pipeline-column fan">
+              <span class="pipeline-label">Sources of truth</span>
+              <div class="job compact">
+                <strong>compose + Dockerfiles</strong>
+                <span>build facts</span>
+              </div>
+              <div class="job compact">
+                <strong>helm chart</strong>
+                <span>runtime facts</span>
+              </div>
+              <div class="job compact">
+                <strong>caller</strong>
+                <span>paths · pin · secrets</span>
+              </div>
+            </div>
+            <div class="pipeline-arrow" aria-hidden="true">→</div>
             <div class="pipeline-column">
               <span class="pipeline-label">Preflight</span>
               <div class="job job-accent">
@@ -305,6 +359,34 @@
               The gate builds and scans every application image. Downloaded dependencies such as PostgreSQL support
               smoke but are not release artifacts. A scheduled image outside B and D blocks.
             </p>
+          </div>
+
+          <p class="eyebrow">One URL, three database providers</p>
+          <div class="comparison-grid">
+            <article>
+              <span class="tag">Local dev</span>
+              <h3>Compose provides it</h3>
+              <p>
+                A digest-pinned pgvector container beside the app. Tests and data ingestion point
+                <code>DATABASE_URL</code> at it.
+              </p>
+            </article>
+            <article>
+              <span class="tag">CI smoke</span>
+              <h3>The gate provides it</h3>
+              <p>
+                A gate-owned module stands up the same database in the smoke cluster before the chart installs and
+                publishes the connection URL as a Secret.
+              </p>
+            </article>
+            <article>
+              <span class="tag">Production</span>
+              <h3>The platform provides it</h3>
+              <p>
+                A managed database service; operations create the same Secret from its endpoint. The application
+                code is identical in all three environments.
+              </p>
+            </article>
           </div>
 
           <details class="lint-panel">

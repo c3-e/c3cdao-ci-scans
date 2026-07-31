@@ -74,6 +74,9 @@ def test_design_site_explains_locked_design() -> None:
         "security-scan / Security Gate",
         "SECURITY_SCAN_BLOCKING",
         "Signed durable evidence",
+        "DATABASE_URL",
+        "One file per concern",
+        "Sources of truth",
     ):
         assert phrase in text
     assert "evidence-compile" not in text
