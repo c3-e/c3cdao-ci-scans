@@ -1,0 +1,58 @@
+services:
+  svc-a:
+    build:
+      context: .
+      args:
+        SVC_NAME: svc-a
+    image: bake-spike/svc-a:0.1.0
+    platform: linux/amd64
+    healthcheck:
+      test: ["CMD", "test", "-f", "/svc.txt"]
+      interval: 30s
+
+  svc-b:
+    build:
+      context: .
+      args:
+        SVC_NAME: svc-b
+    image: bake-spike/svc-b:0.1.0
+    platform: linux/amd64
+    healthcheck:
+      test: ["CMD", "test", "-f", "/svc.txt"]
+      interval: 30s
+
+  svc-c:
+    build:
+      context: .
+      args:
+        SVC_NAME: svc-c
+    image: bake-spike/svc-c:0.1.0
+    platform: linux/amd64
+    healthcheck:
+      test: ["CMD", "test", "-f", "/svc.txt"]
+      interval: 30s
+
+  # Local-only tooling service: derivation must never see it (SPIKE-01).
+  svc-local:
+    profiles: [local]
+    build:
+      context: .
+      args:
+        SVC_NAME: svc-local
+    image: bake-spike/svc-local:0.1.0
+    platform: linux/amd64
+    healthcheck:
+      test: ["CMD", "test", "-f", "/svc.txt"]
+      interval: 30s
+
+  # Downloaded runtime dependency: image-only, digest-pinned, declared.
+  dep-db:
+    image: pgvector/pgvector:pg16@sha256:a36250871de0833b8757561c72f2477ef1ddd1101afa4e617fb552e0de514c6b
+    platform: linux/amd64
+    x-downloaded-dependency:
+      chart-tag: pgvector/pgvector:pg16
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres"]
+      interval: 30s
+    environment:
+      POSTGRES_PASSWORD: fixture-only

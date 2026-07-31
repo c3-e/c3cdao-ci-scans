@@ -1,0 +1,115 @@
+# THROWAWAY: bake spike proofs on a hosted runner.
+# Exists only on the spike proof branch; never merged. Re-runs the four
+# fixture proofs from tests/fixtures/bake/README.md plus the baseline
+# smoke commands on ubuntu-latest. Delete the branch after the gate
+# closes on this run's URL.
+name: bake-spike-proofs
+
+on:
+  push:
+    branches: [spike/bake-proofs]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  spikes:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f  # v3
+
+      - name: Proof 1a — plan target sets (default vs explicit)
+        working-directory: tests/fixtures/bake/n3-local-profile
+        run: |
+          set -euo pipefail
+          default=$(docker buildx bake -f docker-compose.yml --print 2>/dev/null \
+            | python3 -c "import json,sys; print(sorted(json.load(sys.stdin)['target']))")
+          explicit=$(docker buildx bake -f docker-compose.yml --print svc-a svc-b svc-c 2>/dev/null \
+            | python3 -c "import json,sys; print(sorted(json.load(sys.stdin)['target']))")
+          echo "default=$default"
+          echo "explicit=$explicit"
+          test "$default" = "['svc-a', 'svc-b', 'svc-c', 'svc-local']"
+          test "$explicit" = "['svc-a', 'svc-b', 'svc-c']"
+
+      # bake-action viability leg: execution through docker/bake-action.
+      - name: Proof 1b — execute explicit targets via bake-action
+        uses: docker/bake-action@d3418bd7d0e9324001bca92fa8ba175ea7e6dc9b  # v7.3.0
+        with:
+          workdir: tests/fixtures/bake/n3-local-profile
+          files: docker-compose.yml
+          targets: |
+            svc-a
+            svc-b
+            svc-c
+          load: true
+
+      - name: Proof 1c — built set excludes local-profile service
+        run: |
+          set -euo pipefail
+          docker images "bake-spike/*" --format "{{.Repository}}:{{.Tag}}" | sort | tee /tmp/built.txt
+          printf 'bake-spike/svc-a:0.1.0\nbake-spike/svc-b:0.1.0\nbake-spike/svc-c:0.1.0\n' | diff - /tmp/built.txt
+
+      - name: Proof 2 — set-override precedence, plan and execution
+        working-directory: tests/fixtures/bake/layered-args
+        run: |
+          set -euo pipefail
+          plan_default=$(docker buildx bake -f docker-compose.yml --print 2>/dev/null \
+            | python3 -c "import json,sys; print(json.load(sys.stdin)['target']['layered']['args']['RUNTIME_IMAGE'])")
+          plan_set=$(docker buildx bake -f docker-compose.yml --set '*.args.RUNTIME_IMAGE=spike-x' --print 2>/dev/null \
+            | python3 -c "import json,sys; print(json.load(sys.stdin)['target']['layered']['args']['RUNTIME_IMAGE'])")
+          echo "plan_default=$plan_default plan_set=$plan_set"
+          test "$plan_default" = "compose-args"
+          test "$plan_set" = "spike-x"
+          docker buildx bake -f docker-compose.yml --set '*.args.RUNTIME_IMAGE=spike-x' --load --no-cache
+          runtime=$(docker run --rm bake-spike/layered:0.1.0)
+          echo "runtime=$runtime"
+          test "$runtime" = "RUNTIME_IMAGE=spike-x"
+
+      - name: Proof 3 — scrubbed-env determinism and interpolation provenance
+        working-directory: tests/fixtures/bake/env-interpolated
+        run: |
+          set -euo pipefail
+          arg_scrubbed=$(env -i PATH="$PATH" HOME="$HOME" docker buildx bake -f docker-compose.yml --print 2>/dev/null \
+            | python3 -c "import json,sys; print(json.load(sys.stdin)['target']['app']['args']['EXTRA_ARG'])")
+          arg_hostenv=$(env -i PATH="$PATH" HOME="$HOME" HOST_VAR=from-host-env docker buildx bake -f docker-compose.yml --print 2>/dev/null \
+            | python3 -c "import json,sys; print(json.load(sys.stdin)['target']['app']['args']['EXTRA_ARG'])")
+          echo "scrubbed=$arg_scrubbed hostenv=$arg_hostenv"
+          test "$arg_scrubbed" = "from-env-file"
+          test "$arg_hostenv" = "from-host-env"
+          env -i PATH="$PATH" HOME="$HOME" docker buildx bake -f docker-compose.yml --print > /tmp/a.json 2>/dev/null
+          env -i PATH="$PATH" HOME="$HOME" docker buildx bake -f docker-compose.yml --print > /tmp/b.json 2>/dev/null
+          diff /tmp/a.json /tmp/b.json
+          echo DETERMINISTIC
+
+      - name: Proof 4 — plan tags equal rendered chart references (N=1, N=3)
+        run: |
+          set -euo pipefail
+          chart_tags() { helm template "$1/chart" | sed -nE 's/.*image: "?([^" ]+)"?.*/\1/p' | sort; }
+          diff <(cd tests/fixtures/bake/n1 && docker buildx bake -f docker-compose.yml --print 2>/dev/null \
+            | python3 -c "import json,sys; [print(t) for tgt in json.load(sys.stdin)['target'].values() for t in tgt['tags']]" | sort) \
+            <(chart_tags tests/fixtures/bake/n1)
+          echo N1_MATCH
+          diff <(cd tests/fixtures/bake/n3-local-profile && docker buildx bake -f docker-compose.yml --print svc-a svc-b svc-c 2>/dev/null \
+            | python3 -c "import json,sys; [print(t) for tgt in json.load(sys.stdin)['target'].values() for t in tgt['tags']]" | sort) \
+            <(chart_tags tests/fixtures/bake/n3-local-profile)
+          echo N3_MATCH
+
+      # Cumulative smoke: baseline commands green at this same commit.
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e  # v6
+
+      - name: Baseline — pytest
+        run: uv run --with pytest --with pyyaml --with jsonschema pytest tests/ -q
+
+      - name: Baseline — pre-commit
+        run: |
+          uv tool install pre-commit
+          pre-commit run --all-files
+
+      - name: Baseline — lint fixtures
+        run: scripts/test-lint-fixtures.sh

@@ -1,0 +1,13 @@
+services:
+  app:
+    build:
+      context: .
+      args:
+        # Deliberate violation of the future build-input-explicit lint:
+        # the plan's value depends on host env / .env, not the file alone.
+        EXTRA_ARG: ${HOST_VAR:-default-value}
+    image: bake-spike/env-interp:0.1.0
+    platform: linux/amd64
+    healthcheck:
+      test: ["CMD", "test", "-f", "/arg.txt"]
+      interval: 30s
