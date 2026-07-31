@@ -1,0 +1,52 @@
+{
+  "group": {
+    "default": {
+      "targets": [
+        "svc-a",
+        "svc-b",
+        "svc-c"
+      ]
+    }
+  },
+  "target": {
+    "svc-a": {
+      "context": ".",
+      "dockerfile": "Dockerfile",
+      "args": {
+        "SVC_NAME": "svc-a"
+      },
+      "tags": [
+        "bake-spike/svc-a:0.1.0"
+      ],
+      "platforms": [
+        "linux/amd64"
+      ]
+    },
+    "svc-b": {
+      "context": ".",
+      "dockerfile": "Dockerfile",
+      "args": {
+        "SVC_NAME": "svc-b"
+      },
+      "tags": [
+        "bake-spike/svc-b:0.1.0"
+      ],
+      "platforms": [
+        "linux/amd64"
+      ]
+    },
+    "svc-c": {
+      "context": ".",
+      "dockerfile": "Dockerfile",
+      "args": {
+        "SVC_NAME": "svc-c"
+      },
+      "tags": [
+        "bake-spike/svc-c:0.1.0"
+      ],
+      "platforms": [
+        "linux/amd64"
+      ]
+    }
+  }
+}
