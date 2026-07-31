@@ -1,0 +1,6 @@
+apiVersion: v2
+name: ship-set-violation
+description: >-
+  Minimal chart scheduling one built image, one declared dependency, and one
+  offending image that is neither (ghost) -- drives the ship-set block.
+version: 0.1.0

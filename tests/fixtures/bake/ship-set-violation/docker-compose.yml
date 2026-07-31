@@ -1,0 +1,26 @@
+# Workflow-level lint fixture: the chart schedules an image that is neither
+# built from this compose file nor declared as a downloaded dependency
+# (S \ D is not a subset of B) -- ship-set must block before any build.
+# Conforming in every other respect so ship-set is the only firing rule.
+services:
+  app:
+    build:
+      context: .
+      args:
+        SVC_NAME: app
+    image: ship-set/app:0.1.0
+    platform: linux/amd64
+    healthcheck:
+      test: ["CMD", "test", "-f", "/svc.txt"]
+      interval: 30s
+
+  dep-db:
+    image: pgvector/pgvector:pg16@sha256:a36250871de0833b8757561c72f2477ef1ddd1101afa4e617fb552e0de514c6b
+    platform: linux/amd64
+    x-downloaded-dependency:
+      chart-tag: pgvector/pgvector:pg16
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres"]
+      interval: 30s
+    environment:
+      POSTGRES_PASSWORD: fixture-only

@@ -1,6 +1,6 @@
-# Lint fixture: minimal caller — every input left to its contract default
-# (scan_image app:local, contract_file Makefile.ci). Clean — the defaults
-# path through the blocking contract validation is exercised.
+# Lint fixture: minimal v0.6 caller — every input left to its default
+# (compose_file docker-compose.yml, image_only false). Clean: gate ref
+# pinned by full commit SHA, four secrets mapped explicitly.
 name: Security Scan
 
 on:
@@ -22,7 +22,7 @@ jobs:
       contents: read
       pull-requests: write
       actions: write
-    uses: c3-e/c3cdao-ci-scans/.github/workflows/reusable-security-gate.yml@main
+    uses: c3-e/c3cdao-ci-scans/.github/workflows/reusable-security-gate.yml@0123456789abcdef0123456789abcdef01234567  # v0.6.0
     secrets:
       CGR_PULL_TOKEN: ${{ secrets.CGR_PULL_TOKEN }}
       CGR_PULL_USERNAME: ${{ secrets.CGR_PULL_USERNAME }}

@@ -1,6 +1,5 @@
-# Lint fixture: single violation — the manifest's chart.values_local names
-# a file that does not exist under the consumer root
-# (image-values-mismatch: unreadable).
+# Lint fixture: single violation — the gate ref is a branch, not a full
+# 40-hex commit SHA (gate-ref-pin).
 name: Security Scan
 
 on:
@@ -29,12 +28,4 @@ jobs:
       IRONBANK_TOKEN: ${{ secrets.IRONBANK_TOKEN }}
       IRONBANK_USERNAME: ${{ secrets.IRONBANK_USERNAME }}
     with:
-      scan_image: app:local
-      contract_file: Makefile.bad-values.ci
-      builder_image: cgr.dev/chainguard/python:latest-dev
-      runtime_image: cgr.dev/chainguard/python:latest
-      require_hardened_bases: true
-      ironbank_builder_image: ""
-      ironbank_runtime_image: ""
-      cluster_name: ${{ vars.CI_CLUSTER_NAME }}
       image_only: false

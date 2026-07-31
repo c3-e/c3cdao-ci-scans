@@ -1,0 +1,37 @@
+# Static manifests (no templating) so unit tests can parse the rendered
+# shape without helm; IG-1 renders the same chart through real helm template.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ship-set-violation
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ship-set-violation
+  template:
+    metadata:
+      labels:
+        app: ship-set-violation
+    spec:
+      containers:
+        - name: app
+          image: "ship-set/app:0.1.0"
+          ports:
+            - containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+        - name: db
+          image: "pgvector/pgvector:pg16"
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "postgres"]
+        # Neither built from the compose file nor a declared dependency:
+        # the ship-set violation under test.
+        - name: ghost
+          image: "registry.example/ghost:9.9.9"
+          readinessProbe:
+            exec:
+              command: ["true"]
