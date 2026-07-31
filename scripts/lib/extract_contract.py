@@ -35,9 +35,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW_PATH = REPO_ROOT / ".github" / "workflows" / "reusable-security-gate.yml"
 SCHEMA_PATH = REPO_ROOT / "contract" / "security-gate.schema.json"
 INPUTS_DOC_PATH = REPO_ROOT / "docs" / "INPUTS.md"
-SCHEMA_ID = (
-    "https://github.com/c3-e/c3cdao-ci-scans/contract/security-gate.schema.json"
-)
+SCHEMA_ID = "https://github.com/c3-e/c3cdao-ci-scans/contract/security-gate.schema.json"
 BEGIN_MARKER = "<!-- BEGIN GENERATED: security-gate-inputs -->"
 END_MARKER = "<!-- END GENERATED: security-gate-inputs -->"
 
