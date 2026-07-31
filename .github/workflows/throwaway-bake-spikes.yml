@@ -41,7 +41,7 @@ jobs:
       - name: Proof 1b — execute explicit targets via bake-action
         uses: docker/bake-action@d3418bd7d0e9324001bca92fa8ba175ea7e6dc9b  # v7.3.0
         with:
-          workdir: tests/fixtures/bake/n3-local-profile
+          source: "{{defaultContext}}:tests/fixtures/bake/n3-local-profile"
           files: docker-compose.yml
           targets: |
             svc-a
