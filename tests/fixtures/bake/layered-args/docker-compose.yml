@@ -1,0 +1,11 @@
+services:
+  layered:
+    build:
+      context: .
+      args:
+        RUNTIME_IMAGE: compose-args
+    image: bake-spike/layered:0.1.0
+    platform: linux/amd64
+    healthcheck:
+      test: ["CMD", "test", "-f", "/arg.txt"]
+      interval: 30s

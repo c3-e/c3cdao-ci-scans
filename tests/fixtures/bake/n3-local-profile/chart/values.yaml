@@ -1,0 +1,4 @@
+images:
+  svcA: bake-spike/svc-a:0.1.0
+  svcB: bake-spike/svc-b:0.1.0
+  svcC: bake-spike/svc-c:0.1.0

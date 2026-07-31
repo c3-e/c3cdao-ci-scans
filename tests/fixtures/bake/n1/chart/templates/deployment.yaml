@@ -1,0 +1,17 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bake-spike-n1
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: bake-spike-n1
+  template:
+    metadata:
+      labels:
+        app: bake-spike-n1
+    spec:
+      containers:
+        - name: app
+          image: {{ .Values.image | quote }}

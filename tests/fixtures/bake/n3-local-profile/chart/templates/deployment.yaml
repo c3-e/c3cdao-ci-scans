@@ -1,0 +1,21 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bake-spike-n3
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: bake-spike-n3
+  template:
+    metadata:
+      labels:
+        app: bake-spike-n3
+    spec:
+      containers:
+        - name: svc-a
+          image: {{ .Values.images.svcA | quote }}
+        - name: svc-b
+          image: {{ .Values.images.svcB | quote }}
+        - name: svc-c
+          image: {{ .Values.images.svcC | quote }}
