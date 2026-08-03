@@ -29,10 +29,18 @@ def _needs(results: dict[str, str], smoke_ok: str | None = None) -> dict:
     return out
 
 
+def test_blocking_membership_uses_plan_job_id():
+    """v0.6 renames caller-lint -> plan; a stale blocking list would fail
+    every run spuriously (needs key mismatch)."""
+    blocking = mod.blocking_jobs(image_only=True)
+    assert "plan" in blocking
+    assert "caller-lint" not in blocking
+
+
 def test_image_only_omits_helm_and_smoke():
     needs = _needs(
         {
-            "caller-lint": "success",
+            "plan": "success",
             "build": "success",
             "secrets-scan": "success",
             "image-scan": "success",
@@ -46,7 +54,7 @@ def test_image_only_omits_helm_and_smoke():
 def test_app_mode_requires_helm_and_smoke_ok():
     needs = _needs(
         {
-            "caller-lint": "success",
+            "plan": "success",
             "build": "success",
             "secrets-scan": "success",
             "image-scan": "success",
@@ -61,7 +69,7 @@ def test_app_mode_requires_helm_and_smoke_ok():
 def test_smoke_continue_on_error_false_green():
     needs = _needs(
         {
-            "caller-lint": "success",
+            "plan": "success",
             "build": "success",
             "secrets-scan": "success",
             "image-scan": "success",
@@ -78,7 +86,7 @@ def test_matrixed_build_failure_blocks():
     # whole job, so a single result covers every extra.
     needs = _needs(
         {
-            "caller-lint": "success",
+            "plan": "success",
             "build": "failure",
             "secrets-scan": "success",
             "image-scan": "skipped",
@@ -92,7 +100,7 @@ def test_matrixed_build_failure_blocks():
 def test_matrixed_image_scan_failure_blocks():
     needs = _needs(
         {
-            "caller-lint": "success",
+            "plan": "success",
             "build": "success",
             "secrets-scan": "success",
             "image-scan": "failure",

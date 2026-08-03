@@ -3,42 +3,48 @@
 # A single workflow owns the entire PR gate and reports as the required
 # status check, instead of several independent modular scan workflows.
 #
-# Interface (v0.5.0): the consumer build contract is the ONLY build path.
-# The consumer repo owns its build knowledge via a contract makefile
-# (contract_file, default Makefile.ci) exposing four targets:
-#   ci-manifest / ci-build / ci-secctx / ci-smoke-env
-# `make ci-manifest` is the single source of truth for the containers list
-# and the chart/health metadata; see docs/CI-CONTRACT.md.
+# Interface (v0.6 cutover in progress — T-5 landed plan/build; T-6 rewires
+# image-scan + the caller input surface, T-7 rewires cluster-smoke): the gate
+# derives build facts from the consumer's canonical Compose file via
+# `docker buildx bake --print` (the published build plan / BOM) and executes
+# each build itself. Consumer Makefile.ci targets survive only in the jobs
+# T-6/T-7 have not yet rewired.
 #
 # Structure:
-#   caller-lint       configuration pre-flight: lint the consumer caller against
-#                     the published contract — including blocking validation of
-#                     the consumer contract makefile — then (when
-#                     require_hardened_bases) fail closed if neither CGR nor
-#                     Iron Bank pull secrets are present. Also emits the
-#                     normalized containers matrix (primary + extras) and the
-#                     manifest's chart/health sections as job outputs.
+#   plan              configuration pre-flight: v0.6 fail-closed convention
+#                     lint (lint_caller.py) on the caller + consumer checkout,
+#                     hardened-registry login/failover resolution (shared
+#                     bit-for-bit with every build leg), then derive_bom.py
+#                     publishes the bake plan + annotated BOM (job summary +
+#                     `plan-bom` artifact) and emits the build matrix
+#                     ([{target, tag, dockerfile, context}], <=10 enforced by
+#                     the matrix-cap lint) as a job output.
 #                     Every scan job needs it.
-#   secrets-scan      TruffleHog (parallel after caller-lint)
+#   secrets-scan      TruffleHog (parallel after plan)
 #   sast-semgrep      Semgrep (parallel, warn-only until baseline)
 #   sast-sonarqube    SonarQube ephemeral (parallel, warn-only until baseline)
 #   helm-check        helm lint + template + restricted PSS on the manifest's
 #                     chart, plus the consumer's own `make ci-secctx` (after
-#                     caller-lint; blocking unless image_only)
-#   build             matrixed over the normalized containers list (primary +
-#                     extras): builds each image via `make ci-build
-#                     IMAGE=<name>`, generates its image SBOM, and hands it to
-#                     downstream jobs as a transient `docker save` tarball
-#                     uploaded via actions/upload-artifact.
-#                     needs: caller-lint + helm-check (skips docker when PSS/helm
-#                     already failed; when image_only, helm-check is skipped and
-#                     builds proceed after caller-lint alone)
+#                     plan; blocking unless image_only; T-6/T-7 rewire its
+#                     chart inputs — non-functional for chart consumers until
+#                     then)
+#   build             matrixed over the plan job's derived matrix output: one
+#                     leg per non-local Compose build target, `bake <target>`
+#                     with `--set '*.platform=linux/amd64'` and the resolved
+#                     `*.args.BUILDER_IMAGE`/`*.args.RUNTIME_IMAGE` overrides
+#                     (identical to the published plan — each leg diffs its
+#                     re-printed target entry against the plan-bom artifact),
+#                     then Syft image SBOM + `docker save` tar upload, both
+#                     artifacts named by target (scan-image-<target> /
+#                     sbom-image-<target>). needs: plan only — helm-check
+#                     runs in parallel with builds in v0.6.
 #   cluster-smoke     kind + `make ci-smoke-env` + helm install + health probe
 #                     against the built image (needs: build) — proves the image
 #                     actually boots; skipped when image_only
-#   image-scan        matrixed over the same containers list: Trivy + Grype on
-#                     each built image (+ its image SBOM); the primary leg also
-#                     generates and scans the whole-repo source SBOM.
+#   image-scan        matrixed over the plan job's containers bridge output:
+#                     Trivy + Grype on each built image (+ its image SBOM);
+#                     T-6 rewires this job to the per-leg artifacts and
+#                     designates the source-SBOM leg.
 #                     (needs: build)
 #   security-gate     aggregate pass/fail (needs: all, if: always())
 #
@@ -49,7 +55,7 @@
 # token and can't push to a registry, but they can upload artifacts).
 #
 # Blocking:
-#   caller-lint, build, secrets-scan are always blocking.
+#   plan, build, secrets-scan are always blocking.
 #   helm-check and cluster-smoke are blocking unless image_only is true
 #   (infra/image-only consumers — same skip predicate as the job `if:`).
 #   cluster-smoke and image-scan gate their hard-fail on the SECURITY_SCAN_BLOCKING
@@ -64,8 +70,12 @@ name: Reusable Security Gate
 on:
   workflow_call:
     inputs:
+      compose_file:
+        description: "Path (relative to the consumer repo root) of the canonical Compose file the gate derives build facts from (v0.6). `docker buildx bake --print` on this file is the published build plan; the plan job annotates it into the BOM and emits the build matrix from it."
+        type: string
+        default: docker-compose.yml
       scan_image:
-        description: "Local-daemon tag the primary image is built and scanned under; caller-lint requires it to equal a parsed image string or repository:tag join in the manifest's values_local file (comments ignored). Cluster-smoke kind-loads this tag with pullPolicy: Never. Passed to `make ci-build` as CI_IMAGE_TAG for the primary."
+        description: "Local-daemon tag the primary image is built and scanned under; the v0.5 lint required it to equal a parsed image string or repository:tag join in the manifest's values_local file (comments ignored). Cluster-smoke kind-loads this tag with pullPolicy: Never. Passed to `make ci-build` as CI_IMAGE_TAG for the primary."
         type: string
         default: app:local
       contract_file:
@@ -141,33 +151,34 @@ env:
 
 jobs:
   # --------------------------------------------------------------------------
-  # Caller lint — configuration pre-flight before anything expensive runs.
-  # Validates the consumer's caller against the published contract — including
-  # blocking validation of the consumer contract makefile (missing file,
-  # missing ci-manifest/ci-build/ci-smoke-env targets, or an unusable
-  # ci-manifest JSON are lint failures; a missing ci-secctx is a notice) —
-  # then (when require_hardened_bases) checks that at least one
-  # hardened-registry pull secret pair is present. No docker login here —
-  # builds still authenticate. Fail closed: bad caller, broken contract, or
-  # missing required registry secrets never scan.
+  # Plan — configuration pre-flight + derivation before anything expensive
+  # runs. Fail-closed v0.6 convention lint (lint_caller.py: caller structure,
+  # Compose/Dockerfile/chart shape rules) on the consumer checkout, then
+  # hardened-registry login/failover resolution — the SAME composite action
+  # every build leg runs, so the base-image overrides baked into the
+  # published plan are bit-for-bit the ones execution uses (plan/execution
+  # parity) — then derive_bom.py publishes the bake plan + annotated BOM and
+  # emits the build matrix. Bad caller, nonconforming shapes, or missing
+  # required registry secrets never scan.
   # --------------------------------------------------------------------------
-  caller-lint:
-    name: Caller Lint
+  plan:
+    name: Plan
     runs-on: ubuntu-latest
     outputs:
-      # Normalized containers matrix (primary first, then extras) — the build
-      # and image-scan jobs fromJSON() this. Always >=1 entry (the primary),
-      # so those matrices can never be empty. Derived from `make ci-manifest`
-      # images[] (images[0] = primary, images[1:] = extras).
-      containers: ${{ steps.manifest.outputs.containers }}
-      # 'true' when the normalized list has any role=extra entry. cluster-smoke
-      # keys its extras artifact download / kind-load on this.
-      has_extras: ${{ steps.manifest.outputs.has_extras }}
-      # Manifest chart{path,values,values_local,release,namespace} and
-      # health{path,port,workload_match} sections (single-line JSON objects).
-      # helm-check and cluster-smoke fromJSON() these — single parse point.
-      chart: ${{ steps.manifest.outputs.chart }}
-      health: ${{ steps.manifest.outputs.health }}
+      # v0.6 build matrix from the published bake plan: one entry per
+      # non-local Compose build target, [{target, tag, dockerfile, context}].
+      # <=10 enforced upstream by the matrix-cap lint rule, and never empty
+      # (compose-no-builds blocks first), so no empty-include plan failure.
+      matrix: ${{ steps.emit.outputs.matrix }}
+      # Legacy-shaped bridge outputs for the jobs T-6 (image-scan, fan-in)
+      # and T-7 (cluster-smoke, helm-check) have not rewired yet. containers
+      # mirrors the matrix with role 'target' (never 'primary'), so the
+      # v0.5-shaped image-scan legs resolve the per-target artifact names
+      # scan-image-<target>/sbom-image-<target> that build now uploads.
+      containers: ${{ steps.emit.outputs.containers }}
+      has_extras: 'false'
+      chart: '{}'
+      health: '{}'
     steps:
       # Consumer repo (github.repository = the caller's repo).
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
@@ -191,18 +202,42 @@ jobs:
           fi
           ref="${ref:-${JOB_WF_SHA:-main}}"
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
-          echo "::notice::caller-lint: linting against ci-scans ref '$ref'"
+          echo "::notice::plan: linting against ci-scans ref '$ref'"
 
-      # Callee tooling (lint script + contract) at the resolved ref.
+      # Callee tooling (lint + derivation scripts, composite actions) at the
+      # resolved ref.
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
         with:
           repository: c3-e/c3cdao-ci-scans
           ref: ${{ steps.calleeref.outputs.ref }}
-          path: .ci-scans-lint
+          path: .ci-scans
 
       - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e  # v6
 
-      - name: Lint caller against contract
+      # derive_bom.py shells out to `docker buildx bake --print`.
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f  # v3
+
+      # Login + failover resolution replaces the v0.5 presence-only secrets
+      # check: the action fails closed per require-hardened-bases when no
+      # credential pair exists, and its resolved builder/runtime outputs feed
+      # the derive step so the published plan carries the exact overrides the
+      # build legs execute with.
+      - name: Login to hardened base registries (Chainguard + Iron Bank)
+        id: base-registry
+        uses: ./.ci-scans/.github/actions/hardened-registry-login
+        with:
+          cgr-pull-token: ${{ secrets.CGR_PULL_TOKEN }}
+          cgr-pull-username: ${{ secrets.CGR_PULL_USERNAME }}
+          ironbank-token: ${{ secrets.IRONBANK_TOKEN }}
+          ironbank-username: ${{ secrets.IRONBANK_USERNAME }}
+          ironbank-registry: ${{ inputs.ironbank_registry }}
+          builder-image: ${{ inputs.builder_image }}
+          runtime-image: ${{ inputs.runtime_image }}
+          ironbank-builder-image: ${{ inputs.ironbank_builder_image }}
+          ironbank-runtime-image: ${{ inputs.ironbank_runtime_image }}
+          require-hardened-bases: ${{ inputs.require_hardened_bases }}
+
+      - name: Lint caller against v0.6 conventions
         env:
           WORKFLOW_REF: ${{ github.workflow_ref }}
         run: |
@@ -210,106 +245,109 @@ jobs:
           caller="${WORKFLOW_REF#"$GITHUB_REPOSITORY/"}"
           caller="${caller%%@*}"
           if [ ! -f "$caller" ]; then
-            echo "::error::caller-lint: cannot resolve caller workflow file from workflow_ref='$WORKFLOW_REF' (resolved '$caller')"
+            echo "::error::plan: cannot resolve caller workflow file from workflow_ref='$WORKFLOW_REF' (resolved '$caller')"
             exit 1
           fi
-          uv run .ci-scans-lint/scripts/lib/lint_caller.py "$caller" \
-            --contract .ci-scans-lint/contract/security-gate.schema.json \
+          uv run .ci-scans/scripts/lib/lint_caller.py "$caller" \
             --consumer-root "$GITHUB_WORKSPACE"
 
-      # Normalized manifest from `make ci-manifest`: the containers matrix
-      # (primary = images[0], tagged scan_image; extras = images[1:]) plus the
-      # chart/health sections. lint_caller.py is the single parse point;
-      # single-line JSON so it is safe for GITHUB_OUTPUT.
-      - name: Emit normalized manifest (containers + chart + health)
-        id: manifest
+      # The published plan is `bake --print` with the SAME --set overrides
+      # the build legs execute with (platform pin is derive_bom-internal) —
+      # each leg re-prints its target and diffs against this artifact.
+      - name: Derive bake plan + annotated BOM (gate overrides)
         env:
-          GATE_SCAN_IMAGE: ${{ inputs.scan_image }}
-          GATE_CONTRACT_FILE: ${{ inputs.contract_file }}
+          GATE_COMPOSE_FILE: ${{ inputs.compose_file }}
+          BUILDER_IMAGE: ${{ steps.base-registry.outputs.builder_image }}
+          RUNTIME_IMAGE: ${{ steps.base-registry.outputs.runtime_image }}
         run: |
-          if ! GATE_CI_MANIFEST="$(make -s -f "${GATE_CONTRACT_FILE}" ci-manifest)"; then
-            echo "::error::caller-lint: 'make -s -f ${GATE_CONTRACT_FILE} ci-manifest' failed"
-            exit 1
-          fi
-          export GATE_CI_MANIFEST
-          manifest="$(uv run .ci-scans-lint/scripts/lib/lint_caller.py --emit-manifest)"
-          printf '%s' "$manifest" | python3 -c '
-          import json, os, sys
-          doc = json.load(sys.stdin)
+          set -euo pipefail
+          mkdir -p /tmp/plan
+          uv run .ci-scans/scripts/lib/derive_bom.py \
+            "$GITHUB_WORKSPACE/${GATE_COMPOSE_FILE}" \
+            --out-dir /tmp/plan \
+            --set "*.args.BUILDER_IMAGE=${BUILDER_IMAGE}" \
+            --set "*.args.RUNTIME_IMAGE=${RUNTIME_IMAGE}" | tee /tmp/plan/derive.log
+
+      - name: Publish BOM to job summary
+        run: |
+          set -euo pipefail
+          {
+            echo "## Annotated Image BOM (plan)"
+            echo
+            cat /tmp/plan/derive.log
+            echo
+            echo '```json'
+            python3 -m json.tool /tmp/plan/bom.json
+            echo '```'
+            echo
+            echo "### bake plan (sibling document, --print JSON untouched)"
+            echo '```json'
+            python3 -m json.tool /tmp/plan/bake-plan.json
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Build legs download this artifact for the plan/execution parity diff.
+      - name: Upload plan artifacts (BOM + bake plan)
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        with:
+          name: plan-bom
+          path: |
+            /tmp/plan/bom.json
+            /tmp/plan/bake-plan.json
+          if-no-files-found: error
+
+      # Single-line JSON so it is safe for GITHUB_OUTPUT.
+      - name: Emit build matrix + containers bridge output
+        id: emit
+        run: |
+          python3 - <<'PY'
+          import json, os
+          plan = json.load(open("/tmp/plan/bake-plan.json"))
+          matrix = [
+              {
+                  "target": name,
+                  "tag": tgt["tags"][0],
+                  "dockerfile": tgt.get("dockerfile", "Dockerfile"),
+                  "context": tgt.get("context", "."),
+              }
+              for name, tgt in sorted(plan["target"].items())
+          ]
+          containers = [
+              {"name": m["target"], "image": m["tag"], "role": "target"}
+              for m in matrix
+          ]
           sep = (",", ":")
           with open(os.environ["GITHUB_OUTPUT"], "a") as out:
-              out.write("containers=" + json.dumps(doc["containers"], separators=sep) + "\n")
-              out.write("chart=" + json.dumps(doc["chart"], separators=sep) + "\n")
-              out.write("health=" + json.dumps(doc["health"], separators=sep) + "\n")
-              extras = any(c.get("role") == "extra" for c in doc["containers"])
-              out.write("has_extras=" + ("true" if extras else "false") + "\n")
-          '
-          echo "::notice::caller-lint: normalized manifest: $manifest"
-
-      # Presence-only check: at least one complete registry pair (token AND
-      # username). Secrets stay in the env block (Actions auto-redacts
-      # ${{ secrets.* }} in logs). Never echo/printenv/declare values; never
-      # enable xtrace (-x); error text names secret *keys* only.
-      - name: Check hardened-registry secrets present
-        if: inputs.require_hardened_bases == true || inputs.require_hardened_bases == 'true'
-        env:
-          CGR_PULL_TOKEN: ${{ secrets.CGR_PULL_TOKEN }}
-          CGR_PULL_USERNAME: ${{ secrets.CGR_PULL_USERNAME }}
-          IRONBANK_TOKEN: ${{ secrets.IRONBANK_TOKEN }}
-          IRONBANK_USERNAME: ${{ secrets.IRONBANK_USERNAME }}
-        run: |
-          # Intentionally no -x: xtrace would print expansions containing secrets.
-          set -euo pipefail
-          set +x
-
-          # Boolean presence only — do not interpolate secret values into stdout.
-          cgr_tok=0; cgr_user=0; ib_tok=0; ib_user=0
-          [ -n "${CGR_PULL_TOKEN:-}" ] && cgr_tok=1
-          [ -n "${CGR_PULL_USERNAME:-}" ] && cgr_user=1
-          [ -n "${IRONBANK_TOKEN:-}" ] && ib_tok=1
-          [ -n "${IRONBANK_USERNAME:-}" ] && ib_user=1
-
-          if [ "$cgr_tok" != "$cgr_user" ]; then
-            echo "::error::Incomplete Chainguard credentials — both CGR_PULL_TOKEN and CGR_PULL_USERNAME are required for docker login."
-            exit 1
-          fi
-          if [ "$ib_tok" != "$ib_user" ]; then
-            echo "::error::Incomplete Iron Bank credentials — both IRONBANK_TOKEN and IRONBANK_USERNAME are required for docker login."
-            exit 1
-          fi
-          if [ "$cgr_tok" = 0 ] && [ "$ib_tok" = 0 ]; then
-            echo "::error::No hardened-registry credentials — add CGR_PULL_TOKEN/CGR_PULL_USERNAME (Chainguard) and/or IRONBANK_TOKEN/IRONBANK_USERNAME (Iron Bank), or set require_hardened_bases: false to accept consumer-specified bases."
-            exit 1
-          fi
-          echo "Hardened-registry credentials present (preflight)"
+              out.write("matrix=" + json.dumps(matrix, separators=sep) + "\n")
+              out.write("containers=" + json.dumps(containers, separators=sep) + "\n")
+          print("plan: build matrix:", json.dumps(matrix, separators=sep))
+          PY
 
   # --------------------------------------------------------------------------
-  # Build — one matrixed job over the normalized containers list emitted by
-  # caller-lint (primary first, then extras). Each leg builds its image once
-  # via the consumer contract (`make ci-build IMAGE=<name>` with the hardened
-  # bases resolved by registry-login exported as CI_BUILDER_BASE/
-  # CI_RUNTIME_BASE and the required output tag as CI_IMAGE_TAG), generates
-  # the image SBOM, and uploads the `docker save` tarball artifact. The
-  # primary leg keeps the pre-matrix artifact names (scan-image / sbom-image);
-  # extras keep scan-image-<name> / sbom-image-<name>. The matrix is never
-  # empty — the normalized list always contains the primary entry — so no
-  # empty-include plan failure is possible, and single-image consumers simply
-  # run a one-leg matrix.
+  # Build — one matrixed job over the plan job's derived matrix
+  # ([{target, tag, dockerfile, context}], one leg per non-local Compose
+  # build target — no primary/extras distinction). Each leg proves
+  # plan/execution parity (re-print its target with the identical --set
+  # overrides and diff against the published plan-bom artifact), executes
+  # `bake <target>` via docker/bake-action with the platform pin and the
+  # failover-resolved BUILDER_IMAGE/RUNTIME_IMAGE arg overrides, verifies the
+  # planned tag exists, generates the Syft image SBOM, and uploads the
+  # `docker save` tarball — artifacts named by target: scan-image-<target> /
+  # sbom-image-<target>. The matrix is never empty (compose-no-builds lint
+  # blocks first) and capped at 10 (matrix-cap lint), so no empty-include
+  # plan failure is possible. needs: plan only — helm-check runs in parallel
+  # with builds in v0.6 (approved job-mapping); fan-in still gates on both.
   # --------------------------------------------------------------------------
   build:
-    name: Build — ${{ matrix.container.name }} image
+    name: build (${{ matrix.target }})
     runs-on: ubuntu-latest
-    needs: [caller-lint, helm-check]
-    # When image_only, helm-check is skipped — still build after caller-lint.
-    # When helm/PSS fails, do not start expensive docker builds.
-    if: |
-      always() &&
-      needs.caller-lint.result == 'success' &&
-      (inputs.image_only == true || needs.helm-check.result == 'success')
+    needs: [plan]
     strategy:
       fail-fast: false
       matrix:
-        container: ${{ fromJSON(needs.caller-lint.outputs.containers) }}
+        include: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    env:
+      GATE_COMPOSE_FILE: ${{ inputs.compose_file }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
 
@@ -337,18 +375,17 @@ jobs:
           ref: ${{ steps.calleeref.outputs.ref }}
           path: .ci-scans
 
-      # The backend image is large (WeasyPrint + psql deps). Building it, loading
-      # it into Docker, and `docker save`-ing it for the artifact exhausts the
-      # hosted runner's ~14 GB free disk. Reclaim ~20 GB of unused toolchains.
+      # Consumer images can be large (WeasyPrint + psql deps). Building one,
+      # loading it into Docker, and `docker save`-ing it for the artifact
+      # exhausts the hosted runner's ~14 GB free disk. Reclaim ~20 GB.
       - name: Free disk space
         uses: ./.ci-scans/.github/actions/free-disk-space
 
-      # Kept for consumer contract builds that use `docker buildx` in ci-build.
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f  # v3
 
-      # Hardened-base login + primary-base failover resolution — every leg
-      # (primary and extras) inherits the failover behavior bit-for-bit via
-      # this shared action (see the action's description for the semantics).
+      # Hardened-base login + failover resolution — every leg (and the plan
+      # job) resolves through this shared action, so the overrides used here
+      # are bit-for-bit the ones baked into the published plan.
       - name: Login to hardened base registries (Chainguard + Iron Bank)
         id: base-registry
         uses: ./.ci-scans/.github/actions/hardened-registry-login
@@ -375,45 +412,93 @@ jobs:
             echo "$msg"
           } >> "$GITHUB_STEP_SUMMARY"
 
-      # The consumer's contract_file owns the docker build: `make ci-build
-      # IMAGE=<name>` with the hardened bases resolved above exported as
-      # CI_BUILDER_BASE/CI_RUNTIME_BASE and the required output tag as
-      # CI_IMAGE_TAG. SBOM/save/upload follow with stable artifact names so
-      # every downstream job consumes the same shapes.
-      - name: Build image via consumer contract (make ci-build)
+      # bake resolves compose `context:` against the process cwd (spike
+      # Finding A), so both the parity re-print and the execution below run
+      # from the compose file's directory — same as the plan job's derive.
+      - name: Resolve compose location
+        id: compose
+        run: |
+          echo "dir=$(dirname "$GATE_COMPOSE_FILE")" >> "$GITHUB_OUTPUT"
+          echo "base=$(basename "$GATE_COMPOSE_FILE")" >> "$GITHUB_OUTPUT"
+
+      - name: Download published plan (plan-bom artifact)
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4
+        with:
+          name: plan-bom
+          path: /tmp/plan
+
+      # Plan/execution parity: re-print this leg's target with the identical
+      # targets + --set overrides (scrubbed env, mirroring derive_bom) and
+      # diff the resolved target entry against the published plan. Any drift
+      # fails the leg before the build runs — a parity failure is a design
+      # flaw, not a bug (ticket T-5 failure protocol).
+      - name: Plan/execution parity check
         env:
-          CONTRACT_FILE: ${{ inputs.contract_file }}
-          CI_BUILDER_BASE: ${{ steps.base-registry.outputs.builder_image }}
-          CI_RUNTIME_BASE: ${{ steps.base-registry.outputs.runtime_image }}
-          CI_IMAGE_TAG: ${{ matrix.container.image }}
-          IMAGE_NAME: ${{ matrix.container.name }}
+          TARGET: ${{ matrix.target }}
+          BUILDER_IMAGE: ${{ steps.base-registry.outputs.builder_image }}
+          RUNTIME_IMAGE: ${{ steps.base-registry.outputs.runtime_image }}
+          COMPOSE_DIR: ${{ steps.compose.outputs.dir }}
+          COMPOSE_BASE: ${{ steps.compose.outputs.base }}
         run: |
           set -euo pipefail
-          make -f "$CONTRACT_FILE" ci-build IMAGE="$IMAGE_NAME"
-          if ! docker image inspect "$CI_IMAGE_TAG" >/dev/null 2>&1; then
-            echo "::error::contract ci-build for IMAGE '$IMAGE_NAME' did not produce the required tag '$CI_IMAGE_TAG' (CI_IMAGE_TAG)"
+          cmd=(docker buildx bake -f "$COMPOSE_BASE"
+            --set "*.platform=linux/amd64"
+            --set "*.args.BUILDER_IMAGE=${BUILDER_IMAGE}"
+            --set "*.args.RUNTIME_IMAGE=${RUNTIME_IMAGE}"
+            "$TARGET")
+          echo "resolved bake command (leg ${TARGET}): ${cmd[*]}"
+          (cd "$COMPOSE_DIR" && env -i PATH="$PATH" HOME="$HOME" "${cmd[@]}" --print) \
+            > /tmp/executed-print.json
+          jq -S --arg t "$TARGET" '.target[$t]' /tmp/plan/bake-plan.json > /tmp/planned-target.json
+          jq -S --arg t "$TARGET" '.target[$t]' /tmp/executed-print.json > /tmp/executed-target.json
+          diff /tmp/planned-target.json /tmp/executed-target.json || {
+            echo "::error::plan/execution parity drift for target '$TARGET' — published plan and execution-time resolution disagree"
+            exit 1
+          }
+          echo "parity OK: planned target entry == executed target entry (${TARGET})"
+
+      - name: Build image via bake (gate-owned overrides)
+        uses: docker/bake-action@d3418bd7d0e9324001bca92fa8ba175ea7e6dc9b  # v7.3.0
+        with:
+          # Local source path = the compose file's directory, so compose
+          # `context:` resolves exactly as it did for the published plan.
+          source: ${{ steps.compose.outputs.dir }}
+          files: ${{ steps.compose.outputs.base }}
+          targets: ${{ matrix.target }}
+          set: |
+            *.platform=linux/amd64
+            *.args.BUILDER_IMAGE=${{ steps.base-registry.outputs.builder_image }}
+            *.args.RUNTIME_IMAGE=${{ steps.base-registry.outputs.runtime_image }}
+          load: true
+
+      - name: Verify bake produced the planned tag
+        env:
+          TARGET: ${{ matrix.target }}
+          TAG: ${{ matrix.tag }}
+        run: |
+          set -euo pipefail
+          if ! docker image inspect "$TAG" >/dev/null 2>&1; then
+            echo "::error::bake for target '$TARGET' did not produce the planned tag '$TAG'"
             exit 1
           fi
 
       - name: Generate image SBOM
         uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610  # v0.24.0
         with:
-          image: ${{ matrix.container.image }}
+          image: ${{ matrix.tag }}
           format: cyclonedx-json
-          output-file: ${{ matrix.container.role == 'primary' && 'sbom-image.json' || format('sbom-image-{0}.json', matrix.container.name) }}
-          artifact-name: ${{ matrix.container.role == 'primary' && 'sbom-image' || format('sbom-image-{0}', matrix.container.name) }}
+          output-file: sbom-image-${{ matrix.target }}.json
+          artifact-name: sbom-image-${{ matrix.target }}
 
       - name: Save image to tarball
         env:
-          IMG: ${{ matrix.container.image }}
+          IMG: ${{ matrix.tag }}
         run: docker save "$IMG" -o image.tar
 
-      # Primary keeps the stable scan-image name (env.IMAGE_ARTIFACT) that
-      # cluster-smoke and the primary image-scan leg download.
       - name: Upload image artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
         with:
-          name: ${{ matrix.container.role == 'primary' && env.IMAGE_ARTIFACT || format('scan-image-{0}', matrix.container.name) }}
+          name: scan-image-${{ matrix.target }}
           path: image.tar
           if-no-files-found: error
           retention-days: 1
@@ -429,7 +514,7 @@ jobs:
   secrets-scan:
     name: TruffleHog verified-secret scan
     runs-on: ubuntu-latest
-    needs: [caller-lint]
+    needs: [plan]
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
         with:
@@ -487,7 +572,7 @@ jobs:
   sast-semgrep:
     name: SAST (Semgrep)
     runs-on: ubuntu-latest
-    needs: [caller-lint]
+    needs: [plan]
     continue-on-error: true
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
@@ -546,7 +631,7 @@ jobs:
   sast-sonarqube:
     name: SAST (SonarQube ephemeral)
     runs-on: ubuntu-latest
-    needs: [caller-lint]
+    needs: [plan]
     timeout-minutes: 30
     continue-on-error: true
     services:
@@ -666,17 +751,18 @@ jobs:
 
   # --------------------------------------------------------------------------
   # Helm chart validity — blocking unless image_only. Chart location comes
-  # from the manifest's chart{} section (caller-lint job outputs).
+  # from the plan job's chart bridge output (placeholder until T-6/T-7
+  # rewire this job to the derived chart inputs).
   # --------------------------------------------------------------------------
   helm-check:
     name: Helm Chart Validation
     runs-on: ubuntu-latest
-    needs: [caller-lint]
+    needs: [plan]
     if: ${{ inputs.image_only != true }}
     env:
-      HELM_CHART_PATH: ${{ fromJSON(needs.caller-lint.outputs.chart).path }}
-      HELM_VALUES_FILE: ${{ fromJSON(needs.caller-lint.outputs.chart).values }}
-      HELM_RELEASE_NAME: ${{ fromJSON(needs.caller-lint.outputs.chart).release }}
+      HELM_CHART_PATH: ${{ fromJSON(needs.plan.outputs.chart).path }}
+      HELM_VALUES_FILE: ${{ fromJSON(needs.plan.outputs.chart).values }}
+      HELM_RELEASE_NAME: ${{ fromJSON(needs.plan.outputs.chart).release }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
 
@@ -768,8 +854,8 @@ jobs:
     name: Cluster Smoke (kind + helm + health)
     runs-on: ubuntu-latest
     # build is matrixed over primary + extras; one success covers them all.
-    # caller-lint is needed only to reference its manifest job outputs.
-    needs: [caller-lint, build]
+    # plan is needed only to reference its bridge job outputs.
+    needs: [plan, build]
     if: |
       always() &&
       inputs.image_only != true &&
@@ -778,7 +864,7 @@ jobs:
       smoke_ok: ${{ steps.smoke_outcome.outputs.ok }}
     env:
       CLUSTER: ${{ inputs.cluster_name }}
-      NAMESPACE: ${{ fromJSON(needs.caller-lint.outputs.chart).namespace }}
+      NAMESPACE: ${{ fromJSON(needs.plan.outputs.chart).namespace }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
 
@@ -805,7 +891,7 @@ jobs:
       # entries (manifest images[1:]). build succeeded per the job `if:`, so
       # their artifacts are guaranteed present when declared.
       - name: Download extra image artifacts
-        if: needs.caller-lint.outputs.has_extras == 'true'
+        if: needs.plan.outputs.has_extras == 'true'
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4
         with:
           pattern: scan-image-*
@@ -829,16 +915,16 @@ jobs:
           # Matrix jobs cannot expose per-leg outputs — the primary tag is
           # inputs.scan_image by construction (env.SCAN_IMAGE mirrors it).
           IMAGE: ${{ inputs.scan_image }}
-          HEALTH_PORT: ${{ fromJSON(needs.caller-lint.outputs.health).port }}
-          HEALTH_PATH: ${{ fromJSON(needs.caller-lint.outputs.health).path }}
-          SMOKE_WORKLOAD_MATCH: ${{ fromJSON(needs.caller-lint.outputs.health).workload_match }}
-          HELM_CHART_PATH: ${{ fromJSON(needs.caller-lint.outputs.chart).path }}
-          HELM_RELEASE_NAME: ${{ fromJSON(needs.caller-lint.outputs.chart).release }}
-          HELM_VALUES_FILE: ${{ fromJSON(needs.caller-lint.outputs.chart).values }}
-          HELM_VALUES_LOCAL_FILE: ${{ fromJSON(needs.caller-lint.outputs.chart).values_local }}
-          CONTAINERS_JSON: ${{ needs.caller-lint.outputs.containers }}
+          HEALTH_PORT: ${{ fromJSON(needs.plan.outputs.health).port }}
+          HEALTH_PATH: ${{ fromJSON(needs.plan.outputs.health).path }}
+          SMOKE_WORKLOAD_MATCH: ${{ fromJSON(needs.plan.outputs.health).workload_match }}
+          HELM_CHART_PATH: ${{ fromJSON(needs.plan.outputs.chart).path }}
+          HELM_RELEASE_NAME: ${{ fromJSON(needs.plan.outputs.chart).release }}
+          HELM_VALUES_FILE: ${{ fromJSON(needs.plan.outputs.chart).values }}
+          HELM_VALUES_LOCAL_FILE: ${{ fromJSON(needs.plan.outputs.chart).values_local }}
+          CONTAINERS_JSON: ${{ needs.plan.outputs.containers }}
           SMOKE_SECRETS: ${{ inputs.smoke_secrets }}
-          EXTRAS_BUILT: ${{ needs.caller-lint.outputs.has_extras }}
+          EXTRAS_BUILT: ${{ needs.plan.outputs.has_extras }}
           CONTRACT_FILE: ${{ inputs.contract_file }}
         run: |
           set -uo pipefail
@@ -998,13 +1084,13 @@ jobs:
   image-scan:
     name: Vulnerability Scan — ${{ matrix.container.name }} (Trivy + Grype)
     runs-on: ubuntu-latest
-    # caller-lint is needed only to reference its containers output.
-    needs: [caller-lint, build]
+    # plan is needed only to reference its containers bridge output.
+    needs: [plan, build]
     if: needs.build.result == 'success'
     strategy:
       fail-fast: false
       matrix:
-        container: ${{ fromJSON(needs.caller-lint.outputs.containers) }}
+        container: ${{ fromJSON(needs.plan.outputs.containers) }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
 
@@ -1094,11 +1180,11 @@ jobs:
   security-gate:
     name: Security Gate
     runs-on: ubuntu-latest
-    needs: [caller-lint, build, secrets-scan, sast-semgrep, sast-sonarqube, helm-check, cluster-smoke, image-scan]
+    needs: [plan, build, secrets-scan, sast-semgrep, sast-sonarqube, helm-check, cluster-smoke, image-scan]
     if: always()
     steps:
       # Consumer checkout so we can parse the caller's uses: pin. job_workflow_sha
-      # is empty on pull_request-triggered reusable calls (same as caller-lint).
+      # is empty on pull_request-triggered reusable calls (same as plan).
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
 
       - name: Resolve callee (ci-scans) ref

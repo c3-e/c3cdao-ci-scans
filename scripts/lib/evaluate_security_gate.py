@@ -16,10 +16,10 @@ from typing import Any
 
 
 def blocking_jobs(image_only: bool) -> list[str]:
-    # build and image-scan are matrixed over the normalized containers list
-    # (primary + extras): the job fails when any leg fails, so extras are
-    # covered without per-extra job entries.
-    blocking = ["caller-lint", "build", "secrets-scan", "image-scan"]
+    # build and image-scan are matrixed (one leg per plan-derived build
+    # target): the job fails when any leg fails, so every leg is covered
+    # without per-leg job entries. 'plan' is the v0.6 rename of caller-lint.
+    blocking = ["plan", "build", "secrets-scan", "image-scan"]
     if not image_only:
         blocking[3:3] = ["helm-check", "cluster-smoke"]
     return blocking

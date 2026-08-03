@@ -104,8 +104,19 @@ def classify_services(compose: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def bake_print_command(compose_path: Path, targets: list[str]) -> list[str]:
-    """The exact bake --print invocation, mirroring execution's overrides."""
+def bake_print_command(
+    compose_path: Path, targets: list[str], overrides: list[str] | None = None
+) -> list[str]:
+    """The exact bake --print invocation, mirroring execution's overrides.
+
+    `overrides` are extra --set values (e.g. the gate's resolved
+    `*.args.BUILDER_IMAGE`/`*.args.RUNTIME_IMAGE`); plan/execution parity
+    requires the published plan to resolve with the same override set the
+    build legs execute with.
+    """
+    set_args: list[str] = []
+    for override in overrides or []:
+        set_args += ["--set", override]
     return [
         "docker",
         "buildx",
@@ -115,11 +126,14 @@ def bake_print_command(compose_path: Path, targets: list[str]) -> list[str]:
         "--print",
         "--set",
         f"*.platform={PLATFORM_PIN}",
+        *set_args,
         *targets,
     ]
 
 
-def run_bake_print(compose_path: Path, targets: list[str]) -> dict[str, Any]:
+def run_bake_print(
+    compose_path: Path, targets: list[str], overrides: list[str] | None = None
+) -> dict[str, Any]:
     """Resolve the plan via `bake --print` with a scrubbed environment.
 
     Runs from the compose file's directory (compose `context:` resolves
@@ -129,7 +143,7 @@ def run_bake_print(compose_path: Path, targets: list[str]) -> dict[str, Any]:
     """
     env = {k: v for k, v in os.environ.items() if k in ("PATH", "HOME")}
     proc = subprocess.run(
-        bake_print_command(compose_path, targets),
+        bake_print_command(compose_path, targets, overrides),
         cwd=compose_path.parent,
         env=env,
         capture_output=True,
@@ -225,6 +239,7 @@ def derive_bom(compose_path: Path, plan: dict[str, Any]) -> dict[str, Any]:
 
 def main(argv: list[str]) -> int:
     """Derive and write the sibling documents: bake plan + annotated BOM."""
+    usage = "usage: derive_bom.py <compose-file> [--out-dir DIR] [--set KEY=VAL ...]"
     args = list(argv)
     out_dir = Path(".")
     if "--out-dir" in args:
@@ -232,13 +247,21 @@ def main(argv: list[str]) -> int:
         try:
             out_dir = Path(args[i + 1])
         except IndexError:
-            raise SystemExit("usage: derive_bom.py <compose-file> [--out-dir DIR]")
+            raise SystemExit(usage)
+        del args[i : i + 2]
+    overrides: list[str] = []
+    while "--set" in args:
+        i = args.index("--set")
+        try:
+            overrides.append(args[i + 1])
+        except IndexError:
+            raise SystemExit(usage)
         del args[i : i + 2]
     if len(args) != 1:
-        raise SystemExit("usage: derive_bom.py <compose-file> [--out-dir DIR]")
+        raise SystemExit(usage)
     compose_path = Path(args[0])
     roles = classify_services(load_compose(compose_path))
-    plan = run_bake_print(compose_path, roles["targets"])
+    plan = run_bake_print(compose_path, roles["targets"], overrides)
     bom = derive_bom(compose_path, plan)
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "bake-plan.json").write_text(canonical_json(plan))

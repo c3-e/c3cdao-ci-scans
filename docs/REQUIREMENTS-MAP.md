@@ -12,8 +12,8 @@ Source of truth for the job list is
 
 | Job | Spec gate / requirement | Tool(s) | Target | Current posture | Alignment |
 |---|---|---|---|---|---|
-| `caller-lint` | (scaffolding pre-flight — not a spec gate) | `lint_caller.py` + consumer contract validation | caller config + `Makefile.ci` | always fail-closed | aligned (guards the gate) |
-| `build` | build hardened images via consumer contract (`make ci-build`, matrixed over the manifest images) + dual-registry login (CGR and/or Iron Bank) | Docker + CGR/Iron Bank | images | always blocking | aligned |
+| `plan` | (scaffolding pre-flight — not a spec gate) | `lint_caller.py` (v0.6 convention rules) + `derive_bom.py` (`bake --print` plan + annotated BOM + build matrix) | caller config + Compose/Dockerfiles/chart | always fail-closed | aligned (guards the gate) |
+| `build` | build hardened images gate-side (`bake <target>`, matrixed over the plan's derived targets, `--set` platform pin + base-image args) + dual-registry login (CGR and/or Iron Bank) | Docker buildx bake + CGR/Iron Bank | images | always blocking | aligned |
 | `secrets-scan` | Secrets detection | TruffleHog | source | job blocking; finding advisory until `SECURITY_SCAN_BLOCKING=true` | aligned |
 | `sast-semgrep` | SAST | Semgrep | source | warn-only (`continue-on-error`) | intentional ramp |
 | `sast-sonarqube` | SAST | SonarQube | source | warn-only (`continue-on-error`) | intentional ramp |
@@ -60,10 +60,10 @@ explicitly owns the deviation in its own reviewable tree.
 ### App build is subsumed into `ci-build` (no separate Phase-1 stage)
 
 The spec's Phase 1 sequences an app build (`pnpm build`) before the container
-build. The gate has no standalone app-build job — both live in the consumer's
-`make ci-build`, typically as a multi-stage Dockerfile whose builder stage
-runs the app build first. The fail-fast intent is preserved by DAG ordering
-(caller-lint → helm-check → build) plus Docker layer ordering; a first-class
+build. The gate has no standalone app-build job — the app build lives in the
+consumer's multi-stage Dockerfile, whose builder stage runs it first. The
+fail-fast intent is preserved by DAG ordering (plan → build) plus Docker
+layer ordering; a first-class
 app-build stage would push toolchain knowledge onto the runner and grow the
 contract for no earlier signal.
 

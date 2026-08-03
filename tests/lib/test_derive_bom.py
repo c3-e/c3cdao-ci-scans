@@ -194,6 +194,60 @@ def test_plan_target_mismatch_fails_closed():
     assert "svc-c" in str(exc.value)
 
 
+def test_bake_print_command_carries_execution_overrides():
+    """The published plan must resolve with the SAME --set overrides the
+    build legs execute with (plan/execution parity, T-5 AC-3): gate
+    overrides append after the platform pin, before the targets."""
+    from derive_bom import bake_print_command
+
+    overrides = ["*.args.BUILDER_IMAGE=cgr.dev/b:1", "*.args.RUNTIME_IMAGE=cgr.dev/r:1"]
+    cmd = bake_print_command(N3 / "docker-compose.yml", ["svc-a"], overrides)
+    platform_i = cmd.index("*.platform=linux/amd64")
+    assert cmd[platform_i - 1] == "--set"
+    assert cmd[platform_i + 1 : platform_i + 5] == [
+        "--set",
+        overrides[0],
+        "--set",
+        overrides[1],
+    ]
+    assert cmd[-1] == "svc-a"
+    # No overrides: command unchanged from the pre-T-5 shape.
+    assert bake_print_command(N3 / "docker-compose.yml", ["svc-a"])[-2:] == [
+        "*.platform=linux/amd64",
+        "svc-a",
+    ]
+
+
+def test_main_threads_set_overrides_to_bake_print(tmp_path, monkeypatch):
+    """CLI --set values reach the bake --print invocation."""
+    import derive_bom as mod
+
+    plan = _load_plan(N3)
+    seen: dict = {}
+
+    def fake_run(compose_path, targets, overrides=()):
+        seen["overrides"] = list(overrides)
+        return plan
+
+    monkeypatch.setattr(mod, "run_bake_print", fake_run)
+    rc = mod.main(
+        [
+            str(N3 / "docker-compose.yml"),
+            "--out-dir",
+            str(tmp_path / "out"),
+            "--set",
+            "*.args.BUILDER_IMAGE=x",
+            "--set",
+            "*.args.RUNTIME_IMAGE=y",
+        ]
+    )
+    assert rc == 0
+    assert seen["overrides"] == [
+        "*.args.BUILDER_IMAGE=x",
+        "*.args.RUNTIME_IMAGE=y",
+    ]
+
+
 def test_main_writes_sibling_documents(tmp_path, monkeypatch, capsys):
     """CLI runs bake --print with explicit targets and writes the plan and
     the annotation as sibling files (never merged)."""
@@ -202,7 +256,7 @@ def test_main_writes_sibling_documents(tmp_path, monkeypatch, capsys):
     plan = _load_plan(N3)
     seen: dict = {}
 
-    def fake_run(compose_path, targets):
+    def fake_run(compose_path, targets, overrides=()):
         seen["targets"] = targets
         return plan
 
