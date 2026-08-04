@@ -1,5 +1,5 @@
 # Example onboarding config for setup-ruleset.sh — adjust owner/repo/local_path.
-# Repo shape (images, chart, health) lives in the consumer Makefile.ci, not here.
+# Repo shape (images, chart, health) lives in the consumer's Compose file and Helm chart, not here.
 target:
   owner: your-org
   repo: your-monorepo

@@ -43,8 +43,7 @@ from pathlib import Path
 from typing import Any
 
 from derive_bom import classify_services, load_compose
-from extract_contract import load_gha_workflow
-from lint_rules import Verdict, verdict
+from lint_rules import Verdict, load_gha_workflow, verdict
 from lint_rules.chart import (
     built_unscheduled,
     chart_readiness,

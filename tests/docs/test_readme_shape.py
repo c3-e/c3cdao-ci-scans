@@ -35,9 +35,9 @@ def test_ruleset_named_plainly():
 
 
 def test_prereqs_reference_contract():
-    """AC-4: prerequisites reference the consumer build contract."""
+    """AC-4: prerequisites reference the derived consumer contract."""
     text = _text()
-    assert "ci-manifest" in text
+    assert "docker-compose" in text or "Compose" in text
     assert "docs/CI-CONTRACT.md" in text
 
 

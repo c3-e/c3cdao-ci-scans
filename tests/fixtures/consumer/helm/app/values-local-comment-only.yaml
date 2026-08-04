@@ -1,4 +1,0 @@
-# Comment-only pin must NOT satisfy the check:
-# scan_image: app:local
-backend:
-  image: other:v1

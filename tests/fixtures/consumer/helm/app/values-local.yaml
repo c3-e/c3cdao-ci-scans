@@ -1,5 +1,0 @@
-# Mini consumer values-local fixture for caller lint: the backend image line
-# carries the tag the clean caller fixture scans (pullPolicy: Never pair).
-backend:
-  image: app:local
-  imagePullPolicy: Never

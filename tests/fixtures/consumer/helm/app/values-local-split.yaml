@@ -1,6 +1,0 @@
-# Split repository/tag Helm image block (joined equals scan_image app:local).
-backend:
-  image:
-    repository: app
-    tag: local
-    pullPolicy: Never

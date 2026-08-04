@@ -14,15 +14,3 @@ repos:
       - id: mypy
         additional_dependencies: [types-PyYAML, types-jsonschema]
         files: ^scripts/lib/.*\.py$
-  - repo: local
-    hooks:
-      - id: contract-extract
-        name: regenerate gate contract from workflow_call.inputs
-        entry: uv run scripts/lib/extract_contract.py
-        language: system
-        # Regenerates contract/security-gate.schema.json + the marked block in
-        # docs/INPUTS.md; pre-commit re-stages whatever it rewrites. Trigger on
-        # the source inputs and on docs/INPUTS.md so a hand-edited block is
-        # reverted and re-staged on regen.
-        files: ^(\.github/workflows/reusable-security-gate\.yml|scripts/lib/extract_contract\.py|docs/INPUTS\.md)$
-        pass_filenames: false

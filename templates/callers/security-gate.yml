@@ -4,9 +4,9 @@
 #
 # The gate derives everything else (v0.6): build targets, tags, and args come
 # from your Compose file via `docker buildx bake --print`; the deployable
-# surface comes from your Helm chart. No Makefile.ci, no consumer scripts —
-# nonconforming shapes are blocked in the plan job by named fail-closed lint
-# rules. See docs/CI-CONTRACT.md.
+# surface comes from your Helm chart. No contract makefile, no consumer
+# scripts — nonconforming shapes are blocked in the plan job by named
+# fail-closed lint rules. See docs/CI-CONTRACT.md.
 name: Security Scan
 
 on:

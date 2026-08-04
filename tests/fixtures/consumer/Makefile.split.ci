@@ -1,3 +1,0 @@
-# Lint fixture contract variant: values_local uses the split repository/tag values file (join equals scan_image app:local).
-VALUES_LOCAL := helm/app/values-local-split.yaml
-include Makefile.ci

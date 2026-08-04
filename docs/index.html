@@ -21,7 +21,7 @@
         </span>
       </a>
       <div class="topbar-actions">
-        <span class="status"><span></span> Variant B · proposed</span>
+        <span class="status"><span></span> Variant B · current</span>
         <button class="icon-button" type="button" data-theme-toggle aria-label="Switch color theme">
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path d="M12 3a9 9 0 1 0 9 9c0-.46-.04-.91-.1-1.35A7 7 0 0 1 12 3Z" />
@@ -59,7 +59,7 @@
 
       <main id="content">
         <section class="hero" id="overview">
-          <div class="eyebrow">Architecture proposal / Variant B</div>
+          <div class="eyebrow">Current architecture / Variant B</div>
           <div class="hero-grid">
             <div>
               <h1>Central Security Gate</h1>
@@ -69,7 +69,7 @@
                 one final verdict.
               </p>
             </div>
-            <dl class="design-facts" aria-label="Proposed design facts">
+            <dl class="design-facts" aria-label="Design facts">
               <div><dt>Build engine</dt><dd>Buildx Bake</dd></div>
               <div><dt>Consumer contract</dt><dd>Compose + Helm</dd></div>
               <div><dt>Required check</dt><dd>Security Gate</dd></div>
@@ -86,18 +86,18 @@
           <div class="section-heading">
             <div>
               <span class="section-number">01</span>
-              <h2 id="change-title">Current and proposed contracts</h2>
+              <h2 id="change-title">Current and previous contracts</h2>
             </div>
             <div class="segmented-control" aria-label="Architecture version">
-              <button type="button" data-view="target" aria-pressed="true">Target</button>
-              <button type="button" data-view="current" aria-pressed="false">Current</button>
+              <button type="button" data-view="target" aria-pressed="true">Current (v0.6)</button>
+              <button type="button" data-view="current" aria-pressed="false">Previous (v0.5)</button>
             </div>
           </div>
 
           <div class="view-panel is-active" data-view-panel="target">
             <div class="comparison-grid">
               <article>
-                <span class="tag accent">Target</span>
+                <span class="tag accent">Current</span>
                 <h3>The gate executes the plan</h3>
                 <p>
                   <code>docker buildx bake --print</code> produces the reviewed plan. The gate executes the same
@@ -129,16 +129,17 @@
                 <span class="tag muted">v0.5.x</span>
                 <h3>Consumer-owned execution</h3>
                 <p>
-                  <code>Makefile.ci</code> emits a JSON manifest and implements build, security-context, and smoke
-                  prerequisite targets. The gate verifies outputs after those scripts run.
+                  A consumer-owned <code>Makefile.ci</code> emitted a JSON manifest and implemented build,
+                  security-context, and smoke prerequisite targets. The gate verified outputs after those
+                  scripts ran. Removed at v0.6.
                 </p>
               </article>
               <article>
                 <span class="tag muted">Positional</span>
-                <h3>Primary plus extras</h3>
+                <h3>Primary plus secondary images</h3>
                 <p>
-                  <code>scan_image</code> names the primary image. Remaining manifest entries become extras with
-                  separate artifact names and implicit local tags.
+                  <code>scan_image</code> named the primary image. Remaining manifest entries carried
+                  separate artifact names and implicit local tags. Replaced by equal matrix legs.
                 </p>
               </article>
               <article>
