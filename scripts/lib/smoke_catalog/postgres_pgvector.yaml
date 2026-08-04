@@ -1,0 +1,113 @@
+# Smoke catalog module: postgres-pgvector (ADR-08 standard database provider).
+#
+# Idempotent manifests applied by cluster-smoke into the smoke namespace
+# BEFORE helm install; the workflow's Ready gate waits on pods labeled
+# app.kubernetes.io/name=postgres-pgvector. FIXTURE CREDENTIALS ONLY —
+# this is throwaway test infrastructure, never scanned or shipped.
+#
+# Consumption contract (ADR-08, decoupled across environments): the app
+# reads its connection URL from the Secret `app-database-url` (key: url)
+# into DATABASE_URL. Compose provides a pgvector container locally, this
+# module provides it at smoke, managed RDS provides it in production.
+#
+# Image: upstream pgvector/pgvector digest-pinned (user decision
+# 2026-07-31) — the simplest system satisfying smoke needs; fleet
+# hardening posture does not apply to this throwaway pod, but it still
+# meets the gate's own restricted-PSS bar (nonroot, no privilege
+# escalation, caps dropped, seccomp, read-only root with explicit
+# writable volumes) so the smoke namespace stays PSS-clean.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: app-database-url
+  labels:
+    app.kubernetes.io/name: postgres-pgvector
+    app.kubernetes.io/part-of: smoke-catalog
+type: Opaque
+stringData:
+  # Fixture-only credentials: greppable marker, never a real secret.
+  url: postgresql://app:fixture-only@postgres-pgvector:5432/app
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-pgvector
+  labels:
+    app.kubernetes.io/name: postgres-pgvector
+    app.kubernetes.io/part-of: smoke-catalog
+spec:
+  selector:
+    app.kubernetes.io/name: postgres-pgvector
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: 5432
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres-pgvector
+  labels:
+    app.kubernetes.io/name: postgres-pgvector
+    app.kubernetes.io/part-of: smoke-catalog
+spec:
+  serviceName: postgres-pgvector
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: postgres-pgvector
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: postgres-pgvector
+        app.kubernetes.io/part-of: smoke-catalog
+    spec:
+      securityContext:
+        # postgres uid/gid in the upstream Debian-based image.
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: postgres
+          # Digest matches the reviewed x-downloaded-dependency pin in the
+          # fixture fork (tests/fixtures/bake/n3-local-profile).
+          image: pgvector/pgvector:pg16@sha256:a36250871de0833b8757561c72f2477ef1ddd1101afa4e617fb552e0de514c6b
+          ports:
+            - name: postgres
+              containerPort: 5432
+          env:
+            - name: POSTGRES_DB
+              value: app
+            - name: POSTGRES_USER
+              value: app
+            - name: POSTGRES_PASSWORD
+              value: fixture-only
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "app", "-d", "app"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+            - name: run
+              mountPath: /var/run/postgresql
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: data
+          emptyDir: {}
+        - name: run
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}

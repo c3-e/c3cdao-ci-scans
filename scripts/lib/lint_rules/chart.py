@@ -83,18 +83,65 @@ def _pod_labels(workload: dict[str, Any]) -> dict[str, Any]:
     return (template.get("metadata") or {}).get("labels") or {}
 
 
-def _service_backs(
+def _service_route(
     service: dict[str, Any], workload: dict[str, Any], probe_port: Any
-) -> bool:
+) -> dict[str, Any] | None:
+    """The Service port entry routing to probe_port, or None."""
     spec = service.get("spec") or {}
     selector = spec.get("selector") or {}
     labels = _pod_labels(workload)
     if not selector or any(labels.get(k) != v for k, v in selector.items()):
-        return False
+        return None
     for port in spec.get("ports") or []:
         if port.get("targetPort", port.get("port")) == probe_port:
-            return True
-    return False
+            return port
+    return None
+
+
+def smoke_candidates(
+    rendered: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """(backed, unbacked) HTTP readiness candidates for the smoke probe.
+
+    Candidates are containers with an httpGet readinessProbe; a candidate
+    is backed when a Service selecting the workload's pods routes to the
+    probe port. Shared by the smoke-target lint rule and the cluster-smoke
+    derivation (derive_smoke_target.py) so both agree on the semantics.
+    """
+    services = [
+        d for d in rendered if isinstance(d, dict) and d.get("kind") == "Service"
+    ]
+    backed: list[dict[str, Any]] = []
+    unbacked: list[str] = []
+    for workload, _, container in _workload_containers(rendered):
+        http_get = (container.get("readinessProbe") or {}).get("httpGet")
+        if not http_get:
+            continue
+        candidate = (
+            f"{workload['kind']}/{_name(workload)} container '{container.get('name')}'"
+        )
+        matches = [
+            (svc, route)
+            for svc in services
+            if (route := _service_route(svc, workload, http_get.get("port")))
+        ]
+        if matches:
+            svc, route = matches[0]
+            backed.append(
+                {
+                    "workload": f"{workload['kind']}/{_name(workload)}",
+                    "container": str(container.get("name")),
+                    "service": _name(svc),
+                    "port": route.get("port"),
+                    "path": str(http_get.get("path", "/")),
+                    "description": (
+                        f"{candidate} via Service {[_name(svc) for svc, _ in matches]}"
+                    ),
+                }
+            )
+        else:
+            unbacked.append(candidate)
+    return backed, unbacked
 
 
 def smoke_target(rendered: list[dict[str, Any]]) -> list[Verdict]:
@@ -104,27 +151,8 @@ def smoke_target(rendered: list[dict[str, Any]]) -> list[Verdict]:
     port is routed by a Service selecting the workload's pods; the
     post-deploy curl check needs one unambiguous target.
     """
-    services = [
-        d for d in rendered if isinstance(d, dict) and d.get("kind") == "Service"
-    ]
-    backed = []
-    unbacked = []
-    for workload, _, container in _workload_containers(rendered):
-        http_get = (container.get("readinessProbe") or {}).get("httpGet")
-        if not http_get:
-            continue
-        candidate = (
-            f"{workload['kind']}/{_name(workload)} container '{container.get('name')}'"
-        )
-        matches = [
-            _name(svc)
-            for svc in services
-            if _service_backs(svc, workload, http_get.get("port"))
-        ]
-        if matches:
-            backed.append(f"{candidate} via Service {matches}")
-        else:
-            unbacked.append(candidate)
+    candidates, unbacked = smoke_candidates(rendered)
+    backed = [c["description"] for c in candidates]
     if len(backed) == 1:
         return []
     if not backed:

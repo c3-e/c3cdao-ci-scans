@@ -150,11 +150,10 @@ def test_exactly_one_designated_source_sbom_leg():
 
 def test_containers_bridge_outputs_retired():
     plan_outputs = _workflow()["jobs"]["plan"]["outputs"]
-    for retired in ("containers", "has_extras", "chart"):
+    # health joined the retired set when T-7 rewired cluster-smoke.
+    for retired in ("containers", "has_extras", "chart", "health"):
         assert retired not in plan_outputs, f"bridge output '{retired}' must be retired"
     assert "matrix" in plan_outputs
-    # health bridge stays until T-7 rewires cluster-smoke.
-    assert "health" in plan_outputs
     assert "needs.plan.outputs.containers" not in WORKFLOW.read_text()
 
 

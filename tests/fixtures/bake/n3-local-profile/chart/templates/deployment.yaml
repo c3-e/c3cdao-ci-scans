@@ -1,3 +1,8 @@
+# Bootable N=3 workload (T-7): three fixture HTTP servers in one pod,
+# distinct ports (shared pod network namespace), restricted-PSS clean —
+# the bundled assert_restricted_pss.py gates helm-check, and cluster-smoke
+# helm install --wait needs every container Ready. Only svc-a's probe is
+# Service-backed: the smoke-target derivation must yield exactly one target.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -12,22 +17,48 @@ spec:
       labels:
         app: bake-spike-n3
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: svc-a
           image: {{ .Values.images.svcA | quote }}
+          args: ["8080"]
           ports:
             - containerPort: 8080
           readinessProbe:
             httpGet:
               path: /healthz
               port: 8080
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
         - name: svc-b
           image: {{ .Values.images.svcB | quote }}
+          args: ["8081"]
           readinessProbe:
-            exec:
-              command: ["test", "-f", "/svc.txt"]
+            httpGet:
+              path: /healthz
+              port: 8081
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
         - name: svc-c
           image: {{ .Values.images.svcC | quote }}
+          args: ["8082"]
           readinessProbe:
-            exec:
-              command: ["test", "-f", "/svc.txt"]
+            httpGet:
+              path: /healthz
+              port: 8082
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]

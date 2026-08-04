@@ -45,10 +45,11 @@ def test_caller_lint_renamed_to_plan():
 
 def test_plan_outputs_matrix_and_bridge_outputs():
     outputs = _jobs()["plan"]["outputs"]
-    # T-6 retired the containers/has_extras/chart bridges; health stays
-    # until T-7 rewires cluster-smoke.
-    for key in ("matrix", "source_sbom_target", "health"):
+    # T-6 retired the containers/has_extras/chart bridges; T-7 retired
+    # health when it rewired cluster-smoke — no bridge outputs remain.
+    for key in ("matrix", "source_sbom_target"):
         assert key in outputs, f"plan must declare output '{key}'"
+    assert "health" not in outputs, "bridge output 'health' must be retired"
 
 
 def test_plan_wires_lint_and_derive_with_gate_overrides():

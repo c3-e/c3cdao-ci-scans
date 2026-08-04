@@ -7,7 +7,7 @@ services:
     image: bake-spike/svc-a:0.1.0
     platform: linux/amd64
     healthcheck:
-      test: ["CMD", "test", "-f", "/svc.txt"]
+      test: ["CMD", "test", "-f", "/srv/svc.txt"]
       interval: 30s
 
   svc-b:
@@ -18,7 +18,7 @@ services:
     image: bake-spike/svc-b:0.1.0
     platform: linux/amd64
     healthcheck:
-      test: ["CMD", "test", "-f", "/svc.txt"]
+      test: ["CMD", "test", "-f", "/srv/svc.txt"]
       interval: 30s
 
   svc-c:
@@ -29,7 +29,7 @@ services:
     image: bake-spike/svc-c:0.1.0
     platform: linux/amd64
     healthcheck:
-      test: ["CMD", "test", "-f", "/svc.txt"]
+      test: ["CMD", "test", "-f", "/srv/svc.txt"]
       interval: 30s
 
   # Local-only tooling service: derivation must never see it (SPIKE-01).
@@ -42,7 +42,7 @@ services:
     image: bake-spike/svc-local:0.1.0
     platform: linux/amd64
     healthcheck:
-      test: ["CMD", "test", "-f", "/svc.txt"]
+      test: ["CMD", "test", "-f", "/srv/svc.txt"]
       interval: 30s
 
   # Downloaded runtime dependency: image-only, digest-pinned, declared.

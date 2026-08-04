@@ -3,8 +3,8 @@
 # A single workflow owns the entire PR gate and reports as the required
 # status check, instead of several independent modular scan workflows.
 #
-# Interface (v0.6 cutover in progress — T-5 landed plan/build, T-6 landed the
-# scan matrix + thin caller surface + fan-in; T-7 rewires cluster-smoke): the
+# Interface (v0.6: T-5 landed plan/build, T-6 the scan matrix + thin caller
+# surface + fan-in, T-7 the smoke catalog + chart-derived probe): the
 # gate derives build facts from the consumer's canonical Compose file via
 # `docker buildx bake --print` (the published build plan / BOM) and executes
 # each build and scan itself. workflow_call inputs are the 7 v0.6 names
@@ -40,11 +40,12 @@
 #                     artifacts named by target (scan-image-<target> /
 #                     sbom-image-<target>). needs: plan only — helm-check
 #                     runs in parallel with builds in v0.6.
-#   cluster-smoke     kind + helm install + health probe against the built
-#                     image (needs: build) — proves the image actually boots;
-#                     skipped when image_only. INTERIM: non-functional until
-#                     T-7 wires the smoke_resources catalog + chart-derived
-#                     probe (the v0.5 consumer ci-smoke-env path is gone).
+#   cluster-smoke     kind + provision declared smoke_resources catalog
+#                     modules (Ready gate) + load per-leg image tars +
+#                     helm install --wait + chart-derived HTTP probe
+#                     (needs: build, helm-check) — proves the images
+#                     actually boot behind the chart; skipped when
+#                     image_only.
 #   image-scan        matrixed over the plan job's derived matrix (same
 #                     include as build): Trivy + Grype on each leg's
 #                     scan-image-<target>/sbom-image-<target> artifacts; the
@@ -132,9 +133,6 @@ env:
   GATE_RUNTIME_IMAGE: cgr.dev/chainguard/python:latest
   GATE_IRONBANK_REGISTRY: registry1.dso.mil
   GATE_REQUIRE_HARDENED_BASES: 'true'
-  # v0.5 single-image artifact name; only the interim cluster-smoke download
-  # still references it (T-7 rewires to the per-target scan-image-<target>).
-  IMAGE_ARTIFACT: scan-image
   TRIVY_SEVERITY: HIGH,CRITICAL
 
 jobs:
@@ -163,9 +161,6 @@ jobs:
       # first target in sorted order (deterministic, never empty). Exactly
       # one image-scan leg matches it.
       source_sbom_target: ${{ steps.emit.outputs.source_sbom_target }}
-      # Legacy-shaped bridge output for the job T-7 (cluster-smoke health
-      # probe) has not rewired yet.
-      health: '{}'
     steps:
       # Consumer repo (github.repository = the caller's repo).
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
@@ -789,26 +784,26 @@ jobs:
           uv run .ci-scans/scripts/lib/assert_restricted_pss.py /tmp/rendered-chart.yaml
 
   # --------------------------------------------------------------------------
-  # Cluster smoke — kind + helm install + health probe against the built image.
+  # Cluster smoke — kind + catalog provisioning + helm install + derived probe.
   # helm-check (lint/template) is a static render; it can't catch a chart that
   # renders clean but crash-loops on boot (bad env, failed migration, broken
-  # entrypoint). Warn-only unless SECURITY_SCAN_BLOCKING.
-  # INTERIM (T-7 rewires this job): the v0.5 consumer smoke prerequisites
-  # (`make ci-smoke-env`, smoke_secrets) are gone with the contract_file /
-  # smoke_secrets / scan_image / cluster_name inputs; T-7 wires the gate-owned
-  # smoke_resources catalog, per-leg tar loading, and the chart-derived probe.
-  # Until then this job is syntactically valid but non-functional for chart
-  # consumers (same bridge posture T-5 left for image-scan).
+  # entrypoint). Flow (T-7): create kind cluster -> load every per-leg image
+  # tar -> apply the declared smoke_resources catalog modules and gate on
+  # their readiness (a timeout fails naming the module, BEFORE any helm
+  # install) -> helm install --wait -> probe the chart-derived HTTP target
+  # (derive_smoke_target.py over the local-values render — same semantics the
+  # smoke-target lint enforced in plan, so a lint-clean chart always derives).
+  # Warn-only unless SECURITY_SCAN_BLOCKING.
   # --------------------------------------------------------------------------
   cluster-smoke:
     name: Cluster Smoke (kind + helm + health)
     runs-on: ubuntu-latest
-    # plan is needed only to reference its health bridge output (T-7 rewires).
-    needs: [plan, build]
+    needs: [build, helm-check]
     if: |
       always() &&
       inputs.image_only != true &&
-      needs.build.result == 'success'
+      needs.build.result == 'success' &&
+      needs.helm-check.result == 'success'
     outputs:
       smoke_ok: ${{ steps.smoke_outcome.outputs.ok }}
     env:
@@ -828,17 +823,50 @@ jobs:
           sudo docker image prune -af 2>/dev/null || true
           df -h /
 
-      # INTERIM (T-7): the v0.5 single `scan-image` artifact no longer
-      # exists — build uploads per-target scan-image-<target> artifacts.
-      # T-7 rewires this download to the per-leg tars; until then this
-      # step fails and the job stays non-functional by design.
-      - name: Download image artifact (T-7 rewires to per-leg tars)
+      # Callee (ci-scans) checkout: catalog module manifests + the
+      # smoke-target derivation script live in the gate repo, not the
+      # consumer's tree (same cross-repo pattern as plan/build/helm-check).
+      - name: Resolve callee (ci-scans) ref
+        id: calleeref
+        env:
+          WORKFLOW_REF: ${{ github.workflow_ref }}
+          JOB_WF_SHA: ${{ github.job_workflow_sha }}
+        run: |
+          caller="${WORKFLOW_REF#"$GITHUB_REPOSITORY/"}"; caller="${caller%%@*}"
+          ref=""
+          if [ -f "$caller" ]; then
+            ref="$(grep -oE 'reusable-security-gate\.yml@[^ ]+' "$caller" | head -1 | sed 's/.*@//')"
+          fi
+          ref="${ref:-${JOB_WF_SHA:-main}}"
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+        with:
+          repository: c3-e/c3cdao-ci-scans
+          ref: ${{ steps.calleeref.outputs.ref }}
+          path: .ci-scans
+
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e  # v6
+
+      # Every per-leg image tar (T-7): build uploads scan-image-<target>
+      # per matrix leg; each downloads into its own directory.
+      - name: Download per-leg image artifacts
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4
         with:
-          name: ${{ env.IMAGE_ARTIFACT }}
+          pattern: scan-image-*
+          path: /tmp/images
 
-      - name: Load image into local daemon
-        run: docker load -i image.tar
+      - name: Load images into local daemon
+        run: |
+          set -euo pipefail
+          : > /tmp/loaded-tags.txt
+          for tar in /tmp/images/scan-image-*/image.tar; do
+            docker load -i "$tar" | tee -a /tmp/load.log
+          done
+          grep -oE '^Loaded image: .+' /tmp/load.log | sed 's/^Loaded image: //' \
+            | sort -u > /tmp/loaded-tags.txt
+          [ -s /tmp/loaded-tags.txt ]
+          echo "loaded $(wc -l < /tmp/loaded-tags.txt | tr -d ' ') image tag(s)"
 
       - name: Create kind cluster
         uses: helm/kind-action@ef37e7f390d99f746eb8b610417061a60e82a6cc  # v1.14.0
@@ -848,21 +876,14 @@ jobs:
       - name: Set up Helm
         uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4  # v4
 
-      - name: kind install + helm deploy + health smoke
+      - name: provision catalog + helm deploy + derived health smoke
         id: smoke
         # Warn-only: advisory unless SECURITY_SCAN_BLOCKING=true. Step outcome is
         # recorded below so security-gate can fail closed even when this step
         # continues on error (job result stays success).
         continue-on-error: ${{ vars.SECURITY_SCAN_BLOCKING != 'true' }}
         env:
-          # T-7 rewires: the smoke image tag comes from the derived smoke
-          # target (chart-rendered), not a caller input. Empty until then —
-          # the kind load below fail()s first, keeping the job's interim
-          # non-functional posture explicit.
-          IMAGE: ''
-          HEALTH_PORT: ${{ fromJSON(needs.plan.outputs.health).port }}
-          HEALTH_PATH: ${{ fromJSON(needs.plan.outputs.health).path }}
-          SMOKE_WORKLOAD_MATCH: ${{ fromJSON(needs.plan.outputs.health).workload_match }}
+          SMOKE_RESOURCES: ${{ inputs.smoke_resources }}
           HELM_CHART_PATH: ${{ inputs.chart_path }}
           HELM_RELEASE_NAME: ${{ inputs.release }}
           HELM_VALUES_LOCAL_FILE: ${{ inputs.values_local }}
@@ -870,21 +891,80 @@ jobs:
           set -uo pipefail
           fail() { echo "::warning::cluster-smoke: $1"; exit 1; }
 
-          [ -n "${IMAGE}" ] || fail "no smoke image target (T-7 wires the chart-derived probe)"
-          kind load docker-image "${IMAGE}" --name "${CLUSTER}" || fail "kind load failed"
+          while IFS= read -r tag; do
+            kind load docker-image "${tag}" --name "${CLUSTER}" \
+              || fail "kind load failed for ${tag}"
+          done < /tmp/loaded-tags.txt
 
           kubectl create namespace "${NAMESPACE}" --dry-run=client -o yaml | kubectl apply -f -
 
-          # T-7 wires the gate-owned smoke_resources catalog modules here
-          # (replacing the v0.5 consumer `make ci-smoke-env` + smoke_secrets).
+          # Gate-owned smoke_resources catalog modules (T-7): apply each
+          # declared module and gate on its readiness BEFORE any helm
+          # install. Ids were validated upstream by the
+          # smoke-resource-unknown lint rule; module id -> manifest file
+          # maps dash to underscore.
+          provision_module() {
+            local module="$1"
+            # Defense in depth: the smoke-resource-unknown lint already
+            # blocked unknown ids in plan, but this shell must not turn a
+            # crafted id into a path (['/'] or '..') under any circumstance.
+            case "$module" in
+              (*[!a-z0-9-]*|"") echo "invalid smoke resource id '${module}'"; return 1 ;;
+            esac
+            local manifest=".ci-scans/scripts/lib/smoke_catalog/${module//-/_}.yaml"
+            [ -f "$manifest" ] || { echo "no catalog manifest for '${module}'"; return 1; }
+            kubectl apply -n "${NAMESPACE}" -f "$manifest" || return 1
+            if grep -q '^kind: CustomResourceDefinition' "$manifest"; then
+              kubectl wait --for=condition=Established -f "$manifest" \
+                --timeout=120s || return 1
+            fi
+            if grep -qE '^kind: (StatefulSet|Deployment)' "$manifest"; then
+              local ready=false
+              for _ in $(seq 1 30); do
+                if kubectl -n "${NAMESPACE}" wait --for=condition=Ready pod \
+                     -l "app.kubernetes.io/name=${module}" --timeout=6s \
+                     >/dev/null 2>&1; then
+                  ready=true; break
+                fi
+                sleep 2
+              done
+              if [ "$ready" != true ]; then
+                kubectl -n "${NAMESPACE}" get pods,statefulsets \
+                  -l "app.kubernetes.io/name=${module}" -o wide || true
+                kubectl -n "${NAMESPACE}" get events --sort-by=.lastTimestamp | tail -20 || true
+                return 1
+              fi
+            fi
+          }
+          IFS=',' read -ra modules <<< "${SMOKE_RESOURCES}"
+          for module in "${modules[@]}"; do
+            module="$(echo "$module" | tr -d '[:space:]')"
+            [ -n "$module" ] || continue
+            provision_module "$module" \
+              || fail "smoke resource '${module}' failed readiness before helm install"
+            echo "module ready: ${module}"
+          done
 
           helm dependency build "./${HELM_CHART_PATH}" || fail "helm dependency build failed"
 
-          # Install the app. Don't --wait on the whole release — gate on the
-          # backend rollout / health probe explicitly.
+          # Chart-derived probe target (T-7): derive from the local-values
+          # render — the same Service-backed HTTP readiness semantics the
+          # smoke-target lint rule enforced in plan, so a lint-clean chart
+          # always derives exactly one target.
+          helm template "${HELM_RELEASE_NAME}" "./${HELM_CHART_PATH}" \
+            -f "${HELM_VALUES_LOCAL_FILE}" > /tmp/rendered-chart.yaml \
+            || fail "helm template failed for smoke-target derivation"
+          target_json=$(uv run .ci-scans/scripts/lib/derive_smoke_target.py \
+            /tmp/rendered-chart.yaml) || fail "smoke-target derivation failed"
+          echo "derived smoke target: ${target_json}"
+          PROBE_SVC=$(echo "$target_json" | jq -re .service) || fail "derived target missing service"
+          PROBE_PORT=$(echo "$target_json" | jq -re .port) || fail "derived target missing port"
+          PROBE_PATH=$(echo "$target_json" | jq -re .path) || fail "derived target missing path"
+
           helm install "${HELM_RELEASE_NAME}" "./${HELM_CHART_PATH}" \
             -n "${NAMESPACE}" \
             -f "${HELM_VALUES_LOCAL_FILE}" \
+            --wait \
             --timeout 5m || {
               echo "=== helm install failed — cluster diagnostics ==="
               kubectl -n "${NAMESPACE}" get pods,jobs -o wide || true
@@ -896,34 +976,18 @@ jobs:
               fail "helm install failed"
             }
 
-          # `|| true`: grep exits 1 on no match and the step's errexit (GHA's
-          # default `bash -e {0}`) would kill it here, skipping the fail-guard
-          # below — the guard is the user-visible error. Workload name matching
-          # comes from the manifest's health.workload_match (default 'backend').
-          backend_deploy=$(kubectl -n "${NAMESPACE}" get deploy -o name | grep -i "$SMOKE_WORKLOAD_MATCH" | head -1 || true)
-          [ -n "${backend_deploy}" ] || fail "no backend deployment found"
-          kubectl -n "${NAMESPACE}" rollout status "${backend_deploy}" --timeout=180s || {
-            echo "=== backend not ready — diagnostics ==="
-            kubectl -n "${NAMESPACE}" get pods -o wide || true
-            kubectl -n "${NAMESPACE}" describe "${backend_deploy}" | tail -40 || true
-            for p in $(kubectl -n "${NAMESPACE}" get pods -l app.kubernetes.io/component=backend -o name 2>/dev/null; kubectl -n "${NAMESPACE}" get pods -o name 2>/dev/null | grep -i "$SMOKE_WORKLOAD_MATCH"); do
-              echo "--- describe ${p} ---"; kubectl -n "${NAMESPACE}" describe "${p}" | tail -30 || true
-              echo "--- logs ${p} (current) ---"; kubectl -n "${NAMESPACE}" logs "${p}" --all-containers --tail=60 || true
-              echo "--- logs ${p} (previous) ---"; kubectl -n "${NAMESPACE}" logs "${p}" --all-containers --previous --tail=60 || true
-            done
-            fail "backend not ready"
-          }
-
-          backend_svc=$(kubectl -n "${NAMESPACE}" get svc -o name | grep -i "$SMOKE_WORKLOAD_MATCH" | head -1 || true)
-          [ -n "${backend_svc}" ] || fail "no backend service found"
-          kubectl -n "${NAMESPACE}" port-forward "${backend_svc}" "${HEALTH_PORT}:${HEALTH_PORT}" >/tmp/pf.log 2>&1 &
+          # Fixed high local port: the derived Service port may be <1024
+          # (e.g. 80), which the unprivileged runner user cannot bind.
+          kubectl -n "${NAMESPACE}" port-forward "svc/${PROBE_SVC}" \
+            "18080:${PROBE_PORT}" >/tmp/pf.log 2>&1 &
           pf_pid=$!
           sleep 6
-          code=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:${HEALTH_PORT}${HEALTH_PATH}" || echo 000)
+          code=$(curl -s -o /dev/null -w '%{http_code}' \
+            "http://127.0.0.1:18080${PROBE_PATH}" || echo 000)
           kill "${pf_pid}" 2>/dev/null || true
-          echo "GET ${HEALTH_PATH} -> ${code}"
-          [ "${code}" = "200" ] || fail "${HEALTH_PATH} returned ${code}, expected 200"
-          echo "smoke OK"
+          echo "GET ${PROBE_PATH} via svc/${PROBE_SVC}:${PROBE_PORT} -> ${code}"
+          [ "${code}" = "200" ] || fail "${PROBE_PATH} returned ${code}, expected 200"
+          echo "probe 200 — smoke OK"
 
       - name: Record smoke step outcome
         id: smoke_outcome
