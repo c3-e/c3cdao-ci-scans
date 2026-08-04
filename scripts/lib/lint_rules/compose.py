@@ -76,11 +76,26 @@ def compose_image_tag(
     """Every non-local build service declares an explicit `image:` tag.
 
     An untagged reference and `:latest` are indistinguishable after bake's
-    normalization, so neither counts as explicit.
+    normalization, so neither counts as explicit. An interpolated reference
+    (`image: app:${TAG}`) blocks first (T-4F / FIX-CANDIDATE C6): the gate
+    runs bake with a scrubbed environment, so `${TAG}` resolves empty and
+    would fail downstream as a malformed reference instead of a named
+    verdict.
     """
     verdicts = []
     for name, svc in _target_services(compose, classified):
         image = svc.get("image")
+        if _interpolated(image):
+            verdicts.append(
+                verdict(
+                    "compose-image-tag",
+                    f"build service '{name}' interpolates its image reference "
+                    f"(image: {image!r}); the gate builds with a scrubbed "
+                    "environment, so the variable resolves empty — pin a "
+                    "committed literal tag",
+                )
+            )
+            continue
         tag = ""
         if isinstance(image, str):
             tag = image.rpartition("@")[0] or image

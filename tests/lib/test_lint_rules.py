@@ -143,6 +143,21 @@ def test_compose_image_tag_passes_on_explicit_tag():
     assert compose_image_tag(compose, classify(compose)) == []
 
 
+def test_compose_image_tag_blocks_interpolated_reference():
+    """T-4F AC-1: `image: app:${TAG}` resolves empty under the gate's
+    scrubbed environment — block at the front door, naming interpolation."""
+    compose = {"services": {"app": build_service("app:${TAG}")}}
+    v = only_rule(compose_image_tag(compose, classify(compose)), "compose-image-tag")
+    assert "interpolat" in v["message"]
+    assert "app:${TAG}" in v["message"]
+
+
+def test_compose_image_tag_allows_escaped_literal_dollar():
+    """T-4F AC-2: `$$` is Compose's literal-dollar escape, not interpolation."""
+    compose = {"services": {"app": build_service("registry.example/app:v1$$rc")}}
+    assert compose_image_tag(compose, classify(compose)) == []
+
+
 def test_compose_healthcheck():
     svc = build_service("app:1")
     del svc["healthcheck"]
