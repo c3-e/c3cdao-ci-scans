@@ -45,7 +45,9 @@ def test_caller_lint_renamed_to_plan():
 
 def test_plan_outputs_matrix_and_bridge_outputs():
     outputs = _jobs()["plan"]["outputs"]
-    for key in ("matrix", "containers", "has_extras", "chart", "health"):
+    # T-6 retired the containers/has_extras/chart bridges; health stays
+    # until T-7 rewires cluster-smoke.
+    for key in ("matrix", "source_sbom_target", "health"):
         assert key in outputs, f"plan must declare output '{key}'"
 
 

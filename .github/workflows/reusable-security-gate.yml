@@ -3,12 +3,15 @@
 # A single workflow owns the entire PR gate and reports as the required
 # status check, instead of several independent modular scan workflows.
 #
-# Interface (v0.6 cutover in progress — T-5 landed plan/build; T-6 rewires
-# image-scan + the caller input surface, T-7 rewires cluster-smoke): the gate
-# derives build facts from the consumer's canonical Compose file via
+# Interface (v0.6 cutover in progress — T-5 landed plan/build, T-6 landed the
+# scan matrix + thin caller surface + fan-in; T-7 rewires cluster-smoke): the
+# gate derives build facts from the consumer's canonical Compose file via
 # `docker buildx bake --print` (the published build plan / BOM) and executes
-# each build itself. Consumer Makefile.ci targets survive only in the jobs
-# T-6/T-7 have not yet rewired.
+# each build and scan itself. workflow_call inputs are the 7 v0.6 names
+# (compose_file, chart_path, values_local, release, namespace,
+# smoke_resources, image_only) + the 4 registry secrets; the v0.5
+# scan_image/contract_file/require_hardened_bases and base-image override
+# inputs are gone (base images + posture are gate config — see env below).
 #
 # Structure:
 #   plan              configuration pre-flight: v0.6 fail-closed convention
@@ -23,11 +26,10 @@
 #   secrets-scan      TruffleHog (parallel after plan)
 #   sast-semgrep      Semgrep (parallel, warn-only until baseline)
 #   sast-sonarqube    SonarQube ephemeral (parallel, warn-only until baseline)
-#   helm-check        helm lint + template + restricted PSS on the manifest's
-#                     chart, plus the consumer's own `make ci-secctx` (after
-#                     plan; blocking unless image_only; T-6/T-7 rewire its
-#                     chart inputs — non-functional for chart consumers until
-#                     then)
+#   helm-check        helm lint + template + bundled restricted-PSS assertion
+#                     on the caller's chart_path/values_local/release inputs
+#                     (after plan; blocking unless image_only; the v0.5
+#                     consumer ci-secctx hook is dropped with no successor)
 #   build             matrixed over the plan job's derived matrix output: one
 #                     leg per non-local Compose build target, `bake <target>`
 #                     with `--set '*.platform=linux/amd64'` and the resolved
@@ -38,14 +40,16 @@
 #                     artifacts named by target (scan-image-<target> /
 #                     sbom-image-<target>). needs: plan only — helm-check
 #                     runs in parallel with builds in v0.6.
-#   cluster-smoke     kind + `make ci-smoke-env` + helm install + health probe
-#                     against the built image (needs: build) — proves the image
-#                     actually boots; skipped when image_only
-#   image-scan        matrixed over the plan job's containers bridge output:
-#                     Trivy + Grype on each built image (+ its image SBOM);
-#                     T-6 rewires this job to the per-leg artifacts and
-#                     designates the source-SBOM leg.
-#                     (needs: build)
+#   cluster-smoke     kind + helm install + health probe against the built
+#                     image (needs: build) — proves the image actually boots;
+#                     skipped when image_only. INTERIM: non-functional until
+#                     T-7 wires the smoke_resources catalog + chart-derived
+#                     probe (the v0.5 consumer ci-smoke-env path is gone).
+#   image-scan        matrixed over the plan job's derived matrix (same
+#                     include as build): Trivy + Grype on each leg's
+#                     scan-image-<target>/sbom-image-<target> artifacts; the
+#                     designated leg (plan's source_sbom_target) also runs
+#                     the whole-repo source-SBOM scans (needs: build)
 #   security-gate     aggregate pass/fail (needs: all, if: always())
 #
 # Build artifact handling (mirrors the modular workflows' "transient, runner-
@@ -74,44 +78,24 @@ on:
         description: "Path (relative to the consumer repo root) of the canonical Compose file the gate derives build facts from (v0.6). `docker buildx bake --print` on this file is the published build plan; the plan job annotates it into the BOM and emits the build matrix from it."
         type: string
         default: docker-compose.yml
-      scan_image:
-        description: "Local-daemon tag the primary image is built and scanned under; the v0.5 lint required it to equal a parsed image string or repository:tag join in the manifest's values_local file (comments ignored). Cluster-smoke kind-loads this tag with pullPolicy: Never. Passed to `make ci-build` as CI_IMAGE_TAG for the primary."
+      chart_path:
+        description: "Path (relative to the consumer repo root) of the deployable Helm chart helm-check lints/templates and cluster-smoke installs. Required for chart consumers; irrelevant when image_only is true."
         type: string
-        default: app:local
-      contract_file:
-        description: "Path (relative to the consumer repo root) of the consumer build-contract Makefile providing the ci-manifest / ci-build / ci-secctx / ci-smoke-env targets. `make ci-manifest` output is the single source of truth for the containers list and chart/health metadata. Start from templates/consumer/Makefile.ci."
+        default: chart
+      values_local:
+        description: "Path (relative to the consumer repo root) of the chart values file for local/CI installs (locally-built image tags, pullPolicy: Never). Rendered by helm-check and cluster-smoke on top of the chart's default values."
         type: string
-        default: Makefile.ci
-      builder_image:
-        description: "Build-stage base image, exported to `make ci-build` as CI_BUILDER_BASE (after hardened-registry failover resolution); consume it as your builder base-image build arg."
+        default: chart/values-local.yaml
+      release:
+        description: "Helm release name helm-check templates under and cluster-smoke installs as."
         type: string
-        default: cgr.dev/chainguard/python:latest-dev
-      runtime_image:
-        description: "Runtime-stage base image, exported to `make ci-build` as CI_RUNTIME_BASE (after hardened-registry failover resolution); consume it as your runtime base-image build arg."
-        type: string
-        default: cgr.dev/chainguard/python:latest
-      require_hardened_bases:
-        description: "Hardened-base policy — operator posture decision, not read from a consumer file. true (default): fail the build when neither Chainguard nor Iron Bank credentials are configured. false: warn and build with the consumer-specified bases (pilot escape hatch — the consumer explicitly owns that posture). When false, Vulnerability Scan labels the run as a public-base / consumer-specified-base proxy scan — a green result is not proof the approved production image is clean."
-        type: boolean
-        default: true
-      ironbank_registry:
-        description: "Iron Bank registry host used for docker login whenever IRONBANK_* secrets are set (alongside Chainguard when both are configured). Also used when primary-base failover swaps to ironbank_* images (CGR absent, Iron Bank present). Operator decision; defaults to the DoD registry."
-        type: string
-        default: registry1.dso.mil
-      ironbank_builder_image:
-        description: "Optional Iron Bank replacement for builder_image — applied only on primary-base failover (CGR credentials absent AND Iron Bank present). Left empty, the consumer's builder_image passes through. Does not affect whether Iron Bank login runs; login is independent when IRONBANK_* is set."
-        type: string
-        default: ""
-      ironbank_runtime_image:
-        description: "Optional Iron Bank replacement for runtime_image — applied only on primary-base failover (CGR credentials absent AND Iron Bank present). Left empty, the consumer's runtime_image passes through. Does not affect whether Iron Bank login runs; login is independent when IRONBANK_* is set."
-        type: string
-        default: ""
-      cluster_name:
-        description: "kind cluster name cluster-smoke creates and loads the image into; operator choice, no consumer-file counterpart."
+        default: app
+      namespace:
+        description: "Kubernetes namespace cluster-smoke creates and installs the release into."
         type: string
         default: app-ci
-      smoke_secrets:
-        description: "JSON array (as a string) of Kubernetes Secrets to create in the smoke namespace before helm install — one object per entry: name (DNS-1123 secret name), literals (newline-joined KEY=VALUE string). Use for chart envFrom/secretKeyRef pre-reqs beyond what your `make ci-smoke-env` target provisions. Values are CI fixtures only — never commit real credentials. Default \"\" creates none. Prefer a multiline YAML '|' block."
+      smoke_resources:
+        description: "CSV of gate-owned smoke catalog module ids (e.g. postgres-pgvector,gateway-crds) cluster-smoke provisions before helm install. Unknown ids are blocked by the smoke-resource-unknown lint rule. Default \"\" provisions none. (Wired by T-7.)"
         type: string
         default: ""
       image_only:
@@ -137,15 +121,19 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # Local-daemon tag only — the image is never pushed to a registry. It moves
-  # between jobs as a `docker save` tarball (actions artifact), so a bare repo
-  # tag is all we need; `docker load` restores this exact tag downstream.
-  # MUST match inputs.scan_image to the manifest's values_local file (backend
-  # image + pullPolicy: Never) — cluster-smoke `kind load`s this tag and the
-  # chart's backend + migration-hook pods reference it with pullPolicy Never.
-  # A mismatch = ErrImageNeverPull and the post-install migration hook hangs
-  # until helm times out.
-  SCAN_IMAGE: ${{ inputs.scan_image }}
+  # Gate config (v0.6): base images, Iron Bank registry, and hardened-base
+  # posture are gate-owned operator decisions, not caller inputs — the v0.5
+  # builder_image/runtime_image/ironbank_*/require_hardened_bases inputs
+  # folded into these literals at the T-6 cutover. Consumers consume the
+  # resolved bases via the blessed BUILDER_IMAGE/RUNTIME_IMAGE build args
+  # (hardened-args lint). GATE_REQUIRE_HARDENED_BASES is fail-closed
+  # (constitution 1): no credential pair means no build.
+  GATE_BUILDER_IMAGE: cgr.dev/chainguard/python:latest-dev
+  GATE_RUNTIME_IMAGE: cgr.dev/chainguard/python:latest
+  GATE_IRONBANK_REGISTRY: registry1.dso.mil
+  GATE_REQUIRE_HARDENED_BASES: 'true'
+  # v0.5 single-image artifact name; only the interim cluster-smoke download
+  # still references it (T-7 rewires to the per-target scan-image-<target>).
   IMAGE_ARTIFACT: scan-image
   TRIVY_SEVERITY: HIGH,CRITICAL
 
@@ -169,15 +157,14 @@ jobs:
       # non-local Compose build target, [{target, tag, dockerfile, context}].
       # <=10 enforced upstream by the matrix-cap lint rule, and never empty
       # (compose-no-builds blocks first), so no empty-include plan failure.
+      # build and image-scan both fan out over this matrix.
       matrix: ${{ steps.emit.outputs.matrix }}
-      # Legacy-shaped bridge outputs for the jobs T-6 (image-scan, fan-in)
-      # and T-7 (cluster-smoke, helm-check) have not rewired yet. containers
-      # mirrors the matrix with role 'target' (never 'primary'), so the
-      # v0.5-shaped image-scan legs resolve the per-target artifact names
-      # scan-image-<target>/sbom-image-<target> that build now uploads.
-      containers: ${{ steps.emit.outputs.containers }}
-      has_extras: 'false'
-      chart: '{}'
+      # The single leg that carries the whole-repo source-SBOM scans: the
+      # first target in sorted order (deterministic, never empty). Exactly
+      # one image-scan leg matches it.
+      source_sbom_target: ${{ steps.emit.outputs.source_sbom_target }}
+      # Legacy-shaped bridge output for the job T-7 (cluster-smoke health
+      # probe) has not rewired yet.
       health: '{}'
     steps:
       # Consumer repo (github.repository = the caller's repo).
@@ -230,12 +217,10 @@ jobs:
           cgr-pull-username: ${{ secrets.CGR_PULL_USERNAME }}
           ironbank-token: ${{ secrets.IRONBANK_TOKEN }}
           ironbank-username: ${{ secrets.IRONBANK_USERNAME }}
-          ironbank-registry: ${{ inputs.ironbank_registry }}
-          builder-image: ${{ inputs.builder_image }}
-          runtime-image: ${{ inputs.runtime_image }}
-          ironbank-builder-image: ${{ inputs.ironbank_builder_image }}
-          ironbank-runtime-image: ${{ inputs.ironbank_runtime_image }}
-          require-hardened-bases: ${{ inputs.require_hardened_bases }}
+          ironbank-registry: ${{ env.GATE_IRONBANK_REGISTRY }}
+          builder-image: ${{ env.GATE_BUILDER_IMAGE }}
+          runtime-image: ${{ env.GATE_RUNTIME_IMAGE }}
+          require-hardened-bases: ${{ env.GATE_REQUIRE_HARDENED_BASES }}
 
       - name: Lint caller against v0.6 conventions
         env:
@@ -297,7 +282,7 @@ jobs:
           if-no-files-found: error
 
       # Single-line JSON so it is safe for GITHUB_OUTPUT.
-      - name: Emit build matrix + containers bridge output
+      - name: Emit build matrix + designated source-SBOM target
         id: emit
         run: |
           python3 - <<'PY'
@@ -312,15 +297,12 @@ jobs:
               }
               for name, tgt in sorted(plan["target"].items())
           ]
-          containers = [
-              {"name": m["target"], "image": m["tag"], "role": "target"}
-              for m in matrix
-          ]
           sep = (",", ":")
           with open(os.environ["GITHUB_OUTPUT"], "a") as out:
               out.write("matrix=" + json.dumps(matrix, separators=sep) + "\n")
-              out.write("containers=" + json.dumps(containers, separators=sep) + "\n")
+              out.write("source_sbom_target=" + matrix[0]["target"] + "\n")
           print("plan: build matrix:", json.dumps(matrix, separators=sep))
+          print("plan: source-SBOM leg:", matrix[0]["target"])
           PY
 
   # --------------------------------------------------------------------------
@@ -394,23 +376,10 @@ jobs:
           cgr-pull-username: ${{ secrets.CGR_PULL_USERNAME }}
           ironbank-token: ${{ secrets.IRONBANK_TOKEN }}
           ironbank-username: ${{ secrets.IRONBANK_USERNAME }}
-          ironbank-registry: ${{ inputs.ironbank_registry }}
-          builder-image: ${{ inputs.builder_image }}
-          runtime-image: ${{ inputs.runtime_image }}
-          ironbank-builder-image: ${{ inputs.ironbank_builder_image }}
-          ironbank-runtime-image: ${{ inputs.ironbank_runtime_image }}
-          require-hardened-bases: ${{ inputs.require_hardened_bases }}
-
-      - name: Label proxy-scan posture
-        if: inputs.require_hardened_bases == false || inputs.require_hardened_bases == 'false'
-        run: |
-          msg='Proxy-scan posture (require_hardened_bases=false): build runs with gate-reachable / consumer-specified bases. Downstream Vulnerability Scan is not an approved-prod attestation.'
-          echo "::warning::$msg"
-          {
-            echo "## Proxy-scan posture"
-            echo ""
-            echo "$msg"
-          } >> "$GITHUB_STEP_SUMMARY"
+          ironbank-registry: ${{ env.GATE_IRONBANK_REGISTRY }}
+          builder-image: ${{ env.GATE_BUILDER_IMAGE }}
+          runtime-image: ${{ env.GATE_RUNTIME_IMAGE }}
+          require-hardened-bases: ${{ env.GATE_REQUIRE_HARDENED_BASES }}
 
       # bake resolves compose `context:` against the process cwd (spike
       # Finding A), so both the parity re-print and the execution below run
@@ -751,8 +720,10 @@ jobs:
 
   # --------------------------------------------------------------------------
   # Helm chart validity — blocking unless image_only. Chart location comes
-  # from the plan job's chart bridge output (placeholder until T-6/T-7
-  # rewire this job to the derived chart inputs).
+  # from the caller's chart_path/values_local/release inputs (v0.6 thin
+  # surface). The consumer ci-secctx hook is dropped with no successor
+  # (approved job-mapping): the bundled restricted-PSS assertion below is
+  # the gate-owned coverage.
   # --------------------------------------------------------------------------
   helm-check:
     name: Helm Chart Validation
@@ -760,9 +731,9 @@ jobs:
     needs: [plan]
     if: ${{ inputs.image_only != true }}
     env:
-      HELM_CHART_PATH: ${{ fromJSON(needs.plan.outputs.chart).path }}
-      HELM_VALUES_FILE: ${{ fromJSON(needs.plan.outputs.chart).values }}
-      HELM_RELEASE_NAME: ${{ fromJSON(needs.plan.outputs.chart).release }}
+      HELM_CHART_PATH: ${{ inputs.chart_path }}
+      HELM_VALUES_FILE: ${{ inputs.values_local }}
+      HELM_RELEASE_NAME: ${{ inputs.release }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
 
@@ -806,9 +777,8 @@ jobs:
         uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e  # v6
 
       # The bundled restricted-PSS assertion is GATE POLICY: it always runs
-      # in-gate (tamper-proof — a consumer cannot edit it out of their
-      # contract_file). The consumer's own assertion then runs via
-      # `make ci-secctx`; a missing target is a notice, not a failure.
+      # in-gate (tamper-proof — a consumer cannot edit it out of a file they
+      # own; the v0.5 consumer ci-secctx hook is dropped with no successor).
       - name: Assert rendered pod-security controls (bundled, gate policy)
         run: |
           set -uo pipefail
@@ -818,43 +788,22 @@ jobs:
           fi
           uv run .ci-scans/scripts/lib/assert_restricted_pss.py /tmp/rendered-chart.yaml
 
-      - name: Run consumer contract secctx (make ci-secctx)
-        env:
-          CONTRACT_FILE: ${{ inputs.contract_file }}
-        run: |
-          set -uo pipefail
-          if [ ! -f "$CONTRACT_FILE" ]; then
-            echo "::error::contract file '$CONTRACT_FILE' does not exist"
-            exit 1
-          fi
-          set +e
-          make_out=$(make -n -f "$CONTRACT_FILE" ci-secctx 2>&1)
-          make_rc=$?
-          set -e
-          if [ "$make_rc" -ne 0 ]; then
-            if printf '%s\n' "$make_out" | grep -Eqi "No rule to make target|No targets specified"; then
-              echo "::notice::contract file '$CONTRACT_FILE' has no ci-secctx target — bundled restricted-PSS assertion (above) is the coverage"
-              exit 0
-            fi
-            echo "::error::make -n -f $CONTRACT_FILE ci-secctx failed (not a missing-target)"
-            printf '%s\n' "$make_out"
-            exit 1
-          fi
-          make -f "$CONTRACT_FILE" ci-secctx
-
   # --------------------------------------------------------------------------
   # Cluster smoke — kind + helm install + health probe against the built image.
   # helm-check (lint/template) is a static render; it can't catch a chart that
   # renders clean but crash-loops on boot (bad env, failed migration, broken
-  # entrypoint). This boots the real image with the smoke prerequisites
-  # provisioned by the consumer's `make ci-smoke-env` target (DB, secrets,
-  # CRDs). Warn-only unless SECURITY_SCAN_BLOCKING.
+  # entrypoint). Warn-only unless SECURITY_SCAN_BLOCKING.
+  # INTERIM (T-7 rewires this job): the v0.5 consumer smoke prerequisites
+  # (`make ci-smoke-env`, smoke_secrets) are gone with the contract_file /
+  # smoke_secrets / scan_image / cluster_name inputs; T-7 wires the gate-owned
+  # smoke_resources catalog, per-leg tar loading, and the chart-derived probe.
+  # Until then this job is syntactically valid but non-functional for chart
+  # consumers (same bridge posture T-5 left for image-scan).
   # --------------------------------------------------------------------------
   cluster-smoke:
     name: Cluster Smoke (kind + helm + health)
     runs-on: ubuntu-latest
-    # build is matrixed over primary + extras; one success covers them all.
-    # plan is needed only to reference its bridge job outputs.
+    # plan is needed only to reference its health bridge output (T-7 rewires).
     needs: [plan, build]
     if: |
       always() &&
@@ -863,8 +812,10 @@ jobs:
     outputs:
       smoke_ok: ${{ steps.smoke_outcome.outputs.ok }}
     env:
-      CLUSTER: ${{ inputs.cluster_name }}
-      NAMESPACE: ${{ fromJSON(needs.plan.outputs.chart).namespace }}
+      # Gate config: kind cluster name is an operator decision (was the
+      # v0.5 cluster_name input).
+      CLUSTER: app-ci
+      NAMESPACE: ${{ inputs.namespace }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
 
@@ -877,7 +828,11 @@ jobs:
           sudo docker image prune -af 2>/dev/null || true
           df -h /
 
-      - name: Download image artifact (primary leg of build)
+      # INTERIM (T-7): the v0.5 single `scan-image` artifact no longer
+      # exists — build uploads per-target scan-image-<target> artifacts.
+      # T-7 rewires this download to the per-leg tars; until then this
+      # step fails and the job stays non-functional by design.
+      - name: Download image artifact (T-7 rewires to per-leg tars)
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4
         with:
           name: ${{ env.IMAGE_ARTIFACT }}
@@ -885,22 +840,10 @@ jobs:
       - name: Load image into local daemon
         run: docker load -i image.tar
 
-      # Extra images are artifact-named scan-image-<name>; pattern excludes the
-      # primary scan-image artifact. Each artifact lands in its own subdirectory.
-      # Extras legs exist iff the normalized containers list has role=extra
-      # entries (manifest images[1:]). build succeeded per the job `if:`, so
-      # their artifacts are guaranteed present when declared.
-      - name: Download extra image artifacts
-        if: needs.plan.outputs.has_extras == 'true'
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4
-        with:
-          pattern: scan-image-*
-          path: extra-images
-
       - name: Create kind cluster
         uses: helm/kind-action@ef37e7f390d99f746eb8b610417061a60e82a6cc  # v1.14.0
         with:
-          cluster_name: ${{ inputs.cluster_name }}
+          cluster_name: ${{ env.CLUSTER }}
 
       - name: Set up Helm
         uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4  # v4
@@ -912,117 +855,35 @@ jobs:
         # continues on error (job result stays success).
         continue-on-error: ${{ vars.SECURITY_SCAN_BLOCKING != 'true' }}
         env:
-          # Matrix jobs cannot expose per-leg outputs — the primary tag is
-          # inputs.scan_image by construction (env.SCAN_IMAGE mirrors it).
-          IMAGE: ${{ inputs.scan_image }}
+          # T-7 rewires: the smoke image tag comes from the derived smoke
+          # target (chart-rendered), not a caller input. Empty until then —
+          # the kind load below fail()s first, keeping the job's interim
+          # non-functional posture explicit.
+          IMAGE: ''
           HEALTH_PORT: ${{ fromJSON(needs.plan.outputs.health).port }}
           HEALTH_PATH: ${{ fromJSON(needs.plan.outputs.health).path }}
           SMOKE_WORKLOAD_MATCH: ${{ fromJSON(needs.plan.outputs.health).workload_match }}
-          HELM_CHART_PATH: ${{ fromJSON(needs.plan.outputs.chart).path }}
-          HELM_RELEASE_NAME: ${{ fromJSON(needs.plan.outputs.chart).release }}
-          HELM_VALUES_FILE: ${{ fromJSON(needs.plan.outputs.chart).values }}
-          HELM_VALUES_LOCAL_FILE: ${{ fromJSON(needs.plan.outputs.chart).values_local }}
-          CONTAINERS_JSON: ${{ needs.plan.outputs.containers }}
-          SMOKE_SECRETS: ${{ inputs.smoke_secrets }}
-          EXTRAS_BUILT: ${{ needs.plan.outputs.has_extras }}
-          CONTRACT_FILE: ${{ inputs.contract_file }}
+          HELM_CHART_PATH: ${{ inputs.chart_path }}
+          HELM_RELEASE_NAME: ${{ inputs.release }}
+          HELM_VALUES_LOCAL_FILE: ${{ inputs.values_local }}
         run: |
           set -uo pipefail
           fail() { echo "::warning::cluster-smoke: $1"; exit 1; }
 
+          [ -n "${IMAGE}" ] || fail "no smoke image target (T-7 wires the chart-derived probe)"
           kind load docker-image "${IMAGE}" --name "${CLUSTER}" || fail "kind load failed"
-
-          # Kind-load every built extras image so charts that schedule them with
-          # pullPolicy: Never do not hit ErrImageNeverPull. The list comes from
-          # the normalized containers output (role=extra) — the same source the
-          # build matrix used (manifest images[1:]) — so tags and artifact names
-          # match by construction. Fail closed when extras were declared (and
-          # thus built) but an artifact/tag is missing.
-          if [ "${EXTRAS_BUILT}" = "true" ]; then
-            python3 - <<'PY' || fail "kind load of extras failed"
-          import json, os, subprocess, sys
-          from pathlib import Path
-
-          entries = json.loads(os.environ["CONTAINERS_JSON"])
-          cluster = os.environ["CLUSTER"]
-          for entry in entries:
-              if entry.get("role") != "extra":
-                  continue
-              name = entry["name"]
-              tag = entry["image"]
-              tar = Path("extra-images") / f"scan-image-{name}" / "image.tar"
-              if not tar.is_file():
-                  print(f"missing artifact for extra '{name}' at {tar}", file=sys.stderr)
-                  sys.exit(1)
-              subprocess.check_call(["docker", "load", "-i", str(tar)])
-              subprocess.check_call(
-                  ["kind", "load", "docker-image", tag, "--name", cluster]
-              )
-              print(f"kind-loaded extra image {tag}")
-          PY
-          fi
 
           kubectl create namespace "${NAMESPACE}" --dry-run=client -o yaml | kubectl apply -f -
 
-          # The consumer's contract_file provisions the smoke prerequisites
-          # (DB, default secret, CRDs) — see docs/CI-CONTRACT.md.
-          make -f "${CONTRACT_FILE}" ci-smoke-env NAMESPACE="${NAMESPACE}" || fail "make ci-smoke-env failed"
-
-          # Optional caller-declared Secrets (CI fixture literals only).
-          python3 - <<'PY' || fail "smoke_secrets create failed"
-          import json, os, subprocess, sys
-
-          raw = (os.environ.get("SMOKE_SECRETS") or "").strip()
-          if not raw or raw == "[]":
-              sys.exit(0)
-          try:
-              entries = json.loads(raw)
-          except json.JSONDecodeError as e:
-              print(f"invalid smoke_secrets JSON: {e}", file=sys.stderr)
-              sys.exit(1)
-          if not isinstance(entries, list):
-              print("smoke_secrets must be a JSON array", file=sys.stderr)
-              sys.exit(1)
-          ns = os.environ["NAMESPACE"]
-          for idx, entry in enumerate(entries):
-              if not isinstance(entry, dict):
-                  print(f"smoke_secrets entry {idx} is not an object", file=sys.stderr)
-                  sys.exit(1)
-              name = entry.get("name")
-              literals = entry.get("literals")
-              if not isinstance(name, str) or not name:
-                  print(f"smoke_secrets entry {idx} missing name", file=sys.stderr)
-                  sys.exit(1)
-              if not isinstance(literals, str) or not literals.strip():
-                  print(f"smoke_secrets '{name}': literals must be a non-empty KEY=VALUE string", file=sys.stderr)
-                  sys.exit(1)
-              cmd = [
-                  "kubectl", "-n", ns, "create", "secret", "generic", name,
-                  "--dry-run=client", "-o", "yaml",
-              ]
-              for line in literals.splitlines():
-                  line = line.strip()
-                  if not line:
-                      continue
-                  if "=" not in line:
-                      print(f"smoke_secrets '{name}': bad literals line '{line}'", file=sys.stderr)
-                      sys.exit(1)
-                  cmd.append(f"--from-literal={line}")
-              rendered = subprocess.check_output(cmd)
-              subprocess.run(["kubectl", "apply", "-f", "-"], input=rendered, check=True)
-              print(f"created smoke secret {name}")
-          PY
+          # T-7 wires the gate-owned smoke_resources catalog modules here
+          # (replacing the v0.5 consumer `make ci-smoke-env` + smoke_secrets).
 
           helm dependency build "./${HELM_CHART_PATH}" || fail "helm dependency build failed"
 
-          # Install the app. The post-install migration hook runs alembic against
-          # the ci-smoke-env DB (from the backend image, pullPolicy Never — hence
-          # SCAN_IMAGE must equal values-local's scan_image). Extra images are
-          # kind-loaded above when extras were built; don't --wait on the whole
-          # release — gate on the backend rollout / health probe explicitly.
+          # Install the app. Don't --wait on the whole release — gate on the
+          # backend rollout / health probe explicitly.
           helm install "${HELM_RELEASE_NAME}" "./${HELM_CHART_PATH}" \
             -n "${NAMESPACE}" \
-            -f "${HELM_VALUES_FILE}" \
             -f "${HELM_VALUES_LOCAL_FILE}" \
             --timeout 5m || {
               echo "=== helm install failed — cluster diagnostics ==="
@@ -1074,40 +935,31 @@ jobs:
           echo "cluster-smoke step outcome=${{ steps.smoke.outcome }} smoke_ok=$ok"
 
   # --------------------------------------------------------------------------
-  # Image scan — one matrixed job over the same normalized containers list as
-  # build (never empty: the primary entry is always present). Every leg runs
-  # the shared image-side scans (Trivy image, Grype image, Grype image-SBOM)
-  # against its leg's artifacts; the primary leg additionally generates the
-  # whole-repo source SBOM and runs the source-SBOM Trivy/Grype scans (run
-  # once). Same SECURITY_SCAN_BLOCKING exit-code semantics on every leg.
+  # Image scan — one matrixed job over the plan job's derived matrix, the
+  # same include the build job fans out over (never empty; <=10 via the
+  # matrix-cap lint). Every leg runs the shared image-side scans (Trivy
+  # image, Grype image, Grype image-SBOM) against its leg's per-target
+  # artifacts (scan-image-<target> / sbom-image-<target>); the designated
+  # leg (plan's source_sbom_target) additionally generates the whole-repo
+  # source SBOM and runs the source-SBOM Trivy/Grype scans (run once).
+  # Same SECURITY_SCAN_BLOCKING exit-code semantics on every leg.
   # --------------------------------------------------------------------------
   image-scan:
-    name: Vulnerability Scan — ${{ matrix.container.name }} (Trivy + Grype)
+    name: Vulnerability Scan — ${{ matrix.target }} (Trivy + Grype)
     runs-on: ubuntu-latest
-    # plan is needed only to reference its containers bridge output.
+    # plan is needed only to reference its matrix / source_sbom_target outputs.
     needs: [plan, build]
     if: needs.build.result == 'success'
     strategy:
       fail-fast: false
       matrix:
-        container: ${{ fromJSON(needs.plan.outputs.containers) }}
+        include: ${{ fromJSON(needs.plan.outputs.matrix) }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
 
-      - name: Label proxy-scan posture
-        if: inputs.require_hardened_bases == false || inputs.require_hardened_bases == 'false'
-        run: |
-          msg='Proxy-scan posture (require_hardened_bases=false): this Vulnerability Scan covers the image as built with gate-reachable / consumer-specified bases. A green result is not proof the approved production image is clean — private-mirror / entitlement-unreachable OS-layer attestation stays with the consumer pipeline (IL5 / Game Warden / etc.).'
-          echo "::warning::$msg"
-          {
-            echo "## Proxy-scan posture"
-            echo ""
-            echo "$msg"
-          } >> "$GITHUB_STEP_SUMMARY"
-
-      # Source SBOM is whole-repo and runs once — primary leg only.
+      # Source SBOM is whole-repo and runs once — designated leg only.
       - name: Generate source SBOM (pnpm + uv)
-        if: matrix.container.role == 'primary'
+        if: ${{ matrix.target == needs.plan.outputs.source_sbom_target }}
         uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610  # v0.24.0
         with:
           path: .
@@ -1141,18 +993,18 @@ jobs:
 
       # Default scanner configs + image load + Trivy image + Grype image +
       # Grype image-SBOM (also creates .trivyignore/.grype.yaml defaults the
-      # primary leg's source-SBOM scans below rely on).
+      # designated leg's source-SBOM scans below rely on).
       - name: Image vulnerability scan (Trivy + Grype)
         uses: ./.ci-scans/.github/actions/image-vuln-scan
         with:
-          image-tag: ${{ matrix.container.image }}
-          image-artifact-name: ${{ matrix.container.role == 'primary' && env.IMAGE_ARTIFACT || format('scan-image-{0}', matrix.container.name) }}
-          sbom-artifact-name: ${{ matrix.container.role == 'primary' && 'sbom-image' || format('sbom-image-{0}', matrix.container.name) }}
+          image-tag: ${{ matrix.tag }}
+          image-artifact-name: scan-image-${{ matrix.target }}
+          sbom-artifact-name: sbom-image-${{ matrix.target }}
           trivy-severity: ${{ env.TRIVY_SEVERITY }}
           blocking: ${{ vars.SECURITY_SCAN_BLOCKING }}
 
       - name: Trivy scan — source SBOM
-        if: matrix.container.role == 'primary'
+        if: ${{ matrix.target == needs.plan.outputs.source_sbom_target }}
         uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1  # v0.35.0
         with:
           scan-type: sbom
@@ -1165,7 +1017,7 @@ jobs:
       # direct Trivy image scan above covers those packages.
 
       - name: Grype scan — source SBOM
-        if: matrix.container.role == 'primary'
+        if: ${{ matrix.target == needs.plan.outputs.source_sbom_target }}
         uses: anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2  # v7.4.0
         with:
           sbom: sbom-source.json

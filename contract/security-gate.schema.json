@@ -3,14 +3,9 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "properties": {
-    "builder_image": {
-      "default": "cgr.dev/chainguard/python:latest-dev",
-      "description": "Build-stage base image, exported to `make ci-build` as CI_BUILDER_BASE (after hardened-registry failover resolution); consume it as your builder base-image build arg.",
-      "type": "string"
-    },
-    "cluster_name": {
-      "default": "app-ci",
-      "description": "kind cluster name cluster-smoke creates and loads the image into; operator choice, no consumer-file counterpart.",
+    "chart_path": {
+      "default": "chart",
+      "description": "Path (relative to the consumer repo root) of the deployable Helm chart helm-check lints/templates and cluster-smoke installs. Required for chart consumers; irrelevant when image_only is true.",
       "type": "string"
     },
     "compose_file": {
@@ -18,49 +13,29 @@
       "description": "Path (relative to the consumer repo root) of the canonical Compose file the gate derives build facts from (v0.6). `docker buildx bake --print` on this file is the published build plan; the plan job annotates it into the BOM and emits the build matrix from it.",
       "type": "string"
     },
-    "contract_file": {
-      "default": "Makefile.ci",
-      "description": "Path (relative to the consumer repo root) of the consumer build-contract Makefile providing the ci-manifest / ci-build / ci-secctx / ci-smoke-env targets. `make ci-manifest` output is the single source of truth for the containers list and chart/health metadata. Start from templates/consumer/Makefile.ci.",
-      "type": "string"
-    },
     "image_only": {
       "default": false,
       "description": "When true, skip helm-check and cluster-smoke (and omit them from the Security Gate blocking set) \u2014 for infra/image-only repos that build and vuln-scan images without a deployable app chart. Default false keeps app callers unchanged (helm + smoke still blocking).",
       "type": "boolean"
     },
-    "ironbank_builder_image": {
+    "namespace": {
+      "default": "app-ci",
+      "description": "Kubernetes namespace cluster-smoke creates and installs the release into.",
+      "type": "string"
+    },
+    "release": {
+      "default": "app",
+      "description": "Helm release name helm-check templates under and cluster-smoke installs as.",
+      "type": "string"
+    },
+    "smoke_resources": {
       "default": "",
-      "description": "Optional Iron Bank replacement for builder_image \u2014 applied only on primary-base failover (CGR credentials absent AND Iron Bank present). Left empty, the consumer's builder_image passes through. Does not affect whether Iron Bank login runs; login is independent when IRONBANK_* is set.",
+      "description": "CSV of gate-owned smoke catalog module ids (e.g. postgres-pgvector,gateway-crds) cluster-smoke provisions before helm install. Unknown ids are blocked by the smoke-resource-unknown lint rule. Default \"\" provisions none. (Wired by T-7.)",
       "type": "string"
     },
-    "ironbank_registry": {
-      "default": "registry1.dso.mil",
-      "description": "Iron Bank registry host used for docker login whenever IRONBANK_* secrets are set (alongside Chainguard when both are configured). Also used when primary-base failover swaps to ironbank_* images (CGR absent, Iron Bank present). Operator decision; defaults to the DoD registry.",
-      "type": "string"
-    },
-    "ironbank_runtime_image": {
-      "default": "",
-      "description": "Optional Iron Bank replacement for runtime_image \u2014 applied only on primary-base failover (CGR credentials absent AND Iron Bank present). Left empty, the consumer's runtime_image passes through. Does not affect whether Iron Bank login runs; login is independent when IRONBANK_* is set.",
-      "type": "string"
-    },
-    "require_hardened_bases": {
-      "default": true,
-      "description": "Hardened-base policy \u2014 operator posture decision, not read from a consumer file. true (default): fail the build when neither Chainguard nor Iron Bank credentials are configured. false: warn and build with the consumer-specified bases (pilot escape hatch \u2014 the consumer explicitly owns that posture). When false, Vulnerability Scan labels the run as a public-base / consumer-specified-base proxy scan \u2014 a green result is not proof the approved production image is clean.",
-      "type": "boolean"
-    },
-    "runtime_image": {
-      "default": "cgr.dev/chainguard/python:latest",
-      "description": "Runtime-stage base image, exported to `make ci-build` as CI_RUNTIME_BASE (after hardened-registry failover resolution); consume it as your runtime base-image build arg.",
-      "type": "string"
-    },
-    "scan_image": {
-      "default": "app:local",
-      "description": "Local-daemon tag the primary image is built and scanned under; the v0.5 lint required it to equal a parsed image string or repository:tag join in the manifest's values_local file (comments ignored). Cluster-smoke kind-loads this tag with pullPolicy: Never. Passed to `make ci-build` as CI_IMAGE_TAG for the primary.",
-      "type": "string"
-    },
-    "smoke_secrets": {
-      "default": "",
-      "description": "JSON array (as a string) of Kubernetes Secrets to create in the smoke namespace before helm install \u2014 one object per entry: name (DNS-1123 secret name), literals (newline-joined KEY=VALUE string). Use for chart envFrom/secretKeyRef pre-reqs beyond what your `make ci-smoke-env` target provisions. Values are CI fixtures only \u2014 never commit real credentials. Default \"\" creates none. Prefer a multiline YAML '|' block.",
+    "values_local": {
+      "default": "chart/values-local.yaml",
+      "description": "Path (relative to the consumer repo root) of the chart values file for local/CI installs (locally-built image tags, pullPolicy: Never). Rendered by helm-check and cluster-smoke on top of the chart's default values.",
       "type": "string"
     }
   },
