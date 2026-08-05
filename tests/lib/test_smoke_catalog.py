@@ -1,4 +1,4 @@
-"""Contract tests for the gate-owned smoke catalog modules (T-7).
+"""Contract tests for the gate-owned smoke catalog modules.
 
 scripts/lib/smoke_catalog/*.yaml are idempotent k8s manifests applied
 into the smoke namespace before helm install: fixture credentials only,

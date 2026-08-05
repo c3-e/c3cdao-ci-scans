@@ -1,4 +1,4 @@
-"""Contract tests for the v0.6 cluster-smoke rewiring (T-7).
+"""Contract tests for the v0.6 cluster-smoke rewiring.
 
 Static drift guards on .github/workflows/reusable-security-gate.yml:
 cluster-smoke consumes the per-leg scan-image-<target> tars, provisions
@@ -6,7 +6,7 @@ the declared smoke_resources catalog modules (Ready gate, failure names
 the module) BEFORE helm install, installs with --wait, and probes the
 chart-derived HTTP target (scripts/lib/derive_smoke_target.py). The v0.5
 scan-image artifact and the plan job's `health` bridge output are
-retired. T-5/T-6 surface guards live in test_workflow_build_matrix.py /
+retired. Build-matrix and scan/fan-in surface guards live in test_workflow_build_matrix.py /
 test_workflow_scan_fanin.py.
 """
 

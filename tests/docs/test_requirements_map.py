@@ -96,7 +96,7 @@ def test_all_lint_rules_documented():
 
 def test_runbook_cross_references_every_lint_rule():
     """Restored at the docs cutover (transitional implementation-parity guard
-    since T-4): every implemented convention rule id appears in the published
+    since the lint rewrite): every implemented convention rule id appears in the published
     RUNBOOK so operators can triage a named verdict without reading source."""
     text = RUNBOOK.read_text()
     missing = [r for r in lint_rule_ids() if r not in text]

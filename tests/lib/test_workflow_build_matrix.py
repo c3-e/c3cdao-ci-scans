@@ -1,10 +1,11 @@
-"""Contract tests for the v0.6 plan -> build matrix workflow shape (T-5).
+"""Contract tests for the v0.6 plan -> build matrix workflow shape.
 
 Static drift guards on .github/workflows/reusable-security-gate.yml: the
 plan job publishes the matrix the build job fans out over, every leg
 carries the gate-owned --set overrides, artifacts are named by target,
-and the new action pins are full commit SHAs. T-6/T-7 modify the same
-file; these assertions keep the T-5 surface from regressing.
+and the new action pins are full commit SHAs. Later cutover stages modify
+the same file; these assertions keep the build-matrix surface from
+regressing.
 """
 
 from __future__ import annotations
@@ -45,7 +46,7 @@ def test_caller_lint_renamed_to_plan():
 
 def test_plan_outputs_matrix_and_bridge_outputs():
     outputs = _jobs()["plan"]["outputs"]
-    # T-6 retired the containers/has_extras/chart bridges; T-7 retired
+    # The scan-matrix cutover retired the containers/has_extras/chart bridges; the smoke rewiring retired
     # health when it rewired cluster-smoke — no bridge outputs remain.
     for key in ("matrix", "source_sbom_target"):
         assert key in outputs, f"plan must declare output '{key}'"

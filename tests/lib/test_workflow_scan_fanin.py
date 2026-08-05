@@ -1,12 +1,12 @@
-"""Contract tests for the v0.6 scan matrix, caller surface, and fan-in (T-6).
+"""Contract tests for the v0.6 scan matrix, caller surface, and fan-in.
 
 Static drift guards on .github/workflows/reusable-security-gate.yml and
 templates/callers/security-gate.yml: the workflow_call surface is exactly
 the 7 v0.6 inputs + 4 secrets, image-scan fans out over the plan matrix
 consuming per-leg artifacts with one designated source-SBOM leg, and the
 fan-in required-check context `security-scan / Security Gate` survives
-byte-for-byte (constitution 5). T-7 modifies the same file; these
-assertions keep the T-6 surface from regressing.
+byte-for-byte. The smoke rewiring modifies the same file; these
+assertions keep the scan/fan-in surface from regressing.
 """
 
 from __future__ import annotations
@@ -69,7 +69,7 @@ def test_no_job_references_a_removed_input():
         assert not re.search(pattern, text), f"workflow still references inputs.{name}"
 
 
-# --- fan-in / required-check context (AC-3; constitution 5) -------------------
+# --- fan-in / required-check context (byte-locked) ----------------------------
 
 FAN_IN_NEEDS = {
     "plan",
@@ -150,7 +150,7 @@ def test_exactly_one_designated_source_sbom_leg():
 
 def test_containers_bridge_outputs_retired():
     plan_outputs = _workflow()["jobs"]["plan"]["outputs"]
-    # health joined the retired set when T-7 rewired cluster-smoke.
+    # health joined the retired set when cluster-smoke was rewired.
     for retired in ("containers", "has_extras", "chart", "health"):
         assert retired not in plan_outputs, f"bridge output '{retired}' must be retired"
     assert "matrix" in plan_outputs

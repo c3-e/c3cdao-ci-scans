@@ -1,6 +1,6 @@
 """DOC-2 guards: the hand-authored inputs reference in docs/INPUTS.md.
 
-Since the T-8 cutover the reference is hand-authored against
+Since the v0.6 cutover the reference is hand-authored against
 workflow_call in the reusable workflow (the generator and its schema were
 deleted). These guards cross-check the doc against the workflow directly:
 every input and secret documented, no stale generated markers, and the

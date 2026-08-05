@@ -1,6 +1,6 @@
 """Unit tests for the chart-derived smoke target (scripts/lib/derive_smoke_target.py).
 
-T-7 AC-2 (zero/two-candidate failure paths name the candidates) plus the
+Zero/two-candidate failure paths (each names the candidates) plus the
 ticket's test-file spec: happy path, non-HTTP probe, no Service backing,
 image_only skip. Rendered-chart inputs are authored inline as parsed
 documents (same convention as tests/lib/test_lint_rules.py).

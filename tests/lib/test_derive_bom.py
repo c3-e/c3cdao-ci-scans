@@ -129,7 +129,7 @@ def test_unmarked_when_digest_or_chart_tag_missing(tmp_path):
 
 
 def test_target_list_sorted_nonlocal_build_services_only(tmp_path):
-    """Explicit target selection is load-bearing (SPIKE-01): the list is
+    """Explicit target selection is load-bearing: the list is
     exactly the sorted non-local build services; local-profile and
     image-only services never appear."""
     compose = tmp_path / "docker-compose.yml"
@@ -196,7 +196,7 @@ def test_plan_target_mismatch_fails_closed():
 
 def test_bake_print_command_carries_execution_overrides():
     """The published plan must resolve with the SAME --set overrides the
-    build legs execute with (plan/execution parity, T-5 AC-3): gate
+    build legs execute with (plan/execution parity): gate
     overrides append after the platform pin, before the targets."""
     from derive_bom import bake_print_command
 
@@ -211,7 +211,7 @@ def test_bake_print_command_carries_execution_overrides():
         overrides[1],
     ]
     assert cmd[-1] == "svc-a"
-    # No overrides: command unchanged from the pre-T-5 shape.
+    # No overrides: command unchanged from the no-override shape.
     assert bake_print_command(N3 / "docker-compose.yml", ["svc-a"])[-2:] == [
         "*.platform=linux/amd64",
         "svc-a",
