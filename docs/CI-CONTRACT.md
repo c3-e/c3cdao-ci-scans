@@ -84,16 +84,17 @@ Compose declaration is updated.
 
 - **Blessed base ARG pair.** Every target's Dockerfile declares both
   `ARG BUILDER_IMAGE` and `ARG RUNTIME_IMAGE` — even single-stage builds
-  declare both. Dev defaults never survive CI: the gate overrides both
-  args with hardened bases after its registry login/failover resolution,
-  so no base-image pinning burden falls on developers. The Dockerfile is
+  declare both. Declaring the pair is the contract; the gate does **not**
+  override either arg at build time. Consuming them for a hardened base
+  (`FROM ${BUILDER_IMAGE}`, pinned to a registry the gate can authenticate
+  to per [appendix B](RUNBOOK.md#b-hardened-base-registry-login-matrix))
+  is your own choice, not a gate-supplied guarantee. The Dockerfile is
   resolved from `build.context`/`build.dockerfile` against the Compose
   file's directory; `dockerfile_inline` is unsupported and fails closed.
 - **Committed literal args.** `build.args` must be a mapping of committed
   literal values. List syntax, null pass-through values, any environment
   interpolation in a build-affecting field, `build.secrets`, and
   `build.ssh` all block. A literal dollar needs Compose's `$$` escape.
-  The gate supplies only the two base overrides.
 - **Secret-like arg names.** Arg names containing `TOKEN`, `SECRET`,
   `PASSW`, or `CREDENTIAL`, ending in `_KEY`, or exactly `KEY` block even
   with harmless literal values — false positives are by design; rename
@@ -233,8 +234,10 @@ args, null pass-through values, environment interpolation in any
 build-affecting field, secret-like arg names (`TOKEN`/`SECRET`/`PASSW`/
 `CREDENTIAL` fragments, `_KEY` suffix, or exactly `KEY`), `build.secrets`,
 and `build.ssh`. Remediation: commit the literal value, escape literal
-dollars as `$$`, rename secret-like args; the gate alone supplies
-`BUILDER_IMAGE`/`RUNTIME_IMAGE`.
+dollars as `$$`, rename secret-like args. `BUILDER_IMAGE`/`RUNTIME_IMAGE`
+are exempted from the secret-like-name check (see
+[hardened-args](#rule-hardened-args)) but are not otherwise special —
+the gate does not supply or override any arg value.
 
 ### Rule: build-context-excludes
 
@@ -259,10 +262,12 @@ Remediation: fix the Compose error bake names.
 ### Rule: hardened-args
 
 Every target's Dockerfile declares `ARG BUILDER_IMAGE` and
-`ARG RUNTIME_IMAGE` (both, even single-stage builds), so the gate's
-hardened-base overrides take effect. An unreadable Dockerfile fails
-closed. Remediation: add both ARG lines and consume them as your base
-images.
+`ARG RUNTIME_IMAGE` (both, even single-stage builds). This is a
+declaration-only check: the gate does not inject or override either
+arg's value at build time, and never guarantees the Dockerfile's
+default resolves to a hardened base — consuming the ARG in `FROM` for
+an actual hardened base is the consumer's own choice. An unreadable
+Dockerfile fails closed. Remediation: add both ARG lines.
 
 ### Rule: chart-readiness
 

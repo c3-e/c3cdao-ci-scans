@@ -32,14 +32,13 @@
 #                     consumer ci-secctx hook is dropped with no successor)
 #   build             matrixed over the plan job's derived matrix output: one
 #                     leg per non-local Compose build target, `bake <target>`
-#                     with `--set '*.platform=linux/amd64'` and the resolved
-#                     `*.args.BUILDER_IMAGE`/`*.args.RUNTIME_IMAGE` overrides
-#                     (identical to the published plan — each leg diffs its
-#                     re-printed target entry against the plan-bom artifact),
-#                     then Syft image SBOM + `docker save` tar upload, both
-#                     artifacts named by target (scan-image-<target> /
-#                     sbom-image-<target>). needs: plan only — helm-check
-#                     runs in parallel with builds in v0.6.
+#                     with `--set '*.platform=linux/amd64'` (identical to the
+#                     published plan — each leg diffs its re-printed target
+#                     entry against the plan-bom artifact), then Syft image
+#                     SBOM + `docker save` tar upload, both artifacts named
+#                     by target (scan-image-<target> / sbom-image-<target>).
+#                     needs: plan only — helm-check runs in parallel with
+#                     builds in v0.6.
 #   cluster-smoke     kind + provision declared smoke_resources catalog
 #                     modules (Ready gate) + load per-leg image tars +
 #                     helm install --wait + chart-derived HTTP probe
@@ -125,10 +124,13 @@ env:
   # Gate config (v0.6): base images, Iron Bank registry, and hardened-base
   # posture are gate-owned operator decisions, not caller inputs — the v0.5
   # builder_image/runtime_image/ironbank_*/require_hardened_bases inputs
-  # folded into these literals at the v0.6 cutover. Consumers consume the
-  # resolved bases via the blessed BUILDER_IMAGE/RUNTIME_IMAGE build args
-  # (hardened-args lint). GATE_REQUIRE_HARDENED_BASES is fail-closed
-  # (fail-closed by design): no credential pair means no build.
+  # folded into these literals at the v0.6 cutover. These feed the
+  # registry-login/failover resolution action (docker login + fail-closed
+  # credential check) only — v0.6.1 stopped injecting them into any build
+  # (declare-only convention: `hardened-args` lint checks that both ARGs
+  # are declared, not their value; consuming a hardened base in `FROM` is
+  # the consumer's own choice). GATE_REQUIRE_HARDENED_BASES is fail-closed
+  # by design: no credential pair means no build.
   GATE_BUILDER_IMAGE: cgr.dev/chainguard/python:latest-dev
   GATE_RUNTIME_IMAGE: cgr.dev/chainguard/python:latest
   GATE_IRONBANK_REGISTRY: registry1.dso.mil
@@ -141,11 +143,11 @@ jobs:
   # runs. Fail-closed v0.6 convention lint (lint_caller.py: caller structure,
   # Compose/Dockerfile/chart shape rules) on the consumer checkout, then
   # hardened-registry login/failover resolution — the SAME composite action
-  # every build leg runs, so the base-image overrides baked into the
-  # published plan are bit-for-bit the ones execution uses (plan/execution
-  # parity) — then derive_bom.py publishes the bake plan + annotated BOM and
-  # emits the build matrix. Bad caller, nonconforming shapes, or missing
-  # required registry secrets never scan.
+  # every build leg runs (docker login + fail-closed credential check; its
+  # resolved builder/runtime outputs are not injected into any build — see
+  # hardened-args) — then derive_bom.py publishes the bake plan + annotated
+  # BOM and emits the build matrix. Bad caller, nonconforming shapes, or
+  # missing required registry secrets never scan.
   # --------------------------------------------------------------------------
   plan:
     name: Plan
@@ -201,9 +203,9 @@ jobs:
 
       # Login + failover resolution replaces the v0.5 presence-only secrets
       # check: the action fails closed per require-hardened-bases when no
-      # credential pair exists, and its resolved builder/runtime outputs feed
-      # the derive step so the published plan carries the exact overrides the
-      # build legs execute with.
+      # credential pair exists. Its resolved builder/runtime outputs are
+      # not consumed downstream (v0.6.1 declare-only convention — the gate
+      # no longer injects them into any build).
       - name: Login to hardened base registries (Chainguard + Iron Bank)
         id: base-registry
         uses: ./.ci-scans/.github/actions/hardened-registry-login
@@ -231,22 +233,19 @@ jobs:
           uv run .ci-scans/scripts/lib/lint_caller.py "$caller" \
             --consumer-root "$GITHUB_WORKSPACE"
 
-      # The published plan is `bake --print` with the SAME --set overrides
-      # the build legs execute with (platform pin is derive_bom-internal) —
-      # each leg re-prints its target and diffs against this artifact.
-      - name: Derive bake plan + annotated BOM (gate overrides)
+      # The published plan is `bake --print` (platform pin is
+      # derive_bom-internal) — no base-image --set overrides (v0.6.1
+      # declare-only convention, see hardened-args) — each leg re-prints
+      # its target and diffs against this artifact.
+      - name: Derive bake plan + annotated BOM
         env:
           GATE_COMPOSE_FILE: ${{ inputs.compose_file }}
-          BUILDER_IMAGE: ${{ steps.base-registry.outputs.builder_image }}
-          RUNTIME_IMAGE: ${{ steps.base-registry.outputs.runtime_image }}
         run: |
           set -euo pipefail
           mkdir -p /tmp/plan
           uv run .ci-scans/scripts/lib/derive_bom.py \
             "$GITHUB_WORKSPACE/${GATE_COMPOSE_FILE}" \
-            --out-dir /tmp/plan \
-            --set "*.args.BUILDER_IMAGE=${BUILDER_IMAGE}" \
-            --set "*.args.RUNTIME_IMAGE=${RUNTIME_IMAGE}" | tee /tmp/plan/derive.log
+            --out-dir /tmp/plan | tee /tmp/plan/derive.log
 
       - name: Publish BOM to job summary
         run: |
@@ -306,11 +305,12 @@ jobs:
   # build target — no primary/extras distinction). Each leg proves
   # plan/execution parity (re-print its target with the identical --set
   # overrides and diff against the published plan-bom artifact), executes
-  # `bake <target>` via docker/bake-action with the platform pin and the
-  # failover-resolved BUILDER_IMAGE/RUNTIME_IMAGE arg overrides, verifies the
-  # planned tag exists, generates the Syft image SBOM, and uploads the
-  # `docker save` tarball — artifacts named by target: scan-image-<target> /
-  # sbom-image-<target>. The matrix is never empty (compose-no-builds lint
+  # `bake <target>` via docker/bake-action with the platform pin (no
+  # base-image arg overrides — v0.6.1 declare-only convention, see
+  # hardened-args), verifies the planned tag exists, generates the Syft
+  # image SBOM, and uploads the `docker save` tarball — artifacts named by
+  # target: scan-image-<target> / sbom-image-<target>. The matrix is never
+  # empty (compose-no-builds lint
   # blocks first) and capped at 10 (matrix-cap lint), so no empty-include
   # plan failure is possible. needs: plan only — helm-check runs in parallel
   # with builds in v0.6 (approved job-mapping); fan-in still gates on both.
@@ -361,8 +361,9 @@ jobs:
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f  # v3
 
       # Hardened-base login + failover resolution — every leg (and the plan
-      # job) resolves through this shared action, so the overrides used here
-      # are bit-for-bit the ones baked into the published plan.
+      # job) resolves through this shared action for its docker-login and
+      # fail-closed credential check; the resolved builder/runtime outputs
+      # are not injected into any build (v0.6.1 declare-only convention).
       - name: Login to hardened base registries (Chainguard + Iron Bank)
         id: base-registry
         uses: ./.ci-scans/.github/actions/hardened-registry-login
@@ -392,23 +393,19 @@ jobs:
           path: /tmp/plan
 
       # Plan/execution parity: re-print this leg's target with the identical
-      # targets + --set overrides (scrubbed env, mirroring derive_bom) and
+      # target + platform pin (scrubbed env, mirroring derive_bom) and
       # diff the resolved target entry against the published plan. Any drift
       # fails the leg before the build runs — a parity failure is a design
       # flaw, not a bug: stop and re-design, do not patch around it.
       - name: Plan/execution parity check
         env:
           TARGET: ${{ matrix.target }}
-          BUILDER_IMAGE: ${{ steps.base-registry.outputs.builder_image }}
-          RUNTIME_IMAGE: ${{ steps.base-registry.outputs.runtime_image }}
           COMPOSE_DIR: ${{ steps.compose.outputs.dir }}
           COMPOSE_BASE: ${{ steps.compose.outputs.base }}
         run: |
           set -euo pipefail
           cmd=(docker buildx bake -f "$COMPOSE_BASE"
             --set "*.platform=linux/amd64"
-            --set "*.args.BUILDER_IMAGE=${BUILDER_IMAGE}"
-            --set "*.args.RUNTIME_IMAGE=${RUNTIME_IMAGE}"
             "$TARGET")
           echo "resolved bake command (leg ${TARGET}): ${cmd[*]}"
           (cd "$COMPOSE_DIR" && env -i PATH="$PATH" HOME="$HOME" "${cmd[@]}" --print) \
@@ -421,7 +418,7 @@ jobs:
           }
           echo "parity OK: planned target entry == executed target entry (${TARGET})"
 
-      - name: Build image via bake (gate-owned overrides)
+      - name: Build image via bake
         uses: docker/bake-action@d3418bd7d0e9324001bca92fa8ba175ea7e6dc9b  # v7.3.0
         with:
           # Local source path = the compose file's directory, so compose
@@ -431,8 +428,6 @@ jobs:
           targets: ${{ matrix.target }}
           set: |
             *.platform=linux/amd64
-            *.args.BUILDER_IMAGE=${{ steps.base-registry.outputs.builder_image }}
-            *.args.RUNTIME_IMAGE=${{ steps.base-registry.outputs.runtime_image }}
           load: true
 
       - name: Verify bake produced the planned tag

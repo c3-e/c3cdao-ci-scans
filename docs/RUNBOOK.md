@@ -52,8 +52,9 @@ blocks when the bullet is false.
   (`build-input-explicit`); every build context has a `.dockerignore`
   with the four literal lines `.env`, `*.pem`, `*.key`, `*credentials*`
   (`build-context-excludes`); every Dockerfile declares
-  `ARG BUILDER_IMAGE` and `ARG RUNTIME_IMAGE` (`hardened-args`); the
-  Compose file resolves under `docker buildx bake --print`
+  `ARG BUILDER_IMAGE` and `ARG RUNTIME_IMAGE` (`hardened-args`,
+  declaration-only — the gate does not inject or override either value);
+  the Compose file resolves under `docker buildx bake --print`
   (`bake-resolve`).
 - The chart renders with your local values; every workload container has
   a `readinessProbe` (`chart-readiness`); exactly one container exposes an
@@ -340,8 +341,12 @@ Setting both `CGR_PULL_*` and `IRONBANK_*` authenticates **both** in one
 run. The gate's posture is fail-closed: no complete credential pair means
 the plan job blocks before docker or kind ever start — there is no public
 fallback and no consumer-side escape hatch. Base images and the failover
-order are gate-owned configuration; your Dockerfiles consume whatever the
-gate resolves through the `BUILDER_IMAGE`/`RUNTIME_IMAGE` ARGs.
+order are gate-owned configuration for the login/failover resolution
+action itself; the gate does not inject or override `BUILDER_IMAGE`/
+`RUNTIME_IMAGE` into any build (v0.6.1 declare-only convention —
+[`hardened-args`](CI-CONTRACT.md#rule-hardened-args) only checks that
+both ARGs are declared). Consuming a hardened base in `FROM` for either
+ARG is the consumer's own choice, not a gate-supplied guarantee.
 
 The gate authenticates only to `cgr.dev` and `registry1.dso.mil` and
 scans images **as built with those gate-reachable bases**. Approved-image
