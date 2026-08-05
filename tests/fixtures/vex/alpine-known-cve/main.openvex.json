@@ -1,0 +1,25 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://openvex.dev/docs/public/vex-c3cdao-ci-scans-fixture-alpine-known-cve",
+  "author": "TEST FIXTURE (c3cdao-ci-scans T1 spike) \u2014 not a real disposition",
+  "timestamp": "2026-08-05T00:00:00Z",
+  "version": 1,
+  "statements": [
+    {
+      "vulnerability": {
+        "name": "CVE-2022-37434"
+      },
+      "products": [
+        {
+          "@id": "pkg:oci/alpine@sha256:c75ac27b49326926b803b9ed43bf088bc220d22556de1bc5f72d742c91398f69?arch=arm64&repository_url=index.docker.io/library/alpine"
+        },
+        {
+          "@id": "pkg:oci/alpine@sha256:c75ac27b49326926b803b9ed43bf088bc220d22556de1bc5f72d742c91398f69?repository_url=index.docker.io/library"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "timestamp": "2026-08-05T00:00:00Z"
+    }
+  ]
+}

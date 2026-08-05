@@ -1,0 +1,25 @@
+{
+  "@context": "https://openvex.dev/ns/v0.2.0",
+  "@id": "https://openvex.dev/docs/public/vex-c3cdao-ci-scans-fixture-ubi10-rhel-gap",
+  "author": "TEST FIXTURE (c3cdao-ci-scans T1 spike) \u2014 not a real disposition",
+  "timestamp": "2026-08-05T00:00:00Z",
+  "version": 1,
+  "statements": [
+    {
+      "vulnerability": {
+        "name": "CVE-2024-13176"
+      },
+      "products": [
+        {
+          "@id": "pkg:oci/ubi@sha256:aad065f8857f86a136994c648ecc714f8cb59c96bf25ae54320e59e155dfca09?repository_url=registry.access.redhat.com/ubi10/ubi"
+        },
+        {
+          "@id": "pkg:oci/ubi@sha256:aad065f8857f86a136994c648ecc714f8cb59c96bf25ae54320e59e155dfca09?repository_url=registry.access.redhat.com/ubi10"
+        }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "timestamp": "2026-08-05T00:00:00Z"
+    }
+  ]
+}

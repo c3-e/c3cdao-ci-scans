@@ -1,0 +1,248 @@
+# THROWAWAY: VEX (OpenVEX) passthrough spike on the pinned scanner actions.
+# Exists only on spike/vex-gate; never merged. Proves whether
+# aquasecurity/trivy-action@57a97c7... (v0.35.0) and anchore/scan-action@e116508...
+# (v7.4.0) actually honor an OpenVEX document at these exact pins, using the
+# fixtures in tests/fixtures/vex/ (see that directory's README for local CLI
+# proofs at matching pinned CLI versions). T1 in .plan/vex/tickets.md records
+# the acceptance answers this run produces. Delete the branch after the gate
+# closes on this run's URL.
+name: vex-spike-proofs
+
+on:
+  push:
+    branches: [spike/vex-gate]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  ALPINE_REF: alpine@sha256:c75ac27b49326926b803b9ed43bf088bc220d22556de1bc5f72d742c91398f69
+  UBI10_REF: registry.access.redhat.com/ubi10/ubi@sha256:aad065f8857f86a136994c648ecc714f8cb59c96bf25ae54320e59e155dfca09
+  ALPINE_CVE: CVE-2022-37434
+  UBI10_CVE: CVE-2024-13176
+  ALPINE_VEX: tests/fixtures/vex/alpine-known-cve/main.openvex.json
+  UBI10_VEX: tests/fixtures/vex/ubi10-rhel-gap/main.openvex.json
+
+jobs:
+  # --- Trivy image leg: does the composite action's *inner* entrypoint.sh
+  # step see TRIVY_VEX when it's set on the calling `uses:` step's own `env:`
+  # block, or only when set at job level? trivy-action is `using: composite`
+  # (verified against the exact pinned SHA), and composite-step env
+  # inheritance from the calling step is a documented GitHub Actions gray
+  # area (actions/runner#789, #1899) — this job settles it empirically for
+  # this exact pin instead of guessing from the docs.
+  trivy-vex-job-level-env:
+    runs-on: ubuntu-latest
+    env:
+      TRIVY_VEX: ${{ github.workspace }}/tests/fixtures/vex/alpine-known-cve/main.openvex.json
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+
+      - name: Proof 1a — Trivy + alpine fixture, TRIVY_VEX at JOB level
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1  # v0.35.0
+        with:
+          image-ref: ${{ env.ALPINE_REF }}
+          format: json
+          output: trivy-alpine-jobenv.json
+
+      - name: Assert — job-level TRIVY_VEX drops the fixture CVE
+        run: |
+          set -euo pipefail
+          cves=$(jq -c '[.Results[]?.Vulnerabilities[]?.VulnerabilityID] | unique' trivy-alpine-jobenv.json)
+          echo "RESULT trivy/alpine/job-level-env cves=$cves" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "$cves" | jq -e --arg cve "$ALPINE_CVE" 'index($cve) == null' \
+            && echo "PASS: job-level TRIVY_VEX suppressed $ALPINE_CVE" \
+            || { echo "FAIL: job-level TRIVY_VEX did NOT suppress $ALPINE_CVE"; exit 1; }
+
+      - name: Proof 1b — Trivy + ubi10 fixture, TRIVY_VEX overridden at STEP level (job default is the alpine doc)
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1  # v0.35.0
+        env:
+          TRIVY_VEX: ${{ github.workspace }}/tests/fixtures/vex/ubi10-rhel-gap/main.openvex.json
+        with:
+          image-ref: ${{ env.UBI10_REF }}
+          format: json
+          output: trivy-ubi10-stepoverride.json
+
+      - name: Record — ubi10 fixture is a T0 no-op on Trivy regardless of VEX
+        run: |
+          set -euo pipefail
+          count=$(jq -r '[.Results[]?.Vulnerabilities[]?.VulnerabilityID] | unique | length' trivy-ubi10-stepoverride.json)
+          echo "RESULT trivy/ubi10/step-level-override cve_count=$count (expect 0 — T0 gap, not a passthrough failure)" | tee -a "$GITHUB_STEP_SUMMARY"
+          test "$count" = "0"
+
+  trivy-vex-step-level-env-only:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+
+      - name: Proof 2a — Trivy + alpine fixture, no VEX at all (baseline)
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1  # v0.35.0
+        with:
+          image-ref: ${{ env.ALPINE_REF }}
+          format: json
+          output: trivy-alpine-baseline.json
+
+      - name: Assert — baseline finds the fixture CVE
+        run: |
+          set -euo pipefail
+          cves=$(jq -c '[.Results[]?.Vulnerabilities[]?.VulnerabilityID] | unique' trivy-alpine-baseline.json)
+          echo "RESULT trivy/alpine/no-vex-baseline cves=$cves" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "$cves" | jq -e --arg cve "$ALPINE_CVE" 'index($cve) != null'
+
+      - name: Proof 2b — Trivy + alpine fixture, TRIVY_VEX on the CALLING step's own env only (no job-level env)
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1  # v0.35.0
+        env:
+          TRIVY_VEX: ${{ github.workspace }}/tests/fixtures/vex/alpine-known-cve/main.openvex.json
+        with:
+          image-ref: ${{ env.ALPINE_REF }}
+          format: json
+          output: trivy-alpine-stepenv.json
+
+      - name: Record — does step-only env (no job-level env) reach the composite's inner step?
+        run: |
+          set -euo pipefail
+          cves=$(jq -c '[.Results[]?.Vulnerabilities[]?.VulnerabilityID] | unique' trivy-alpine-stepenv.json)
+          suppressed=$(echo "$cves" | jq -e --arg cve "$ALPINE_CVE" 'index($cve) == null' && echo true || echo false)
+          echo "RESULT trivy/alpine/step-level-env-only cves=$cves suppressed=$suppressed" | tee -a "$GITHUB_STEP_SUMMARY"
+          # Informational only — do not fail the job either way; T1's acceptance
+          # record captures whichever mechanism actually worked in this run.
+
+  # --- Grype image + SBOM legs. anchore/scan-action is `using: node24` (a
+  # single-process JS action, not composite) so step-level env is unambiguous;
+  # the real open question here is whether the *SBOM* leg has a matching
+  # product identity to VEX against at all. v7.4.0 also ships a native `vex:`
+  # `with:` input (see action.yml) — undocumented in the original ticket
+  # text, which assumed GRYPE_VEX_DOCUMENTS only; this job tests both.
+  grype-vex:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+
+      - name: Proof 3a — Grype image, alpine, no VEX (baseline)
+        id: grype_alpine_novex
+        uses: anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2  # v7.4.0
+        with:
+          image: ${{ env.ALPINE_REF }}
+          output-format: json
+          severity-cutoff: negligible
+          fail-build: false
+
+      - name: Proof 3b — Grype image, alpine, WITH VEX via native with.vex input
+        id: grype_alpine_vex_input
+        uses: anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2  # v7.4.0
+        with:
+          image: ${{ env.ALPINE_REF }}
+          output-format: json
+          severity-cutoff: negligible
+          fail-build: false
+          vex: ${{ env.ALPINE_VEX }}
+
+      - name: Proof 3c — Grype image, alpine, WITH VEX via GRYPE_VEX_DOCUMENTS env (original ticket assumption)
+        id: grype_alpine_vex_env
+        uses: anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2  # v7.4.0
+        env:
+          GRYPE_VEX_DOCUMENTS: ${{ github.workspace }}/${{ env.ALPINE_VEX }}
+        with:
+          image: ${{ env.ALPINE_REF }}
+          output-format: json
+          severity-cutoff: negligible
+          fail-build: false
+
+      - name: Assert — image leg honors VEX via both mechanisms, product identity is the image PURL
+        run: |
+          set -euo pipefail
+          novex=$(jq -c '[.matches[]?.vulnerability.id] | unique' '${{ steps.grype_alpine_novex.outputs.json }}')
+          with_input=$(jq -c '[.matches[]?.vulnerability.id] | unique' '${{ steps.grype_alpine_vex_input.outputs.json }}')
+          with_env=$(jq -c '[.matches[]?.vulnerability.id] | unique' '${{ steps.grype_alpine_vex_env.outputs.json }}')
+          echo "RESULT grype/alpine/image novex=$novex with_input=$with_input with_env=$with_env" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "$novex" | jq -e --arg cve "$ALPINE_CVE" 'index($cve) != null'
+          echo "$with_input" | jq -e --arg cve "$ALPINE_CVE" 'index($cve) == null' \
+            && echo "PASS: with: vex: input suppressed $ALPINE_CVE" \
+            || { echo "FAIL: with: vex: input did NOT suppress $ALPINE_CVE"; exit 1; }
+          echo "$with_env" | jq -e --arg cve "$ALPINE_CVE" 'index($cve) == null' \
+            && echo "PASS: GRYPE_VEX_DOCUMENTS env suppressed $ALPINE_CVE" \
+            || echo "INFO: GRYPE_VEX_DOCUMENTS env did NOT suppress $ALPINE_CVE (with: vex: is the confirmed mechanism either way)"
+
+      - name: Proof 4a — Grype image, ubi10, no VEX (baseline; confirms T0 Grype carries the RHEL10 burden)
+        id: grype_ubi10_novex
+        uses: anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2  # v7.4.0
+        with:
+          image: ${{ env.UBI10_REF }}
+          output-format: json
+          severity-cutoff: negligible
+          fail-build: false
+
+      - name: Proof 4b — Grype image, ubi10, WITH VEX via native with.vex input
+        id: grype_ubi10_vex_input
+        uses: anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2  # v7.4.0
+        with:
+          image: ${{ env.UBI10_REF }}
+          output-format: json
+          severity-cutoff: negligible
+          fail-build: false
+          vex: ${{ env.UBI10_VEX }}
+
+      - name: Assert — ubi10 fixture CVE dropped by Grype's with.vex input
+        run: |
+          set -euo pipefail
+          novex=$(jq -c '[.matches[]?.vulnerability.id] | unique' '${{ steps.grype_ubi10_novex.outputs.json }}')
+          withvex=$(jq -c '[.matches[]?.vulnerability.id] | unique' '${{ steps.grype_ubi10_vex_input.outputs.json }}')
+          echo "RESULT grype/ubi10/image novex_count=$(echo "$novex" | jq length) withvex_count=$(echo "$withvex" | jq length)" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "$novex" | jq -e --arg cve "$UBI10_CVE" 'index($cve) != null'
+          echo "$withvex" | jq -e --arg cve "$UBI10_CVE" 'index($cve) == null' \
+            && echo "PASS: with: vex: input suppressed $UBI10_CVE on the RHEL10/UBI10 fixture" \
+            || { echo "FAIL: with: vex: input did NOT suppress $UBI10_CVE"; exit 1; }
+
+      # SBOM leg: mirrors the real gate's producer exactly (anchore/sbom-action
+      # v0.24.0, format cyclonedx-json) rather than a raw `syft` invocation, so
+      # any version-specific behavior in the pinned action is captured, not
+      # just local-CLI behavior.
+      - name: Generate image SBOM (mirrors image-vuln-scan's real producer)
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610  # v0.24.0
+        with:
+          image: ${{ env.ALPINE_REF }}
+          format: cyclonedx-json
+          output-file: sbom-alpine.cdx.json
+          upload-artifact: false
+
+      - name: Proof 5a — Grype SBOM, alpine, no VEX (baseline)
+        id: grype_alpine_sbom_novex
+        uses: anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2  # v7.4.0
+        with:
+          sbom: sbom-alpine.cdx.json
+          output-format: json
+          severity-cutoff: negligible
+          fail-build: false
+
+      - name: Proof 5b — Grype SBOM, alpine, WITH VEX via native with.vex input
+        id: grype_alpine_sbom_vex
+        uses: anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2  # v7.4.0
+        with:
+          sbom: sbom-alpine.cdx.json
+          output-format: json
+          severity-cutoff: negligible
+          fail-build: false
+          vex: ${{ env.ALPINE_VEX }}
+
+      - name: Record — does the SBOM leg have a matching product identity at all?
+        run: |
+          set -euo pipefail
+          novex=$(jq -c '[.matches[]?.vulnerability.id] | unique' '${{ steps.grype_alpine_sbom_novex.outputs.json }}')
+          withvex=$(jq -c '[.matches[]?.vulnerability.id] | unique' '${{ steps.grype_alpine_sbom_vex.outputs.json }}')
+          purl=$(jq -r '.metadata.component.purl // "MISSING"' sbom-alpine.cdx.json)
+          echo "RESULT grype/alpine/sbom novex=$novex withvex=$withvex root_component_purl=$purl" | tee -a "$GITHUB_STEP_SUMMARY"
+          # Informational only, per the local finding in tests/fixtures/vex/README.md:
+          # anchore/sbom-action's CycloneDX root component carries no purl, so there is
+          # no product identity for GRYPE_VEX_DOCUMENTS/with:vex: to match against on
+          # this leg. Not asserted as a hard pass/fail — this run is the live
+          # confirmation of that local finding, recorded in T1's acceptance notes.
+
+  # Cumulative smoke, per the throwaway-workflow convention (throwaway-bake-spikes.yml).
+  baseline-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e  # v6
+      - name: Baseline — pytest
+        run: uv run --with pytest --with pyyaml --with jsonschema pytest tests/ -q
