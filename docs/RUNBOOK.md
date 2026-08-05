@@ -301,6 +301,48 @@ gh variable set SECURITY_SCAN_BLOCKING --body true --repo <owner>/<repo>
 **You should see:** the repo variable set to `true`, and subsequent gate
 runs hard-failing (not warning) on cluster-smoke / image-scan findings.
 
+## 12. Suppress dispositioned CVEs with OpenVEX (consumer, optional)
+
+The image-scan legs consume a consumer-committed [OpenVEX](https://github.com/openvex/spec)
+document: findings your team has formally dispositioned (`not_affected` /
+`fixed`, with a justification) are filtered out of the Trivy and Grype
+image scans, with the applied document preserved in every run's
+[security export bundle](#i-security-export-bundle-reference). Nothing is
+required — without the file, scans behave exactly as before.
+
+1. Commit `.openvex/templates/main.openvex.json` at your repo root (the
+   `vexctl generate --init` layout). Author statements with
+   `vexctl add` — pin `vexctl >= v0.3.0` (older releases silently keep
+   only the last of repeated `--product` flags, which reintroduces the
+   single-form footgun below).
+2. **Verdicts only.** A statement is a human disposition with a
+   justification — never bulk `under_investigation`, never
+   scanner-derivable data, and never written by a pipeline. CI consumes
+   the document; it must not author or upgrade it.
+3. **Product PURL rules** — matching failures are silent (the statement
+   just never suppresses), so all three matter:
+   - No `tag=` qualifier, and no `arch=` qualifier — either silently
+     breaks matching (an `arch=arm64` PURL authored on Apple Silicon
+     matches nothing on the gate's `amd64` runners).
+   - Every statement needs **both** scanners' `repository_url` forms via
+     repeated `--product`: Trivy computes it with the image name included
+     (`.../cdao/landing`), Grype without (`.../cdao`). One form suppresses
+     on one scanner only. Worked, A/B-tested example: c3cdao-landing's
+     `.openvex/templates/README.md` ("PURL matching footguns", in
+     [c3cdao-landing#2](https://github.com/c3-e/c3cdao-landing/pull/2)).
+4. Add a `CODEOWNERS` entry for `.openvex/` so every disposition change
+   gets a named security reviewer.
+
+Known limit: the Grype **image-SBOM** leg cannot consume VEX (the SBOM's
+root component carries no PURL to match) — the Trivy and Grype **image**
+legs are the suppression surface, and they cover the same packages.
+
+**You should see:** the dispositioned CVE absent from the Trivy and Grype
+image-scan tables on the next run, and the run's
+`security-export-<service>-<sha>` artifact carrying your document as
+`vex-applied.openvex.json` with `metadata.json` showing
+`"vex": {"source": "consumer"}`.
+
 ## Migrating from v0.5.x (consumer)
 
 The v0.6 cutover is a hard major-version migration — the consumer contract
@@ -439,6 +481,25 @@ move with it.
 ci-scans is public; if it ever goes private, this repo (the callee) must
 allow cross-repo reusable-workflow access (Settings → Actions → Access)
 before consumers can call it.
+
+### I. Security export bundle reference
+
+Every image-scan matrix leg uploads `security-export-<service>-<short-sha>`
+(90-day artifact retention; uploads even when a blocking scan fails —
+that's when the evidence matters). Download with
+`gh run download <run-id> -p 'security-export-*'`. Contents:
+
+| File | What it is |
+| --- | --- |
+| `sbom-image.cdx.json` | CycloneDX SBOM of the scanned image (same artifact the SBOM legs consume) |
+| `trivy-image.json` | Trivy image findings, JSON, same severity filter and suppression surface as the gating table scan |
+| `grype-image.json` | Grype image findings, JSON, same config and VEX surface as the gating table scan |
+| `vex-applied.openvex.json` | The OpenVEX document exactly as applied — your committed template, or the gate's empty-statements default |
+| `metadata.json` | `image` (tag + digest), `blocking` flag, `vex.source` (`consumer` / `empty-default`), `scanners` (Trivy + Grype versions and vulnerability-DB metadata), `gate` (workflow ref + sha), `run` (caller sha + run id) |
+
+Scan results are only interpretable next to the exact VEX statements that
+were applied — the bundle is self-contained so an auditor needs nothing
+else from the run.
 
 ### H. Note on path efficiency
 
