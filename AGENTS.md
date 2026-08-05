@@ -1,5 +1,6 @@
 # Project Context
 
+- **NEVER push directly to `main` (or any protected branch).** Always work on a branch and open a PR — even for one-line fixes, even when a direct push would technically succeed (e.g. because branch protection is misconfigured). If you notice branch protection would allow a direct push, that is not permission to use it — open a PR anyway.
 - **Stack:** Python
 - Prefer package/app source directories (`scripts/`, `scripts/lib/`, `config/`, `templates/`, `.github/workflows/`).
 - Commits must be blocked by pre-commit hooks running static analysis (e.g. `ruff`, `mypy`).
