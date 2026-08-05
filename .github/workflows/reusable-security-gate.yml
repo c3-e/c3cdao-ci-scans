@@ -3,8 +3,8 @@
 # A single workflow owns the entire PR gate and reports as the required
 # status check, instead of several independent modular scan workflows.
 #
-# Interface (v0.6: T-5 landed plan/build, T-6 the scan matrix + thin caller
-# surface + fan-in, T-7 the smoke catalog + chart-derived probe): the
+# Interface (v0.6: plan/build legs, the scan matrix + thin caller
+# surface + fan-in, and the smoke catalog + chart-derived probe): the
 # gate derives build facts from the consumer's canonical Compose file via
 # `docker buildx bake --print` (the published build plan / BOM) and executes
 # each build and scan itself. workflow_call inputs are the 7 v0.6 names
@@ -96,7 +96,7 @@ on:
         type: string
         default: app-ci
       smoke_resources:
-        description: "CSV of gate-owned smoke catalog module ids (e.g. postgres-pgvector,gateway-crds) cluster-smoke provisions before helm install. Unknown ids are blocked by the smoke-resource-unknown lint rule. Default \"\" provisions none. (Wired by T-7.)"
+        description: "CSV of gate-owned smoke catalog module ids (e.g. postgres-pgvector,gateway-crds) cluster-smoke provisions before helm install. Unknown ids are blocked by the smoke-resource-unknown lint rule. Default \"\" provisions none."
         type: string
         default: ""
       image_only:
@@ -125,10 +125,10 @@ env:
   # Gate config (v0.6): base images, Iron Bank registry, and hardened-base
   # posture are gate-owned operator decisions, not caller inputs — the v0.5
   # builder_image/runtime_image/ironbank_*/require_hardened_bases inputs
-  # folded into these literals at the T-6 cutover. Consumers consume the
+  # folded into these literals at the v0.6 cutover. Consumers consume the
   # resolved bases via the blessed BUILDER_IMAGE/RUNTIME_IMAGE build args
   # (hardened-args lint). GATE_REQUIRE_HARDENED_BASES is fail-closed
-  # (constitution 1): no credential pair means no build.
+  # (fail-closed by design): no credential pair means no build.
   GATE_BUILDER_IMAGE: cgr.dev/chainguard/python:latest-dev
   GATE_RUNTIME_IMAGE: cgr.dev/chainguard/python:latest
   GATE_IRONBANK_REGISTRY: registry1.dso.mil
@@ -395,7 +395,7 @@ jobs:
       # targets + --set overrides (scrubbed env, mirroring derive_bom) and
       # diff the resolved target entry against the published plan. Any drift
       # fails the leg before the build runs — a parity failure is a design
-      # flaw, not a bug (ticket T-5 failure protocol).
+      # flaw, not a bug: stop and re-design, do not patch around it.
       - name: Plan/execution parity check
         env:
           TARGET: ${{ matrix.target }}
@@ -519,9 +519,12 @@ jobs:
           extra_args: --only-verified
 
       - name: Gate on verified secrets
+        env:
+          SCAN_OUTCOME: ${{ steps.scan.outcome }}
+          SECURITY_SCAN_BLOCKING: ${{ vars.SECURITY_SCAN_BLOCKING }}
         run: |
-          if [ "${{ steps.scan.outcome }}" = "failure" ]; then
-            if [ "${{ vars.SECURITY_SCAN_BLOCKING }}" = "true" ]; then
+          if [ "$SCAN_OUTCOME" = "failure" ]; then
+            if [ "$SECURITY_SCAN_BLOCKING" = "true" ]; then
               echo "::error::TruffleHog found verified secret(s). Failing (SECURITY_SCAN_BLOCKING=true)."
               exit 1
             fi
@@ -787,7 +790,7 @@ jobs:
   # Cluster smoke — kind + catalog provisioning + helm install + derived probe.
   # helm-check (lint/template) is a static render; it can't catch a chart that
   # renders clean but crash-loops on boot (bad env, failed migration, broken
-  # entrypoint). Flow (T-7): create kind cluster -> load every per-leg image
+  # entrypoint). Flow: create kind cluster -> load every per-leg image
   # tar -> apply the declared smoke_resources catalog modules and gate on
   # their readiness (a timeout fails naming the module, BEFORE any helm
   # install) -> helm install --wait -> probe the chart-derived HTTP target
@@ -798,6 +801,7 @@ jobs:
   cluster-smoke:
     name: Cluster Smoke (kind + helm + health)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     needs: [build, helm-check]
     if: |
       always() &&
@@ -848,7 +852,7 @@ jobs:
 
       - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e  # v6
 
-      # Every per-leg image tar (T-7): build uploads scan-image-<target>
+      # Every per-leg image tar: build uploads scan-image-<target>
       # per matrix leg; each downloads into its own directory.
       - name: Download per-leg image artifacts
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4
@@ -898,7 +902,7 @@ jobs:
 
           kubectl create namespace "${NAMESPACE}" --dry-run=client -o yaml | kubectl apply -f -
 
-          # Gate-owned smoke_resources catalog modules (T-7): apply each
+          # Gate-owned smoke_resources catalog modules: apply each
           # declared module and gate on its readiness BEFORE any helm
           # install. Ids were validated upstream by the
           # smoke-resource-unknown lint rule; module id -> manifest file
@@ -947,7 +951,7 @@ jobs:
 
           helm dependency build "./${HELM_CHART_PATH}" || fail "helm dependency build failed"
 
-          # Chart-derived probe target (T-7): derive from the local-values
+          # Chart-derived probe target: derive from the local-values
           # render — the same Service-backed HTTP readiness semantics the
           # smoke-target lint rule enforced in plan, so a lint-clean chart
           # always derives exactly one target.
@@ -982,7 +986,7 @@ jobs:
             "18080:${PROBE_PORT}" >/tmp/pf.log 2>&1 &
           pf_pid=$!
           sleep 6
-          code=$(curl -s -o /dev/null -w '%{http_code}' \
+          code=$(curl -s --max-time 30 -o /dev/null -w '%{http_code}' \
             "http://127.0.0.1:18080${PROBE_PATH}" || echo 000)
           kill "${pf_pid}" 2>/dev/null || true
           echo "GET ${PROBE_PATH} via svc/${PROBE_SVC}:${PROBE_PORT} -> ${code}"

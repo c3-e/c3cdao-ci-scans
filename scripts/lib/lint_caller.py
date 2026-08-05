@@ -43,7 +43,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from derive_bom import classify_services, load_compose
+from compose_facts import classify_services, load_compose
 from lint_rules import Verdict, load_gha_workflow, verdict
 from lint_rules.chart import (
     built_unscheduled,
@@ -203,7 +203,7 @@ def convention_verdicts(
 
     Chart rules run only for non-image_only consumers; bake resolution
     runs only when the committed shapes are already clean, so shape
-    violations surface before bake ever executes (SPIKE-03 ordering).
+    violations surface before bake ever executes.
     """
     presence = compose_missing(compose_path)
     if presence:

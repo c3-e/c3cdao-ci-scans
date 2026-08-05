@@ -1,0 +1,65 @@
+# THROWAWAY: IG-1 plan-slice gate proof, Flow 2 (blocked path).
+# Exists only on the spike branch spike/ig1-plan-slice; never merged
+# (IG-1a precedent). This run is SUPPOSED TO BE RED: the committed
+# ship-set-violation fixture must be blocked pre-build with the rule id
+# `ship-set` named in the log. The lint's real exit code fails the job —
+# no inversion, so the blocked flow is a genuine red run, and a
+# preceding step captures the verdict text proving the block names the
+# rule (not just a red job). Delete the branch after the gate closes on
+# the run URLs.
+name: ig1-ship-set-block
+
+on:
+  push:
+    branches: [spike/ig1-plan-slice]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ship-set-block:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f  # v3
+
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e  # v6
+
+      # Runs the same lint the failing step below runs, captures the
+      # verdict, and asserts the block names exactly `ship-set` with the
+      # offending reference — then publishes it to the job summary. This
+      # step must stay green; only the final step goes red.
+      - name: "Flow 2 — assert block names rule id ship-set (pre-build)"
+        run: |
+          set -euo pipefail
+          rc=0
+          uv run --quiet scripts/lib/lint_caller.py \
+            tests/fixtures/ig1-throwaway/caller-ship-set.yml \
+            --consumer-root tests/fixtures/bake/ship-set-violation \
+            | tee /tmp/verdicts.txt || rc=$?
+          test "$rc" -eq 1
+          grep -E '^ship-set: block: ' /tmp/verdicts.txt
+          grep -F "registry.example/ghost:9.9.9" /tmp/verdicts.txt
+          # Blocked before any build: no fixture image may exist.
+          docker images "ship-set/*" --format "{{.Repository}}" | tee /tmp/built.txt
+          test ! -s /tmp/built.txt
+          {
+            echo "## IG-1 Flow 2 — ship-set block (expected red run)"
+            echo
+            echo '```'
+            cat /tmp/verdicts.txt
+            echo '```'
+            echo
+            echo "Lint exit code: 1 (block) — no image was built."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: "Flow 2 — lint blocks the run (real exit code, RED IS THE PROOF)"
+        run: |
+          uv run --quiet scripts/lib/lint_caller.py \
+            tests/fixtures/ig1-throwaway/caller-ship-set.yml \
+            --consumer-root tests/fixtures/bake/ship-set-violation

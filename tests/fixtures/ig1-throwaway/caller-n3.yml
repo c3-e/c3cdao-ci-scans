@@ -1,0 +1,24 @@
+# THROWAWAY (IG-1 harness): conforming v0.6 caller for the
+# n3-local-profile fixture. Exists only on spike/ig1-plan-slice; never
+# merged. Gate ref SHA-pinned, four secrets mapped, chart inputs point
+# into the fixture checkout.
+name: Security Scan
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  security-scan:
+    uses: c3-e/c3cdao-ci-scans/.github/workflows/reusable-security-gate.yml@0123456789abcdef0123456789abcdef01234567  # v0.6.0
+    with:
+      chart_path: chart
+      values_local: chart/values.yaml
+    secrets:
+      CGR_PULL_TOKEN: ${{ secrets.CGR_PULL_TOKEN }}
+      CGR_PULL_USERNAME: ${{ secrets.CGR_PULL_USERNAME }}
+      IRONBANK_TOKEN: ${{ secrets.IRONBANK_TOKEN }}
+      IRONBANK_USERNAME: ${{ secrets.IRONBANK_USERNAME }}

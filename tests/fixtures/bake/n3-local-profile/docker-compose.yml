@@ -32,7 +32,7 @@ services:
       test: ["CMD", "test", "-f", "/srv/svc.txt"]
       interval: 30s
 
-  # Local-only tooling service: derivation must never see it (SPIKE-01).
+  # Local-only tooling service: derivation must never see it.
   svc-local:
     profiles: [local]
     build:

@@ -1,4 +1,4 @@
-# Forced-timeout smoke catalog module fixture (T-7 AC-5).
+# Forced-timeout smoke catalog module fixture.
 #
 # NOT a catalog module: this file is copied into the catalog only on the
 # throwaway spike branch (as timeout_module.yaml + a SMOKE_CATALOG entry)

@@ -29,8 +29,13 @@ def warn_if_advisory() -> None:
     print(f"{'=' * 78}\n{ADVISORY_BANNER}\n{'=' * 78}")
     summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary_path:
-        with open(summary_path, "a", encoding="utf-8") as fh:
-            fh.write(f"> [!WARNING]\n> {ADVISORY_BANNER}\n\n")
+        try:
+            with open(summary_path, "a", encoding="utf-8") as fh:
+                fh.write(f"> [!WARNING]\n> {ADVISORY_BANNER}\n\n")
+        except OSError as e:
+            # Cosmetic write only — the stdout banner above already fired;
+            # a summary-file failure must not decide the gate verdict.
+            print(f"::warning::could not write advisory banner to step summary: {e}")
 
 
 def blocking_jobs(image_only: bool) -> list[str]:

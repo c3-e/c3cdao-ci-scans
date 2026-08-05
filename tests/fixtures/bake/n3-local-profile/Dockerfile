@@ -1,4 +1,4 @@
-# N=3 fixture service image (T-2; upgraded bootable by T-7 for the live
+# N=3 fixture service image (upgraded bootable for the live
 # cluster-smoke proof): a static HTTP server that serves /srv/healthz and
 # stays alive, runnable on a read-only root filesystem as nonroot. The
 # gate injects hardened bases via the blessed ARG pair; the runtime base

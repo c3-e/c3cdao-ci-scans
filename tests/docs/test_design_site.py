@@ -1,6 +1,6 @@
 """Structure guards for the browser-readable design documentation.
 
-T-8 additions: a drift guard (published docs never instruct the retired
+Docs-cutover additions: a drift guard (published docs never instruct the retired
 v0.5 machinery), lint remediation-anchor resolution, and consumer-shape
 convention coverage.
 """
@@ -123,7 +123,7 @@ def test_published_docs_do_not_name_pilot_repositories() -> None:
             assert name not in text, f"{path.relative_to(ROOT)} names {name}"
 
 
-# --- T-8 docs-cutover guards -------------------------------------------------
+# --- docs-cutover guards -------------------------------------------------
 #
 # Published pages = the four Markdown contracts, the site, and the README.
 
@@ -184,6 +184,32 @@ def test_lint_remediation_anchors_resolve() -> None:
     }
     missing = sorted(_emitted_remediation_anchors() - heading_slugs)
     assert not missing, f"remediation anchors with no CI-CONTRACT.md heading: {missing}"
+
+
+def test_site_lint_grid_in_sync() -> None:
+    """The design site's lint catalog stays a valid subset with a true count.
+
+    The rule catalog exists in three places: the rule sources, the
+    CI-CONTRACT rule table (anchor-guarded above), and the hand-maintained
+    grid in index.html. This guard keeps the third copy honest: every
+    <code> entry must be a rule id the lint actually emits, and the
+    "<N> design rules" label must match the number of grid entries.
+    """
+    html = (DOCS / "index.html").read_text()
+    grid_match = re.search(
+        r'<small>(\d+) design rules</small>.*?<div class="lint-grid">(.*?)</div>',
+        html,
+        re.DOTALL,
+    )
+    assert grid_match, "lint-grid section with a '<N> design rules' label not found"
+    labeled_count = int(grid_match.group(1))
+    grid_ids = re.findall(r"<code>([a-z-]+)</code>", grid_match.group(2))
+    assert len(grid_ids) == labeled_count, (
+        f"label says {labeled_count} rules, grid lists {len(grid_ids)}"
+    )
+    emitted = {a.removeprefix("rule-") for a in _emitted_remediation_anchors()}
+    unknown = sorted(set(grid_ids) - emitted)
+    assert not unknown, f"site lint grid names rule ids the lint never emits: {unknown}"
 
 
 def test_consumer_shape_assumptions_published() -> None:

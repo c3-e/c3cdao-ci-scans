@@ -688,7 +688,6 @@ main {
 .syntax-key { color: var(--code-key); }
 .syntax-name { color: var(--code-name); }
 .syntax-string { color: var(--code-string); }
-.syntax-comment { color: #68717a; }
 
 .invariant {
   display: grid;

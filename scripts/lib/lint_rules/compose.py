@@ -13,7 +13,7 @@ import io
 from pathlib import Path
 from typing import Any
 
-from derive_bom import PLATFORM_PIN, load_compose, run_bake_print
+from compose_facts import PLATFORM_PIN, load_compose, run_bake_print
 from lint_rules import Verdict, verdict
 
 MATRIX_CAP = 10
@@ -77,7 +77,7 @@ def compose_image_tag(
 
     An untagged reference and `:latest` are indistinguishable after bake's
     normalization, so neither counts as explicit. An interpolated reference
-    (`image: app:${TAG}`) blocks first (T-4F / FIX-CANDIDATE C6): the gate
+    (`image: app:${TAG}`) blocks first: the gate
     runs bake with a scrubbed environment, so `${TAG}` resolves empty and
     would fail downstream as a malformed reference instead of a named
     verdict.

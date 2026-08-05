@@ -144,7 +144,7 @@ def test_compose_image_tag_passes_on_explicit_tag():
 
 
 def test_compose_image_tag_blocks_interpolated_reference():
-    """T-4F AC-1: `image: app:${TAG}` resolves empty under the gate's
+    """`image: app:${TAG}` resolves empty under the gate's
     scrubbed environment — block at the front door, naming interpolation."""
     compose = {"services": {"app": build_service("app:${TAG}")}}
     v = only_rule(compose_image_tag(compose, classify(compose)), "compose-image-tag")
@@ -153,7 +153,7 @@ def test_compose_image_tag_blocks_interpolated_reference():
 
 
 def test_compose_image_tag_allows_escaped_literal_dollar():
-    """T-4F AC-2: `$$` is Compose's literal-dollar escape, not interpolation."""
+    """`$$` is Compose's literal-dollar escape, not interpolation."""
     compose = {"services": {"app": build_service("registry.example/app:v1$$rc")}}
     assert compose_image_tag(compose, classify(compose)) == []
 
@@ -340,7 +340,7 @@ def test_bake_resolve(monkeypatch):
     """A failing `bake --print` blocks with the rule id and bake's stderr.
 
     The canned stderr is captured output of a real failing bake run
-    against the resolve-error fixture (T-3 precedent; live path at IG-1).
+    against the resolve-error fixture (live path at the plan-job gate run).
     """
     import subprocess
 

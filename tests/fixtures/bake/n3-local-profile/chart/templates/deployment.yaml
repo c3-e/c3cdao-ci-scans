@@ -1,4 +1,4 @@
-# Bootable N=3 workload (T-7): three fixture HTTP servers in one pod,
+# Bootable N=3 workload: three fixture HTTP servers in one pod,
 # distinct ports (shared pod network namespace), restricted-PSS clean —
 # the bundled assert_restricted_pss.py gates helm-check, and cluster-smoke
 # helm install --wait needs every container Ready. Only svc-a's probe is
