@@ -114,6 +114,7 @@ Minimize token consumption and prevent context window pollution while maintainin
 - Prefer one linked worktree per concurrent branch under `.worktrees/<slug>/` (must be gitignored). Keep the primary checkout on `main` (or one stable integration branch).
 - Bind each write session’s cwd / workspace root to its worktree path — not the primary checkout.
 - Write subagents must receive an absolute worktree path and must not `checkout` / `switch` in the parent tree. Read-only explore/review may share the parent tree.
+- **No exception for quick, one-off, or corrective tasks.** A single `git checkout`/`git switch`/`git reset --hard` in the shared primary checkout is exactly as disruptive whether the task is large or small. If a task needs a different branch checked out, even briefly, cut a worktree for it.
 - Prefer harness-native isolation when already present; otherwise `git worktree add`. Full playbook: skill companion `project-onboarding/WORKTREES.md` (or repo docs that mirror it).
 
 ## STANDARDS.md
