@@ -300,9 +300,9 @@
                 <span>Dockerfile</span>
                 <h3>Build inputs stay explicit</h3>
                 <p>
-                  Build args use literal mapping values. The gate alone overrides <code>BUILDER_IMAGE</code> and
-                  <code>RUNTIME_IMAGE</code>, and every build targets <code>linux/amd64</code>. Caller lint rejects
-                  host pass-through, build secrets, and SSH in v1.
+                  Build args use literal mapping values. Every target declares both <code>BUILDER_IMAGE</code> and
+                  <code>RUNTIME_IMAGE</code>; the gate does not override either value, and every build targets
+                  <code>linux/amd64</code>. Caller lint rejects host pass-through, build secrets, and SSH in v1.
                 </p>
               </article>
               <article class="rule">

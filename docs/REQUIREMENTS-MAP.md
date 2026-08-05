@@ -14,7 +14,7 @@ here.
 | Job | Spec gate / requirement | Tool(s) | Target | Current posture | Alignment |
 |---|---|---|---|---|---|
 | `plan` | (scaffolding pre-flight — not a spec gate) | `lint_caller.py` (v0.6 convention rules) + `derive_bom.py` (`bake --print` plan + annotated BOM + build matrix) | caller config + Compose/Dockerfiles/chart | always fail-closed | aligned (guards the gate) |
-| `build` | build hardened images gate-side (`bake <target>`, matrixed over the plan's derived targets, `--set` platform pin + base-image args) + dual-registry login (CGR and/or Iron Bank) | Docker buildx bake + CGR/Iron Bank | images | always blocking | aligned |
+| `build` | build hardened images gate-side (`bake <target>`, matrixed over the plan's derived targets, `--set` platform pin only — no base-image arg overrides, v0.6.1 declare-only convention) + dual-registry login (CGR and/or Iron Bank) | Docker buildx bake + CGR/Iron Bank | images | always blocking | aligned |
 | `secrets-scan` | Secrets detection | TruffleHog | source | job blocking; finding advisory until `SECURITY_SCAN_BLOCKING=true` | aligned |
 | `sast-semgrep` | SAST | Semgrep | source | warn-only (`continue-on-error`) | intentional ramp |
 | `sast-sonarqube` | SAST | SonarQube | source | warn-only (`continue-on-error`) | intentional ramp |
