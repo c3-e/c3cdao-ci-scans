@@ -11,7 +11,7 @@
       },
       "products": [
         {
-          "@id": "pkg:oci/alpine@sha256:c75ac27b49326926b803b9ed43bf088bc220d22556de1bc5f72d742c91398f69?arch=arm64&repository_url=index.docker.io/library/alpine"
+          "@id": "pkg:oci/alpine@sha256:c75ac27b49326926b803b9ed43bf088bc220d22556de1bc5f72d742c91398f69?repository_url=index.docker.io/library/alpine"
         },
         {
           "@id": "pkg:oci/alpine@sha256:c75ac27b49326926b803b9ed43bf088bc220d22556de1bc5f72d742c91398f69?repository_url=index.docker.io/library"
