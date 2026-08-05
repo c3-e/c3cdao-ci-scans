@@ -376,6 +376,20 @@ def test_chart_undeclared_excludes_vendored_charts_dir(tmp_path):
     assert chart_undeclared(tmp_path) == []
 
 
+def test_chart_undeclared_excludes_gate_checkout_dir(tmp_path):
+    """The plan job checks out this repo's own tooling into `.ci-scans/`
+    inside the consumer's workspace (--consumer-root); that checkout's
+    test fixtures (this repo's own Chart.yaml fixtures) must never be
+    misattributed to the consumer (petegpt false-positive, image_only:
+    true, prod canary run 31047615637)."""
+    gate_checkout = tmp_path / ".ci-scans" / "tests" / "fixtures" / "bake" / "n1"
+    gate_checkout.mkdir(parents=True)
+    (gate_checkout / "Chart.yaml").write_text(
+        "apiVersion: v2\nname: fixture\nversion: 0.1.0\n"
+    )
+    assert chart_undeclared(tmp_path) == []
+
+
 def test_chart_resolve_wraps_helm_failure_as_named_verdict():
     """A chart whose dependency cannot be resolved fails closed with a
     named, remediation-linked verdict — not an uncaught SystemExit (T-13

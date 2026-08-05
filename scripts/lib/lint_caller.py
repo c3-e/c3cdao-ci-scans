@@ -91,6 +91,13 @@ _FULL_SHA_RE = re.compile(r"@[0-9a-f]{40}$")
 # from the repo-wide chart-undeclared glob so a legitimate dependency tree
 # never false-positives (e.g. cra's vendored fullstack-template).
 _VENDORED_CHART_DIR = "charts"
+# The plan job checks out this repo's own tooling into `.ci-scans/` inside
+# the consumer's $GITHUB_WORKSPACE (--consumer-root). That checkout carries
+# this repo's own test fixtures — several with intentional Chart.yaml
+# files — which the repo-wide chart-undeclared glob would otherwise
+# misattribute to the consumer (surfaced by petegpt, an image_only: true
+# consumer, false-positiving on this repo's own fixtures).
+_GATE_CHECKOUT_DIR = ".ci-scans"
 
 
 def chart_missing(chart_path: Path) -> list[Verdict]:
@@ -119,6 +126,7 @@ def chart_undeclared(repo_root: Path) -> list[Verdict]:
         p
         for p in sorted(repo_root.rglob("Chart.yaml"))
         if _VENDORED_CHART_DIR not in p.relative_to(repo_root).parts[:-1]
+        and _GATE_CHECKOUT_DIR not in p.relative_to(repo_root).parts[:-1]
     ]
     if not found:
         return []
