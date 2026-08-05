@@ -219,6 +219,28 @@ jobs:
           runtime-image: ${{ env.GATE_RUNTIME_IMAGE }}
           require-hardened-bases: ${{ env.GATE_REQUIRE_HARDENED_BASES }}
 
+      # helm-check and cluster-smoke both run `helm dependency build` before
+      # rendering the chart; plan's chart lint (lint_caller.py -> helm
+      # template) must match or a chart with a `file://`/remote dependency
+      # and no committed `charts/` fails plan lint before it ever reaches
+      # helm-check (F-C1 — cra's rollout had to force-add a vendored tgz
+      # past its own .gitignore to work around this gap). Skipped when
+      # image_only or when chart_path doesn't exist yet (chart-missing,
+      # a lint_caller.py rule, names that failure instead).
+      - name: Set up Helm
+        if: ${{ inputs.image_only != true }}
+        uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4  # v4
+
+      - name: Build chart dependencies (plan-time chart lint)
+        if: ${{ inputs.image_only != true }}
+        env:
+          HELM_CHART_PATH: ${{ inputs.chart_path }}
+        run: |
+          set -euo pipefail
+          if [ -f "${HELM_CHART_PATH}/Chart.yaml" ]; then
+            helm dependency build "./${HELM_CHART_PATH}"
+          fi
+
       - name: Lint caller against v0.6 conventions
         env:
           WORKFLOW_REF: ${{ github.workflow_ref }}

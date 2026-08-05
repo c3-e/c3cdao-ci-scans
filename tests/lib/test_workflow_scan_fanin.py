@@ -157,6 +157,33 @@ def test_containers_bridge_outputs_retired():
     assert "needs.plan.outputs.containers" not in WORKFLOW.read_text()
 
 
+# --- plan-time helm dependency build (T-13, F-C1) ------------------------------
+
+
+def test_plan_builds_chart_dependencies_before_lint():
+    """The plan job runs `helm dependency build` before lint_caller.py so a
+    chart with a file://-or-remote dependency and no committed charts/
+    renders normally in plan lint (cra's F-C1: it had to force-add a
+    vendored tgz to work around this gap)."""
+    plan = _workflow()["jobs"]["plan"]
+    steps = plan["steps"]
+    dep_build_idx = next(
+        i
+        for i, s in enumerate(steps)
+        if "helm dependency build" in str(s.get("run", ""))
+    )
+    lint_idx = next(
+        i
+        for i, s in enumerate(steps)
+        if s.get("name") == "Lint caller against v0.6 conventions"
+    )
+    assert dep_build_idx < lint_idx, (
+        "helm dependency build must run before the lint step (F-C1)"
+    )
+    dep_step = steps[dep_build_idx]
+    assert dep_step.get("if") == "${{ inputs.image_only != true }}"
+
+
 # --- caller template usable verbatim (AC-4) -----------------------------------
 
 

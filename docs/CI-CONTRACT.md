@@ -168,6 +168,9 @@ else blocks the run before any build starts.
 | [`compose-platform`](#rule-compose-platform) | block | a platform other than `linux/amd64` is declared |
 | [`bake-resolve`](#rule-bake-resolve) | block | `bake --print` fails on the Compose file |
 | [`hardened-args`](#rule-hardened-args) | block | a Dockerfile lacks the blessed base ARG pair |
+| [`chart-missing`](#rule-chart-missing) | block | `image_only` is false and no chart exists at `chart_path` |
+| [`chart-undeclared`](#rule-chart-undeclared) | block | `image_only` is true but a Helm chart exists anywhere in the repo |
+| [`chart-resolve`](#rule-chart-resolve) | block | `helm template` fails on the declared chart (e.g. unresolved dependency) |
 | [`chart-readiness`](#rule-chart-readiness) | block | a rendered workload container lacks readiness |
 | [`smoke-target`](#rule-smoke-target) | block | no single Service-backed HTTP readiness target |
 | [`ship-set`](#rule-ship-set) | block | a rendered image is neither built nor a declared dependency |
@@ -268,6 +271,32 @@ arg's value at build time, and never guarantees the Dockerfile's
 default resolves to a hardened base — consuming the ARG in `FROM` for
 an actual hardened base is the consumer's own choice. An unreadable
 Dockerfile fails closed. Remediation: add both ARG lines.
+
+### Rule: chart-missing
+
+`image_only` is false (the default) and no `Chart.yaml` exists at
+`chart_path` — a verified declaration, not a raw downstream helm error.
+Remediation: author the chart at `chart_path`, or set `image_only: true`
+if this repository truly has no deployable chart.
+
+### Rule: chart-undeclared
+
+`image_only` is true but a `Chart.yaml` exists anywhere in the repository
+tree (excluding vendored dependency copies under any `charts/`
+directory). The check is repo-wide, not `chart_path`-only, so an owned
+chart at a different path cannot evade it. Remediation: set
+`image_only: false` and declare `chart_path`, or remove the chart if it
+is genuinely not deployed from this repository.
+
+### Rule: chart-resolve
+
+`helm template` must resolve the declared chart — helm's stderr is
+attached to the verdict. A chart with an unresolved dependency (missing
+`helm dependency build`, or a broken repository/path) fails here with a
+named, remediation-linked message instead of a raw stack trace.
+Remediation: fix the dependency declaration, or commit the vendored
+`charts/` directory if the dependency source is unavailable at plan
+time.
 
 ### Rule: chart-readiness
 

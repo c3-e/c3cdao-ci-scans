@@ -21,7 +21,10 @@ from lint_caller import (  # noqa: E402
     bake_resolve,
     build_context_excludes,
     build_input_explicit,
+    chart_missing,
     chart_readiness,
+    chart_resolve,
+    chart_undeclared,
     compose_healthcheck,
     compose_image_tag,
     compose_missing,
@@ -331,6 +334,81 @@ def test_hardened_args_passes_on_blessed_pair():
         hardened_args(fixture / "docker-compose.yml", compose, classify(compose))
         == []
     )
+
+
+# --- chart-declaration consistency (BL-1, T-12) ---------------------------------
+
+
+def test_chart_missing(tmp_path):
+    v = only_rule(chart_missing(tmp_path / "chart"), "chart-missing")
+    assert "chart" in v["message"]
+
+
+def test_chart_missing_passes_when_chart_yaml_present(tmp_path):
+    chart = tmp_path / "chart"
+    chart.mkdir()
+    (chart / "Chart.yaml").write_text("apiVersion: v2\nname: x\nversion: 0.1.0\n")
+    assert chart_missing(chart) == []
+
+
+def test_chart_undeclared(tmp_path):
+    """image_only: true with a chart anywhere in the repo tree blocks —
+    the repo-wide glob, not chart_path-only (rescreen's pre-rollout shape:
+    image_only: true while owning helm/resume-screener)."""
+    nested = tmp_path / "helm" / "resume-screener"
+    nested.mkdir(parents=True)
+    (nested / "Chart.yaml").write_text("apiVersion: v2\nname: x\nversion: 0.1.0\n")
+    v = only_rule(chart_undeclared(tmp_path), "chart-undeclared")
+    assert "helm/resume-screener" in v["message"]
+
+
+def test_chart_undeclared_passes_with_no_chart_anywhere(tmp_path):
+    (tmp_path / "docker-compose.yml").write_text("services: {}\n")
+    assert chart_undeclared(tmp_path) == []
+
+
+def test_chart_undeclared_excludes_vendored_charts_dir(tmp_path):
+    """A vendored dependency copy under any `charts/` directory never
+    false-positives (cra's vendored fullstack-template-adjacent trees)."""
+    vendored = tmp_path / "helm" / "app" / "charts" / "fullstack-template"
+    vendored.mkdir(parents=True)
+    (vendored / "Chart.yaml").write_text("apiVersion: v2\nname: dep\nversion: 0.1.0\n")
+    assert chart_undeclared(tmp_path) == []
+
+
+def test_chart_resolve_wraps_helm_failure_as_named_verdict():
+    """A chart whose dependency cannot be resolved fails closed with a
+    named, remediation-linked verdict — not an uncaught SystemExit (T-13
+    AC-2, F-C1)."""
+    chart_path = FIXTURES / "chart-broken-dependency" / "chart"
+    rendered, verdicts = chart_resolve(chart_path)
+    assert rendered is None
+    v = only_rule(verdicts, "chart-resolve")
+    assert "missing-sub" in v["message"] or "charts/" in v["message"]
+
+
+def test_chart_resolve_passes_after_dependency_build():
+    """Once `helm dependency build` vendors the file:// dependency (the
+    plan job's new step, T-13 AC-1), the chart renders with no committed
+    charts/*.tgz required."""
+    import shutil
+    import subprocess
+
+    chart_path = FIXTURES / "chart-file-dependency" / "chart"
+    vendored = chart_path / "charts"
+    assert not vendored.exists(), "fixture must not commit a vendored charts/ dir"
+    try:
+        subprocess.run(
+            ["helm", "dependency", "build", str(chart_path)],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        rendered, verdicts = chart_resolve(chart_path)
+        assert verdicts == []
+        assert rendered
+    finally:
+        shutil.rmtree(vendored, ignore_errors=True)
 
 
 # --- bake resolve ---------------------------------------------------------------
@@ -692,7 +770,10 @@ def test_conforming_n3_fixture_passes_full_rule_set(monkeypatch):
     assert verdicts == []
 
 
-def test_convention_verdicts_image_only_skips_chart_rules(monkeypatch):
+def test_convention_verdicts_image_only_skips_chart_render_rules(monkeypatch):
+    """image_only: true skips the chart-rendering rules (chart-readiness,
+    smoke-target, ship-set, built-unscheduled) — but still enforces
+    chart-undeclared (T-12) when a real chart exists in the repo tree."""
     import json
 
     import lint_rules.compose as compose_rules
@@ -704,6 +785,30 @@ def test_convention_verdicts_image_only_skips_chart_rules(monkeypatch):
         fixture / "docker-compose.yml",
         chart_path=fixture / "chart",
         image_only=True,
+    )
+    only_rule(verdicts, "chart-undeclared")
+
+
+def test_convention_verdicts_image_only_passes_with_no_chart_anywhere(
+    tmp_path, monkeypatch
+):
+    """image_only: true with no chart anywhere in the repo passes clean —
+    the fixture's chart-rendering rules and its new chart-undeclared check
+    both stay silent (T-12's non-violation path)."""
+    import json
+    import shutil
+
+    import lint_rules.compose as compose_rules
+
+    fixture = FIXTURES / "n3-local-profile"
+    for name in ("docker-compose.yml", "Dockerfile", ".dockerignore"):
+        shutil.copy(fixture / name, tmp_path / name)
+    plan = json.loads((fixture / "bake-print.json").read_text())
+    monkeypatch.setattr(compose_rules, "run_bake_print", lambda path, targets: plan)
+    verdicts = convention_verdicts(
+        tmp_path / "docker-compose.yml",
+        image_only=True,
+        smoke_resources="postgres-pgvector,gateway-crds",
     )
     assert verdicts == []
 

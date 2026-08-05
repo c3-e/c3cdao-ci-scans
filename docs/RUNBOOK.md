@@ -360,7 +360,8 @@ Every verdict names its rule and links a remediation anchor in the
 (fail-closed, run in `plan`): `compose-missing`, `compose-no-builds`,
 `matrix-cap`, `compose-image-tag`, `compose-healthcheck`,
 `dependency-shape`, `build-input-explicit`, `build-context-excludes`,
-`compose-platform`, `bake-resolve`, `hardened-args`, `chart-readiness`,
+`compose-platform`, `bake-resolve`, `hardened-args`, `chart-missing`,
+`chart-undeclared`, `chart-resolve`, `chart-readiness`,
 `smoke-target`, `ship-set`, `smoke-resource-unknown`, plus the warn-only
 `built-unscheduled`. Caller-structure rules: `gate-ref-pin`,
 `gate-job-id`, `no-secrets-inherit`, `missing-secret-map`,
