@@ -1,0 +1,4 @@
+apiVersion: v2
+name: bake-spike-n1
+description: Minimal N=1 chart fixture for bake tag-parity spikes
+version: 0.1.0

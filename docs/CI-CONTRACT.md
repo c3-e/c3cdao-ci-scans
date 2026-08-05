@@ -1,81 +1,337 @@
-# Consumer build contract
+# Consumer contract (derived, v0.6)
 
-The contract is the **only** build path (since v0.5.0): the gate never owns
-your build knowledge. It drives four make targets in a contract makefile you
-own (`contract_file` input, default `Makefile.ci`, path relative to your repo
-root). Start from
-[`templates/consumer/Makefile.ci`](../templates/consumer/Makefile.ci) — a
-working single-image baseline; edit it for your repo.
+The gate derives everything it builds, scans, and smokes from files your
+repository already maintains for local development: the canonical Compose
+file, its Dockerfiles, and the Helm chart. You hand-author no manifest, no
+contract makefile, and no CI scripts — the v0.5 consumer contract
+(`Makefile.ci`, driven by `make` targets) was removed at this major
+version, not deprecated. Conventions are enforced by fail-closed lint in
+the gate's `plan` job; a nonconforming shape blocks with a named rule and
+a remediation link into the [rule table](#rule-table) below before
+anything expensive runs.
 
-`make ci-manifest` is the single source of truth for your containers list and
-chart/health metadata — there are no per-field `with:` inputs to mirror or
-merge (one owner, no merge rules).
+## What the gate derives
 
-## Target interface
+- **Image set (the BOM).** `docker buildx bake --print` over your Compose
+  file resolves every non-local `build:` service into a build target
+  (name, dockerfile, context, args, tags). The plan job publishes the
+  annotated BOM every run — job summary plus `plan-bom` artifact — with an
+  `excluded:` section naming services filtered out and why, and a
+  `dependencies:` section for declared downloaded dependencies. Each build
+  leg re-prints its target and diffs it against the published plan, so the
+  plan you review is bit-for-bit the plan that executes.
+- **Build matrix.** One build + one image-scan leg per derived target
+  (up to ten; `fail-fast: false`). There is no positional
+  primary-versus-secondary image distinction: every leg is equal, and the
+  spec's frontend and backend scanning requirement is met by declaring
+  both as Compose build services.
+- **Smoke target.** For chart consumers, the gate renders the chart with
+  your local values and derives exactly one Service-backed HTTP readiness
+  target for the post-deploy probe. Deploy and health facts stay in the
+  chart; CI never extends it.
 
-| Target | Invocation | Env provided by the gate |
-| --- | --- | --- |
-| `ci-manifest` | `make -s -f <contract_file> ci-manifest` | — |
-| `ci-build` | `make -f <contract_file> ci-build IMAGE=<name>` | `CI_BUILDER_BASE`, `CI_RUNTIME_BASE`, `CI_IMAGE_TAG` |
-| `ci-secctx` | `make -f <contract_file> ci-secctx` | — |
-| `ci-smoke-env` | `make -f <contract_file> ci-smoke-env NAMESPACE=<ns>` | — |
+## Compose file conventions
 
-`ci-manifest`, `ci-build`, and `ci-smoke-env` are **required** — caller lint
-fails when any is missing. `ci-secctx` is optional (its absence is a notice).
+One canonical committed Compose file (the `compose_file` input, default
+`docker-compose.yml`) at your repository root. Overlay/override files are
+not read by the derivation. The top level must map `services:`.
 
-- **`ci-manifest`** prints a JSON document to stdout:
+- **Build services.** Every service with `build:` becomes a build + scan
+  target unless it is local-only. Local-only means the exact profile
+  spelling `profiles: [local]` — `profiles: [dev]` or `[Local]` does not
+  exclude. Exclusions are published in the BOM's `excluded:` section, never
+  silent. At most ten non-local build services are supported.
+- **Image tags.** Every non-local build service declares an explicit
+  `image:` tag. Untagged references, `:latest`, and interpolated
+  references (`image: app:${TAG}`) all block: the tag is the label the
+  pipeline stamps on its own output and the exact-match anchor for the
+  ship-set check, so it must be a committed literal. A digest cannot exist
+  before the build, so no digest is required here.
+- **Healthchecks.** Every non-local build service declares `healthcheck:`
+  with a truthy `test` command — HTTP, TCP, or exec. Compose healthchecks
+  and Helm readiness probes are separate integration points: Compose
+  proves the service can run locally; Helm proves Kubernetes can route to
+  a ready workload. The two need not share a command or protocol.
+- **Platform.** v0.6 builds, scans, and smokes `linux/amd64` only, and the
+  gate pins that platform on every build. A committed `platform:` (or
+  `build.platforms`) other than `linux/amd64` blocks rather than being
+  silently overridden — including on image-only dependency services.
 
-  ```json
-  {
-    "images": [{"name": "...", "dockerfile": "...", "context": "...",
-                "target": "...", "build_args": "KEY=VALUE\n...",
-                "image": "optional-tag:local"}],
-    "chart":  {"path": "...", "values": "...", "values_local": "...",
-               "release": "...", "namespace": "..."},
-    "health": {"path": "...", "port": "...", "workload_match": "..."}
-  }
-  ```
+## Downloaded runtime dependencies
 
-  Required shape (blocking in caller lint): `images[]` non-empty, each entry
-  with `name`/`dockerfile`/`context`; `chart{}` with all five keys; `health{}`
-  with all three keys. `target`/`build_args` are informational for your own
-  `ci-build` — the gate does not consume them.
+A Compose service with `image:` and no `build:` (PostgreSQL, an identity
+provider your chart deploys itself) is a downloaded runtime dependency
+only when all three hold:
 
-  `images[0]` is the **primary** — the gate always tags it with its
-  `scan_image` input (an `image` key on the primary is ignored; `scan_image`
-  stays authoritative because caller lint pins it against your
-  `chart.values_local` file). `images[1:]` are the extras — tagged by their
-  optional `image` key, or `<name>:local` when absent. **The extras tag must
-  match what your values file schedules with `pullPolicy: Never`** — a
-  mismatch is ErrImageNeverPull at smoke time. The manifest also feeds
-  helm-check (`chart.path`/`values`/`release`) and cluster-smoke
-  (`chart.values_local`/`namespace`, `health.*`).
-- **`ci-build IMAGE=<name>`** must produce the local-daemon tag the gate
-  passes as `CI_IMAGE_TAG`. `CI_BUILDER_BASE` / `CI_RUNTIME_BASE` are the
-  hardened base images after the gate's registry-login failover resolution
-  (Chainguard / Iron Bank) — consume them as your base-image build args.
-  The gate verifies the tag exists after the target runs, then SBOMs,
-  saves, and uploads the image.
-- **`ci-secctx`** is your own pod-security assertion. A missing target is a
-  notice, not a failure. **The gate's bundled restricted-PSS assertion
-  always runs in-gate** — it is gate policy and cannot be edited out of a
-  consumer contract file.
-- **`ci-smoke-env NAMESPACE=<ns>`** provisions cluster-smoke prerequisites
-  before `helm install`: the reference implementation deploys the pgvector
-  Postgres + Service, creates the `app-database-url` secret, and installs
-  the Gateway API CRDs. The gate has already created the namespace and
-  kind-loaded the built images; `smoke_secrets` are still created by the
-  gate after this target runs.
+1. it declares the marker key `x-downloaded-dependency` (hyphens exactly);
+2. its `image:` string pins the digest inline — `repo:tag@sha256:...` — a
+   separate digest field is not read. Registry tags are mutable, so the
+   digest is the real supply-chain pin; the tag stays for readability;
+3. the marker records the chart-facing tag as
+   `x-downloaded-dependency.chart-tag` (hyphen, not underscore).
 
-## Caller lint
+The gate does not treat dependencies as release artifacts and does not
+claim to scan them. An unmarked or tag-only external image blocks — v0.6
+supports downloaded runtime dependencies, not external application release
+images. The ship-set cross-check matches a rendered chart reference
+against the declared `chart-tag` by **exact** string equality (no registry
+or default-tag normalization): `docker.io/pgvector/pgvector:pg16` in the
+chart does not match a declared `pgvector/pgvector:pg16`. Make the two
+strings identical; a chart-side version bump blocks until the reviewed
+Compose declaration is updated.
 
-`lint_caller.py` validates the contract file **blocking** (violations fail
-the gate): `ci-contract-file` (contract file missing under the consumer
-root), `ci-contract-target` (`make -n` cannot resolve `ci-manifest` /
-`ci-build` / `ci-smoke-env`), `ci-contract-manifest` (`ci-manifest` fails to
-run, prints invalid JSON, or is off the required shape). A missing
-`ci-secctx` is a stderr notice. The `image-values-mismatch` rule reads
-`chart.values_local` from the manifest and requires `scan_image` to be
-pinned there. The `extras-values-mismatch` rule applies the same pin check
-to every manifest extra (`images[1:]`), tagged by its optional `image` key
-or `<name>:local`.
+## Dockerfiles and build inputs
+
+- **Blessed base ARG pair.** Every target's Dockerfile declares both
+  `ARG BUILDER_IMAGE` and `ARG RUNTIME_IMAGE` — even single-stage builds
+  declare both. Dev defaults never survive CI: the gate overrides both
+  args with hardened bases after its registry login/failover resolution,
+  so no base-image pinning burden falls on developers. The Dockerfile is
+  resolved from `build.context`/`build.dockerfile` against the Compose
+  file's directory; `dockerfile_inline` is unsupported and fails closed.
+- **Committed literal args.** `build.args` must be a mapping of committed
+  literal values. List syntax, null pass-through values, any environment
+  interpolation in a build-affecting field, `build.secrets`, and
+  `build.ssh` all block. A literal dollar needs Compose's `$$` escape.
+  The gate supplies only the two base overrides.
+- **Secret-like arg names.** Arg names containing `TOKEN`, `SECRET`,
+  `PASSW`, or `CREDENTIAL`, ending in `_KEY`, or exactly `KEY` block even
+  with harmless literal values — false positives are by design; rename
+  the arg (`PUBLIC_KEY` → `PUBLIC_KEY_NAME` still blocks; pick a name
+  without the fragment).
+- **Build-context exclusions.** Every build context directory carries its
+  own `.dockerignore` containing the four literal lines `.env`, `*.pem`,
+  `*.key`, and `*credentials*`. Equivalent patterns (`**/*.pem`, `.env*`)
+  do not satisfy the check — the four exact lines must be present.
+
+## Chart conventions (non-image_only)
+
+The gate renders `helm template <chart_path> -f <values_local>`; a render
+failure fails closed before any chart rule runs.
+
+- **Readiness.** Every container of every rendered deployable workload —
+  kinds `Deployment`, `StatefulSet`, and `DaemonSet` — declares a
+  `readinessProbe`, sidecars included.
+- **One smoke target.** Exactly one container has an `httpGet`
+  readinessProbe whose port a Service routes to. The Service's selector
+  must be a label-subset of the pod template labels, and the probe port is
+  matched against the Service's `targetPort` (falling back to `port`) by
+  equality — a named probe port (`port: http`) needs the Service
+  `targetPort` spelled identically.
+- **Ship-set invariant (`S \ D ⊆ B`).** Let `B` be the tags built from
+  non-local Compose build services, `D` the declared downloaded
+  dependencies, and `S` every container and init-container reference in
+  the render. Every rendered image must be built-and-scanned (`B`) or a
+  declared dependency (`D`); anything else blocks before build. A built
+  tag the chart never schedules is scanned anyway and warned about.
+- **Decoupled database (ADR-08).** One standard across environments: the
+  app reads a connection URL from a Secret (`app-database-url` →
+  `DATABASE_URL`). Local dev gets a Compose pgvector container; smoke gets
+  the gate's `postgres-pgvector` module; production gets the managed
+  database. Chart-bundled databases are nonconforming by convention.
+
+## Caller conventions
+
+The caller workflow is a thin pointer — data, never behavior. See
+[INPUTS.md](INPUTS.md) for the seven-input surface and
+[RUNBOOK.md](RUNBOOK.md) for onboarding steps.
+
+- The gate ref in `uses:` is pinned by a full 40-hex commit SHA; record
+  the release tag as a trailing comment. Tags and branches block.
+- All four registry secrets (`CGR_PULL_TOKEN`, `CGR_PULL_USERNAME`,
+  `IRONBANK_TOKEN`, `IRONBANK_USERNAME`) are mapped explicitly;
+  `secrets: inherit` blocks. Forks scanning public images still map all
+  four.
+- `smoke_resources` is a CSV drawn from the gate-owned catalog:
+  `postgres-pgvector`, `gateway-crds`. A resource type not in the catalog
+  is a ci-scans feature request, not a consumer escape hatch.
+- Keep the job id `security-scan` — it is half of the required check
+  context `security-scan / Security Gate`.
+
+## Rule table
+
+Every lint finding carries a `remediation_ref` pointing at one of the rule
+headings below. Rules marked **warn** report without blocking; everything
+else blocks the run before any build starts.
+
+| Rule id | Level | Check |
+|---|---|---|
+| [`compose-missing`](#rule-compose-missing) | block | canonical Compose file absent or not a `services:` mapping |
+| [`compose-no-builds`](#rule-compose-no-builds) | block | zero non-local `build:` services |
+| [`matrix-cap`](#rule-matrix-cap) | block | more than ten non-local `build:` services |
+| [`compose-image-tag`](#rule-compose-image-tag) | block | build service lacks an explicit, literal `image:` tag |
+| [`compose-healthcheck`](#rule-compose-healthcheck) | block | build service lacks a `healthcheck:` with a `test` command |
+| [`dependency-shape`](#rule-dependency-shape) | block | image-only service is not a conforming dependency declaration |
+| [`build-input-explicit`](#rule-build-input-explicit) | block | build inputs depend on host state or a secret channel |
+| [`build-context-excludes`](#rule-build-context-excludes) | block | a build context can include env/credential/key material |
+| [`compose-platform`](#rule-compose-platform) | block | a platform other than `linux/amd64` is declared |
+| [`bake-resolve`](#rule-bake-resolve) | block | `bake --print` fails on the Compose file |
+| [`hardened-args`](#rule-hardened-args) | block | a Dockerfile lacks the blessed base ARG pair |
+| [`chart-readiness`](#rule-chart-readiness) | block | a rendered workload container lacks readiness |
+| [`smoke-target`](#rule-smoke-target) | block | no single Service-backed HTTP readiness target |
+| [`ship-set`](#rule-ship-set) | block | a rendered image is neither built nor a declared dependency |
+| [`built-unscheduled`](#rule-built-unscheduled) | warn | a built tag is never scheduled by the chart |
+| [`smoke-resource-unknown`](#rule-smoke-resource-unknown) | block | `smoke_resources` names a module outside the catalog |
+| [`gate-ref-pin`](#rule-gate-ref-pin) | block | gate ref is not a full 40-hex commit SHA |
+| [`gate-job-id`](#rule-gate-job-id) | block | the calling job id is not `security-scan` |
+| [`no-secrets-inherit`](#rule-no-secrets-inherit) | block | caller uses `secrets: inherit` |
+| [`missing-secret-map`](#rule-missing-secret-map) | block | one of the four registry secrets is unmapped |
+| [`unknown-input`](#rule-unknown-input) | block | a `with:` key is not a v0.6 input (removed v0.5 inputs rejected by name) |
+| [`unreadable-caller`](#rule-unreadable-caller) | block | the caller workflow cannot be parsed |
+
+### Rule: compose-missing
+
+The `compose_file` path must exist and parse to a YAML mapping with a
+`services:` map. Remediation: commit the canonical Compose file at the
+repository root (or point `compose_file` at it).
+
+### Rule: compose-no-builds
+
+At least one non-local `build:` service must exist — `image_only`
+repositories included; the gate exists to build and scan at least one
+image. Remediation: add a `build:` stanza for the image this repository
+produces.
+
+### Rule: matrix-cap
+
+At most ten non-local build services are supported, as a functional bound
+in place of a runtime budget. No override input exists by design.
+Remediation: mark non-release services `profiles: [local]` or split the
+repository.
+
+### Rule: compose-image-tag
+
+Every non-local build service needs `image:` with an explicit literal tag.
+`:latest`, untagged, and interpolated (`app:${TAG}`) references block —
+the gate builds with a scrubbed environment, so an interpolated tag would
+resolve empty. Remediation: `image: app-api:1.4.2` (bump on release); a
+literal dollar needs the `$$` escape.
+
+### Rule: compose-healthcheck
+
+Every non-local build service declares `healthcheck:` with a truthy
+`test` — HTTP, TCP, or exec (`healthcheck: {disable: true}` blocks).
+Remediation: `healthcheck: {test: [CMD, /app/healthcheck]}`.
+
+### Rule: dependency-shape
+
+An image-only service must declare `x-downloaded-dependency` with a
+`chart-tag` key, and pin the digest inside the `image:` string.
+Remediation:
+
+```yaml
+postgres:
+  image: pgvector/pgvector:pg16@sha256:<64-hex>
+  x-downloaded-dependency:
+    chart-tag: pgvector/pgvector:pg16
+```
+
+### Rule: build-input-explicit
+
+`build.args` must be a mapping of committed literals. Blocks: list-syntax
+args, null pass-through values, environment interpolation in any
+build-affecting field, secret-like arg names (`TOKEN`/`SECRET`/`PASSW`/
+`CREDENTIAL` fragments, `_KEY` suffix, or exactly `KEY`), `build.secrets`,
+and `build.ssh`. Remediation: commit the literal value, escape literal
+dollars as `$$`, rename secret-like args; the gate alone supplies
+`BUILDER_IMAGE`/`RUNTIME_IMAGE`.
+
+### Rule: build-context-excludes
+
+Every build context directory needs its own `.dockerignore` containing the
+four literal lines `.env`, `*.pem`, `*.key`, `*credentials*`. Stricter
+equivalents do not satisfy the check. Remediation: append the exact four
+lines.
+
+### Rule: compose-platform
+
+`platform:` and `build.platforms` may only say `linux/amd64`, on every
+service including dependencies — an arm64 dev override committed for
+Apple-silicon laptops blocks CI. Remediation: delete the field or set it
+to `linux/amd64`; multi-architecture builds are a follow-up.
+
+### Rule: bake-resolve
+
+`docker buildx bake --print` must resolve the Compose file; bake's stderr
+is attached to the verdict. Runs only after the shape rules above pass.
+Remediation: fix the Compose error bake names.
+
+### Rule: hardened-args
+
+Every target's Dockerfile declares `ARG BUILDER_IMAGE` and
+`ARG RUNTIME_IMAGE` (both, even single-stage builds), so the gate's
+hardened-base overrides take effect. An unreadable Dockerfile fails
+closed. Remediation: add both ARG lines and consume them as your base
+images.
+
+### Rule: chart-readiness
+
+Every container of every rendered `Deployment`/`StatefulSet`/`DaemonSet`
+declares a `readinessProbe` — sidecars too. Remediation: add the probe to
+the named container.
+
+### Rule: smoke-target
+
+The render must yield exactly one container with an `httpGet`
+readinessProbe whose port a Service routes to (selector is a label-subset
+of the pod labels; probe port equals the Service `targetPort`, falling
+back to `port` — named ports must match spelling). Zero or multiple
+targets block, naming the candidates. Remediation: expose exactly one
+HTTP readiness target through a matching Service.
+
+### Rule: ship-set
+
+Enforces `S \ D ⊆ B` over the render: a scheduled image must be a built
+tag or match a declared dependency's `chart-tag` by exact string equality.
+The verdict names both tags on a version-bump mismatch. Remediation: build
+the image, or declare/update the digest-pinned dependency so the strings
+match exactly.
+
+### Rule: built-unscheduled
+
+Warn only: a built tag the rendered chart never schedules is still built
+and scanned (scan superset is safe). Remediation optional: schedule it or
+mark the service `profiles: [local]`.
+
+### Rule: smoke-resource-unknown
+
+`smoke_resources` entries must come from the gate catalog:
+`postgres-pgvector`, `gateway-crds`. Remediation: request the module from
+ci-scans; there is no consumer escape hatch.
+
+### Rule: gate-ref-pin
+
+The `uses:` ref must end in a full 40-hex commit SHA; tags and branches
+block. Remediation: pin the SHA and record the tag as a trailing comment.
+
+### Rule: gate-job-id
+
+The job calling the reusable workflow must keep the id `security-scan` —
+it is half of the required check context `security-scan / Security Gate`.
+A renamed id reports under a different context and the branch-protection
+ruleset silently no longer matches. Remediation: rename the job id back
+to `security-scan`.
+
+### Rule: no-secrets-inherit
+
+`secrets: inherit` silently passes nothing across owners. Remediation: map
+the four registry secrets explicitly.
+
+### Rule: missing-secret-map
+
+All four of `CGR_PULL_TOKEN`, `CGR_PULL_USERNAME`, `IRONBANK_TOKEN`,
+`IRONBANK_USERNAME` must be mapped on the gate job. Remediation: add the
+missing mapping.
+
+### Rule: unknown-input
+
+The `with:` surface is exactly the seven v0.6 inputs; inputs removed at
+this major version are rejected by name with migration guidance.
+Remediation: delete the key — see the removed-inputs table in
+[INPUTS.md](INPUTS.md).
+
+### Rule: unreadable-caller
+
+The caller workflow must parse as YAML with a jobs mapping containing one
+job whose `uses:` names the gate workflow. Remediation: fix the parse
+error in the verdict message.

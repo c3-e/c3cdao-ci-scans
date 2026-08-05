@@ -1,0 +1,104 @@
+# Smoke catalog module: gateway-crds (Gateway API core kinds).
+#
+# Idempotent CRD apply module: lets a consumer chart that templates
+# Gateway API resources (GatewayClass/Gateway/HTTPRoute) install cleanly
+# during cluster-smoke on a bare kind cluster. The workflow's readiness
+# gate is `kubectl wait --for=condition=Established` on this file.
+#
+# DELIBERATELY minimal schemas (x-kubernetes-preserve-unknown-fields):
+# smoke proves the chart installs and its workloads become Ready behind
+# these kinds — it does not validate Gateway API semantics and ships no
+# controller. A consumer needing real routing conformance is a ci-scans
+# feature request (catalog gaps are, by design — no escape hatch).
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: gatewayclasses.gateway.networking.k8s.io
+  labels:
+    app.kubernetes.io/name: gateway-crds
+    app.kubernetes.io/part-of: smoke-catalog
+  annotations:
+    # Protected-group requirement (KEP-1111): *.k8s.io CRDs must declare
+    # approval. These minimal smoke copies are deliberately unapproved.
+    api-approved.kubernetes.io: "unapproved, ci-scans smoke-catalog minimal copy for cluster-smoke only"
+spec:
+  group: gateway.networking.k8s.io
+  scope: Cluster
+  names:
+    kind: GatewayClass
+    listKind: GatewayClassList
+    plural: gatewayclasses
+    singular: gatewayclass
+    categories: [gateway-api]
+  versions:
+    - name: v1
+      served: true
+      storage: true
+      subresources:
+        status: {}
+      schema:
+        openAPIV3Schema:
+          type: object
+          x-kubernetes-preserve-unknown-fields: true
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: gateways.gateway.networking.k8s.io
+  labels:
+    app.kubernetes.io/name: gateway-crds
+    app.kubernetes.io/part-of: smoke-catalog
+  annotations:
+    # Protected-group requirement (KEP-1111): *.k8s.io CRDs must declare
+    # approval. These minimal smoke copies are deliberately unapproved.
+    api-approved.kubernetes.io: "unapproved, ci-scans smoke-catalog minimal copy for cluster-smoke only"
+spec:
+  group: gateway.networking.k8s.io
+  scope: Namespaced
+  names:
+    kind: Gateway
+    listKind: GatewayList
+    plural: gateways
+    singular: gateway
+    categories: [gateway-api]
+  versions:
+    - name: v1
+      served: true
+      storage: true
+      subresources:
+        status: {}
+      schema:
+        openAPIV3Schema:
+          type: object
+          x-kubernetes-preserve-unknown-fields: true
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: httproutes.gateway.networking.k8s.io
+  labels:
+    app.kubernetes.io/name: gateway-crds
+    app.kubernetes.io/part-of: smoke-catalog
+  annotations:
+    # Protected-group requirement (KEP-1111): *.k8s.io CRDs must declare
+    # approval. These minimal smoke copies are deliberately unapproved.
+    api-approved.kubernetes.io: "unapproved, ci-scans smoke-catalog minimal copy for cluster-smoke only"
+spec:
+  group: gateway.networking.k8s.io
+  scope: Namespaced
+  names:
+    kind: HTTPRoute
+    listKind: HTTPRouteList
+    plural: httproutes
+    singular: httproute
+    categories: [gateway-api]
+  versions:
+    - name: v1
+      served: true
+      storage: true
+      subresources:
+        status: {}
+      schema:
+        openAPIV3Schema:
+          type: object
+          x-kubernetes-preserve-unknown-fields: true

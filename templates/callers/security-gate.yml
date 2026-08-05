@@ -2,11 +2,11 @@
 # Edit the `with:` values below per each line's provenance comment for your repo.
 # Keep the structure: explicit secrets map, no concurrency:, job id `security-scan`.
 #
-# Build knowledge lives in your contract makefile (contract_file, default
-# Makefile.ci — start from templates/consumer/Makefile.ci): `make ci-manifest`
-# declares your images, chart, and health probe; ci-build / ci-secctx /
-# ci-smoke-env own the build, secctx assertion, and smoke prerequisites.
-# See docs/CI-CONTRACT.md.
+# The gate derives everything else (v0.6): build targets, tags, and args come
+# from your Compose file via `docker buildx bake --print`; the deployable
+# surface comes from your Helm chart. No contract makefile, no consumer
+# scripts — nonconforming shapes are blocked in the plan job by named
+# fail-closed lint rules. See docs/CI-CONTRACT.md.
 name: Security Scan
 
 on:
@@ -28,7 +28,7 @@ jobs:
       contents: read
       pull-requests: write
       actions: write
-    uses: c3-e/c3cdao-ci-scans/.github/workflows/reusable-security-gate.yml@v0.5.1  # ← fail-safe default: pinned release tag; @main is the pilot-migration-window exception only
+    uses: c3-e/c3cdao-ci-scans/.github/workflows/reusable-security-gate.yml@main  # ← pin a full commit SHA (record the release tag as a trailing comment, e.g. # v0.6.0); @main only during pilot migration
     # Explicit mapping, never the inherit form — inherit only works when caller
     # and callee share an org/enterprise; across owners it silently passes
     # nothing. Explicit values evaluate in the caller's context and always work.
@@ -38,12 +38,10 @@ jobs:
       IRONBANK_TOKEN: ${{ secrets.IRONBANK_TOKEN }}
       IRONBANK_USERNAME: ${{ secrets.IRONBANK_USERNAME }}
     with:
-      scan_image: app:local  # local-daemon tag the primary image is built and scanned under; must equal the backend image tag in your chart's values_local file (pullPolicy: Never pair)
-      contract_file: Makefile.ci  # path of your contract makefile (ci-manifest / ci-build / ci-secctx / ci-smoke-env); start from templates/consumer/Makefile.ci
-      builder_image: cgr.dev/chainguard/python:latest-dev  # build-stage base image, exported to `make ci-build` as CI_BUILDER_BASE (post registry failover)
-      runtime_image: cgr.dev/chainguard/python:latest  # runtime-stage base image, exported to `make ci-build` as CI_RUNTIME_BASE (post registry failover)
-      require_hardened_bases: true  # true: fail the build when neither Chainguard nor Iron Bank credentials are configured; false: warn and build with your bases (pilot escape hatch)
-      ironbank_builder_image: ""  # optional Iron Bank replacement for builder_image — only on primary-base failover (CGR absent AND Iron Bank present); empty = builder_image passes through
-      ironbank_runtime_image: ""  # optional Iron Bank replacement for runtime_image — only on primary-base failover (CGR absent AND Iron Bank present); empty = runtime_image passes through
-      cluster_name: app-ci  # kind cluster name cluster-smoke creates and loads the image into; operator choice
+      compose_file: docker-compose.yml  # canonical Compose file the gate derives build facts from; every non-local build service becomes a build+scan leg
+      chart_path: chart  # your deployable Helm chart directory; helm-check lints/templates it and cluster-smoke installs it
+      values_local: chart/values-local.yaml  # chart values for local/CI installs (locally-built image tags, pullPolicy: Never)
+      release: app  # Helm release name for template/install
+      namespace: app-ci  # Kubernetes namespace cluster-smoke installs into
+      smoke_resources: ""  # CSV of gate-owned smoke catalog module ids provisioned before helm install (e.g. postgres-pgvector,gateway-crds); "" = none
       image_only: false  # true: skip helm-check + cluster-smoke (image build/scan only); keep false for deployable apps

@@ -1,0 +1,9 @@
+services:
+  app:
+    build:
+      context: .
+    image: bake-spike/app:0.1.0
+    platform: linux/amd64
+    healthcheck:
+      test: ["CMD", "test", "-f", "/svc.txt"]
+      interval: 30s

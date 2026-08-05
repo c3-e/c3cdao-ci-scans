@@ -1,0 +1,35 @@
+# Lint fixture: three violations — every input removed at the v0.6
+# cutover is rejected by name (unknown-input: scan_image, contract_file,
+# require_hardened_bases). Guards the removals the way bad-unknown-key
+# guards the v0.5.0 prune.
+name: Security Scan
+
+on:
+  pull_request:
+    branches: [main]
+  merge_group:
+  schedule:
+    - cron: "0 13 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+  actions: write
+
+jobs:
+  security-scan:
+    permissions:
+      contents: read
+      pull-requests: write
+      actions: write
+    uses: c3-e/c3cdao-ci-scans/.github/workflows/reusable-security-gate.yml@0123456789abcdef0123456789abcdef01234567  # v0.6.0
+    secrets:
+      CGR_PULL_TOKEN: ${{ secrets.CGR_PULL_TOKEN }}
+      CGR_PULL_USERNAME: ${{ secrets.CGR_PULL_USERNAME }}
+      IRONBANK_TOKEN: ${{ secrets.IRONBANK_TOKEN }}
+      IRONBANK_USERNAME: ${{ secrets.IRONBANK_USERNAME }}
+    with:
+      scan_image: app:local
+      contract_file: Makefile.ci
+      require_hardened_bases: true

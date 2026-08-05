@@ -1,0 +1,48 @@
+# Forced-timeout smoke catalog module fixture (T-7 AC-5).
+#
+# NOT a catalog module: this file is copied into the catalog only on the
+# throwaway spike branch (as timeout_module.yaml + a SMOKE_CATALOG entry)
+# to drive the AC-5 failure-path run — cluster-smoke must fail naming
+# `timeout-module` BEFORE any helm install. Unsatisfiable readiness by
+# design: the pod runs (PSS-clean, schedulable) but its probe checks a
+# file that never exists, so the workflow's Ready gate times out.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: timeout-module
+  labels:
+    app.kubernetes.io/name: timeout-module
+    app.kubernetes.io/part-of: smoke-catalog
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: timeout-module
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: timeout-module
+        app.kubernetes.io/part-of: smoke-catalog
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: sleeper
+          # Same reviewed digest pin as the postgres-pgvector module; the
+          # container only sleeps, so the pod boots and then never Readies.
+          image: pgvector/pgvector:pg16@sha256:a36250871de0833b8757561c72f2477ef1ddd1101afa4e617fb552e0de514c6b
+          command: ["sleep", "infinity"]
+          readinessProbe:
+            exec:
+              # Unsatisfiable: nothing ever creates this file.
+              command: ["test", "-f", "/nonexistent/never-ready"]
+            periodSeconds: 2
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]

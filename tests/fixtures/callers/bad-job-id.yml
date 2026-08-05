@@ -22,7 +22,7 @@ jobs:
       contents: read
       pull-requests: write
       actions: write
-    uses: c3-e/c3cdao-ci-scans/.github/workflows/reusable-security-gate.yml@main
+    uses: c3-e/c3cdao-ci-scans/.github/workflows/reusable-security-gate.yml@23516e4785dd1aee1d1f5c1a2b7054ac82049fa3
     secrets:
       CGR_PULL_TOKEN: ${{ secrets.CGR_PULL_TOKEN }}
       CGR_PULL_USERNAME: ${{ secrets.CGR_PULL_USERNAME }}

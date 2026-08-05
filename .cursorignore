@@ -49,9 +49,3 @@ conda-meta/
 
 dist/
 build/
-
-.plan/
-.handoff/
-.vscode/
-.orchestra/
-.tickets/

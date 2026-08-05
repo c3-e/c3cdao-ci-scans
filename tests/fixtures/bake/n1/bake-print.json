@@ -1,0 +1,21 @@
+{
+  "group": {
+    "default": {
+      "targets": [
+        "app"
+      ]
+    }
+  },
+  "target": {
+    "app": {
+      "context": ".",
+      "dockerfile": "Dockerfile",
+      "tags": [
+        "bake-spike/app:0.1.0"
+      ],
+      "platforms": [
+        "linux/amd64"
+      ]
+    }
+  }
+}

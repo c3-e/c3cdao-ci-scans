@@ -1,0 +1,12 @@
+# Backs svc-a's HTTP readiness probe: the fixture's single Service-backed
+# smoke target (smoke-target rule requires exactly one).
+apiVersion: v1
+kind: Service
+metadata:
+  name: bake-spike-n3
+spec:
+  selector:
+    app: bake-spike-n3
+  ports:
+    - port: 80
+      targetPort: 8080

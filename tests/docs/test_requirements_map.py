@@ -56,9 +56,10 @@ def test_blocking_flip_is_final():
     assert re.search(r"final|last|steady-state", text, re.IGNORECASE)
 
 
-def test_manifest_extras_credited():
+def test_multi_image_requirement_credited():
+    """The spec's frontend AND backend scanning maps to the compose-derived matrix."""
     text = REQ_MAP.read_text()
-    assert re.search(r"manifest extras", text, re.IGNORECASE)
+    assert re.search(r"build matrix|matrix leg|non-local", text, re.IGNORECASE)
     assert re.search(r"frontend", text, re.IGNORECASE)
 
 
@@ -82,8 +83,21 @@ def lint_rule_ids():
 
 
 def test_all_lint_rules_documented():
+    """The docstring enumeration matches the implemented v0.6 rule set."""
     rules = lint_rule_ids()
     assert len(rules) == 17, f"expected 17 lint rule ids, parsed {rules}"
+    sources = LINT.read_text() + "".join(
+        p.read_text() for p in sorted(LINT.parent.glob("lint_rules/*.py"))
+    )
+    emitted = set(re.findall(r"verdict\(\s*\n?\s*\"([a-z-]+)\"", sources))
+    missing = [r for r in rules if r not in emitted]
+    assert not missing, f"docstring rule ids with no verdict emitter: {missing}"
+
+
+def test_runbook_cross_references_every_lint_rule():
+    """Restored at the docs cutover (transitional implementation-parity guard
+    since T-4): every implemented convention rule id appears in the published
+    RUNBOOK so operators can triage a named verdict without reading source."""
     text = RUNBOOK.read_text()
-    missing = [r for r in rules if r not in text]
-    assert not missing, f"lint rules missing from RUNBOOK.md: {missing}"
+    missing = [r for r in lint_rule_ids() if r not in text]
+    assert not missing, f"lint rule ids absent from RUNBOOK.md: {missing}"

@@ -1,0 +1,31 @@
+# Lint fixture: single violation — the gate ref is a branch, not a full
+# 40-hex commit SHA (gate-ref-pin).
+name: Security Scan
+
+on:
+  pull_request:
+    branches: [main]
+  merge_group:
+  schedule:
+    - cron: "0 13 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+  actions: write
+
+jobs:
+  security-scan:
+    permissions:
+      contents: read
+      pull-requests: write
+      actions: write
+    uses: c3-e/c3cdao-ci-scans/.github/workflows/reusable-security-gate.yml@main
+    secrets:
+      CGR_PULL_TOKEN: ${{ secrets.CGR_PULL_TOKEN }}
+      CGR_PULL_USERNAME: ${{ secrets.CGR_PULL_USERNAME }}
+      IRONBANK_TOKEN: ${{ secrets.IRONBANK_TOKEN }}
+      IRONBANK_USERNAME: ${{ secrets.IRONBANK_USERNAME }}
+    with:
+      image_only: false

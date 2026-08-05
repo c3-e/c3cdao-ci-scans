@@ -1,3 +1,0 @@
-# Lint fixture contract variant: values_local names a file whose only scan_image mention is a YAML comment.
-VALUES_LOCAL := helm/app/values-local-comment-only.yaml
-include Makefile.ci

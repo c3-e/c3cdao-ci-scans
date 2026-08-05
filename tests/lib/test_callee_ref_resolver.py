@@ -29,7 +29,7 @@ def resolver_lines() -> list[str]:
 
 def test_resolver_sites_identical():
     lines = resolver_lines()
-    assert len(lines) == 5, f"expected 5 resolver sites, found {len(lines)}"
+    assert len(lines) == 6, f"expected 6 resolver sites, found {len(lines)}"
     assert len(set(lines)) == 1, "resolver sites drifted:\n" + "\n".join(set(lines))
 
 

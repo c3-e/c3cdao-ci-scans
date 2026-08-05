@@ -1,134 +1,141 @@
 # Onboarding runbook
 
-Copy-and-own onboarding for the c3cdao-ci-scans security gate, as a sequential
-walkthrough: copy the caller, edit `with:`, set the four secrets, create the
-ruleset, pilot on a scratch branch, then promote to trunk and enforce. Every
-step is version-pinned and copy-paste-able, names who runs it (**consumer** =
-the gated repo's team; **operator** = whoever holds admin on the consumer repo
-and runs the one-time setup commands), and states the observable outcome.
+Copy-and-own onboarding for the c3cdao-ci-scans security gate, as a
+sequential walkthrough: make the repo conform, copy the caller, edit
+`with:`, set the four secrets, create the ruleset, pilot on a scratch
+branch, then promote to trunk and enforce. Every step names who runs it
+(**consumer** = the gated repo's team; **operator** = whoever holds admin
+on the consumer repo) and states the observable outcome.
 
-For the requirement-by-requirement traceability, see
-[REQUIREMENTS-MAP.md](REQUIREMENTS-MAP.md). For the field reference, see
-[INPUTS.md](INPUTS.md) and the Inputs table in the [README](../README.md).
-Reference material — the registry login matrix, the scan-boundary discussion,
-the caller-lint rule ids, and maintenance notes — lives in the
-[appendix](#appendix-reference); the steps link into it where needed.
+The consumer contract itself — what the gate derives from your Compose
+file, Dockerfiles, and chart, and the full lint rule table — is
+[CI-CONTRACT.md](CI-CONTRACT.md). The `with:` field reference is
+[INPUTS.md](INPUTS.md). Requirement traceability is
+[REQUIREMENTS-MAP.md](REQUIREMENTS-MAP.md). Reference material — reading
+the BOM, the registry login matrix, lint rule ids, the smoke catalog,
+job ordering — lives in the [appendix](#appendix-reference).
 
 ## Branch conventions (decide first)
 
-Pilot/scratch branch naming depends on the repo shape. Decide before step 7;
-steps 7–10 use these names.
+Pilot/scratch branch naming depends on the repo shape. Decide before step
+7; steps 7–10 use these names.
 
 | Repo shape | Convention |
 |---|---|
-| **Single-app usecase repo** (one app per repo, e.g. `c3cdao-dsa-ecpilot`) | Scan target branch is the **bare** name **`ci-scans`**. There is only one usecase in the repo, so no token is needed. The helm-chart side mirrors this with a bare **`ci-chart`**. |
-| **Shared umbrella repo** (many usecases integrated in one repo, i.e. `c3cdao-apps`) | A token is required to avoid collisions — use **`ci-chart-<usecasename>`** (e.g. `ci-chart-ecpilot`) so each usecase's chart branch coexists. |
+| **Single-app usecase repo** (one app per repo) | Scan target branch is the **bare** name **`ci-scans`**. The helm-chart side mirrors this with a bare **`ci-chart`**. |
+| **Shared umbrella repo** (many usecases integrated in one repo) | A token is required to avoid collisions: **`ci-chart-<usecasename>`** so each usecase's chart branch coexists. |
 | **Canary (trigger) branch** (all shapes) | The canonical name **`ci-scans-canary`** — a trigger-only branch cut off the scan target head (step 8). |
 
 Keep a single hyphenated branch as the scan target; a slash form like
-`ci-scans/...` is non-conforming. Why the shared umbrella repo is scanned at
-all is reference material: see
-[appendix E](#e-why-scan-the-shared-umbrella-repo-at-all).
+`ci-scans/...` is non-conforming. Why the shared umbrella repo is scanned
+at all: [appendix F](#f-why-scan-the-shared-umbrella-repo-at-all).
 
-## 0. Prerequisites (consumer + operator)
+## 0. Make the repo conform (consumer)
 
-The gate assumes this app shape:
+The gate derives everything from committed files, so onboarding starts in
+your own tree, not in CI config. Check each bullet against
+[CI-CONTRACT.md](CI-CONTRACT.md); the lint rule in parentheses is what
+blocks when the bullet is false.
 
-- the app serves the health route your manifest declares (`health.path`,
-  default `GET /health` — cluster-smoke probes it after the helm install)
-- a helm deploy of the primary backend image (built, scanned, kind-loaded, and
-  installed). Declare self-authored, gate-reachable frontend/sidecar images as
-  extra `ci-manifest` `images[]` entries — those tags are also kind-loaded for
-  smoke when built. Pass `smoke_secrets` when the chart requires Secrets beyond
-  what your `make ci-smoke-env` target provisions
-- a consumer build contract makefile (`Makefile.ci`, from
-  [`templates/consumer/Makefile.ci`](../templates/consumer/Makefile.ci))
-  exposing `ci-manifest` / `ci-build` / `ci-secctx` / `ci-smoke-env` — the
-  gate's only build path, see [CI-CONTRACT.md](CI-CONTRACT.md)
+- One canonical Compose file at the repo root; every release image is a
+  `build:` service with an explicit literal `image:` tag — no `:latest`,
+  no `${...}` (`compose-missing`, `compose-no-builds`,
+  `compose-image-tag`) — and a `healthcheck:` (`compose-healthcheck`).
+  Local-only services carry `profiles: [local]`; at most ten non-local
+  build services (`matrix-cap`); `linux/amd64` only (`compose-platform`).
+- Downloaded runtime dependencies (PostgreSQL, an identity provider the
+  chart deploys) are `image:`-only services declaring
+  `x-downloaded-dependency` with a `chart-tag` and an in-image `@sha256:`
+  digest pin (`dependency-shape`).
+- Build args are committed literal mappings — no host pass-through, no
+  secret-like names, no `build.secrets`/`build.ssh`
+  (`build-input-explicit`); every build context has a `.dockerignore`
+  with the four literal lines `.env`, `*.pem`, `*.key`, `*credentials*`
+  (`build-context-excludes`); every Dockerfile declares
+  `ARG BUILDER_IMAGE` and `ARG RUNTIME_IMAGE` (`hardened-args`); the
+  Compose file resolves under `docker buildx bake --print`
+  (`bake-resolve`).
+- The chart renders with your local values; every workload container has
+  a `readinessProbe` (`chart-readiness`); exactly one container exposes an
+  HTTP readiness target through a Service whose `targetPort` matches the
+  probe port (`smoke-target`); every scheduled image is built or a
+  declared dependency (`ship-set`; unscheduled built tags warn via
+  `built-unscheduled`).
+- Databases follow the decoupled standard (ADR-08): the app reads
+  `DATABASE_URL` from the `app-database-url` Secret. Compose provides a
+  local container; the gate's `postgres-pgvector` module provides it at
+  smoke; production provides a managed service. No chart-bundled database.
 
-Tooling: `gh` (authenticated), `uv`, and **admin** on the consumer repo (secrets
-and rulesets).
+Tooling: `gh` (authenticated), `uv`, and **admin** on the consumer repo
+(secrets and rulesets).
 
-**You should see:** every bullet answered yes for your repo before moving on —
-the operator holds admin, and `gh`/`uv` are available on the operator laptop.
+**You should see:** every bullet true for your repo; the operator holds
+admin, and `gh`/`uv` are available on the operator laptop.
 
-## 1. Copy the caller template — commit 1 (consumer)
+## 1. Copy the caller — commit 1 (consumer)
 
 ```bash
 cd <consumer-repo>
 mkdir -p .github/workflows
 cp <ci-scans-clone>/templates/callers/security-gate.yml .github/workflows/security-gate.yml
-cp <ci-scans-clone>/templates/consumer/Makefile.ci Makefile.ci
 ```
 
-You own both files from here — no tooling ever rewrites them. `Makefile.ci` is
-the consumer build contract (`ci-manifest` / `ci-build` / `ci-secctx` /
-`ci-smoke-env`); edit its variable block so `ci-manifest` describes your
-images, chart, and health probe, and `ci-build` builds your Dockerfile(s) —
-see [CI-CONTRACT.md](CI-CONTRACT.md).
+One file; you own it from here — no tooling ever rewrites it. There is
+nothing else to copy: the gate derives build facts from the files step 0
+made conform.
 
-**You should see:** `.github/workflows/security-gate.yml` and `Makefile.ci` in
-the consumer repo, committed as their own commit.
+**You should see:** `.github/workflows/security-gate.yml` in the consumer
+repo, committed as its own commit.
 
 ## 2. Edit `with:` and pin the version — commit 2 (consumer)
 
-Every `with:` line in the template carries an inline provenance comment naming
-where its value must come from in your repo (Dockerfile ARG, helm values file,
-package metadata, or operator choice). Edit each to match, and set your trigger
-branches under `on.pull_request.branches`.
+Every `with:` line in the template carries an inline provenance comment
+naming where its value comes from. Edit each to match, and set your
+trigger branches under `on.pull_request.branches`.
 
-Two invariants the caller lint enforces — do not break them:
+Three invariants the caller lint enforces — do not break them:
 
-- Keep the job id `security-scan`. It is half of the required check context
-  `security-scan / Security Gate`; renaming it silently un-gates merges.
-- Pass secrets **explicitly** (`CGR_PULL_TOKEN: ${{ secrets.CGR_PULL_TOKEN }}`),
-  never the `inherit` form. `inherit` works only when caller and callee share an
-  org/enterprise; across owners it silently passes nothing and SonarQube dies at
-  setup with `Unexpected value ''`.
-
-### Version pin
-
-The template ships pinned to a release tag:
+- Keep the job id `security-scan`. It is half of the required check
+  context `security-scan / Security Gate`; renaming it silently un-gates
+  merges.
+- Pass secrets **explicitly**
+  (`CGR_PULL_TOKEN: ${{ secrets.CGR_PULL_TOKEN }}`), never the `inherit`
+  form (`no-secrets-inherit`) — `inherit` only works when caller and
+  callee share an org/enterprise; across owners it silently passes
+  nothing.
+- Pin the gate by a **full 40-hex commit SHA** (`gate-ref-pin`), recording
+  the release tag as a trailing comment:
 
 ```yaml
-uses: c3-e/c3cdao-ci-scans/.github/workflows/reusable-security-gate.yml@v0.5.1
+uses: c3-e/c3cdao-ci-scans/.github/workflows/reusable-security-gate.yml@<40-hex sha>  # v0.6.0
 ```
 
-`@main` is acceptable only during the pilot migration window (caller lint
-emits a stderr notice); a missing or placeholder ref is a blocking `uses-ref`
-violation.
-
-**You should see:** every `with:` value traced to its provenance source, trigger
-branches set (per the [branch conventions](#branch-conventions-decide-first) if
-piloting on a scratch branch), the job id still `security-scan`, and secrets
-passed explicitly.
+**You should see:** every `with:` value traced to its provenance source,
+trigger branches set, the job id still `security-scan`, secrets explicit,
+and the ref pinned to a 40-hex SHA.
 
 ## 3. Lint the caller locally (consumer)
 
-Run the caller lint locally before you push:
+Run the same fail-closed lint the gate's plan job runs, before you push:
 
 ```bash
-uv run scripts/lib/lint_caller.py <caller.yml> \
-  --contract contract/security-gate.schema.json \
-  [--consumer-root <consumer-checkout>]
+uv run <ci-scans-clone>/scripts/lib/lint_caller.py \
+  .github/workflows/security-gate.yml \
+  --consumer-root .
 ```
 
-`caller-lint` is a fail-closed configuration pre-flight: it resolves your caller
-and lints it against the published contract before anything scans. Your caller
-must also grant the permissions the reusable workflow needs:
+Every finding prints a rule id and a remediation link into the
+[CI-CONTRACT.md rule table](CI-CONTRACT.md#rule-table). Without
+`--consumer-root` only the caller-structure rules run; with it the full
+Compose/Dockerfile/chart convention pipeline runs (chart rules need
+`helm`; bake resolution needs `docker buildx`). The rule-id list:
+[appendix C](#c-lint-rule-ids-and-remediation).
 
-- `pull-requests: write`, `actions: write` — the caller is the ceiling; the
-  reusable workflow cannot elevate.
-- No `concurrency:` on the caller — the reusable workflow owns the group.
-- Secrets passed **explicitly**, never the `inherit` form (see step 2).
+Your caller must also grant the permissions the reusable workflow needs —
+`pull-requests: write`, `actions: write` (the caller is the ceiling) —
+and must not set `concurrency:` (the reusable workflow owns the group).
 
-The full rule-id list and skip/notice semantics are reference material: see
-[appendix C](#c-caller-lint-rule-ids-and-notices).
-
-**You should see:** the lint exit clean. Rules skipped for a stated reason
-announce on stderr (`notice: skip: image-values-mismatch: --consumer-root not
-given`); with a consumer checkout supplied, the values-file rule announces
-`notice: active: image-values-mismatch: checked <path>`.
+**You should see:** `OK: <caller>: caller lint clean`.
 
 ## 4. Set the four secrets — one-time (operator)
 
@@ -139,26 +146,24 @@ gh secret set IRONBANK_TOKEN     --repo <owner>/<repo>
 gh secret set IRONBANK_USERNAME  --repo <owner>/<repo>
 ```
 
-These four names are exactly what the workflow declares (not the older
-`*_IDENTITY`/`*_CLI_SECRET` spellings). UI alternative: Settings → Secrets and
-variables → Actions → New repository secret.
+These four names are exactly what the workflow declares. UI alternative:
+Settings → Secrets and variables → Actions → New repository secret.
 
 | Secret | Job |
 |--------|-----|
-| `CGR_PULL_TOKEN`, `CGR_PULL_USERNAME` | Phase 1 build — Chainguard (`cgr.dev`) login |
-| `IRONBANK_TOKEN`, `IRONBANK_USERNAME` | SonarQube ephemeral + build Iron Bank (`registry1.dso.mil`) login — can run **alongside** Chainguard when both are set |
+| `CGR_PULL_TOKEN`, `CGR_PULL_USERNAME` | plan + build legs — Chainguard (`cgr.dev`) login |
+| `IRONBANK_TOKEN`, `IRONBANK_USERNAME` | SonarQube ephemeral + plan/build Iron Bank (`registry1.dso.mil`) login — runs **alongside** Chainguard when both are set |
 
-How the two logins interact (independent logins, primary-base image swap, the
-`require_hardened_bases` fail-closed posture) is reference material: see
-[appendix B](#b-hardened-base-registry-login-matrix-build).
+How the two logins interact is reference material:
+[appendix B](#b-hardened-base-registry-login-matrix).
 
-**You should see:** all four names listed under the repo's Actions secrets
-(Settings → Secrets and variables → Actions).
+**You should see:** all four names listed under the repo's Actions
+secrets.
 
 ## 5. Create the ruleset — disabled (operator)
 
-From the ci-scans clone. `configs/local/` is gitignored — real ops configs (org
-names, local paths) live there.
+From the ci-scans clone. `configs/local/` is gitignored — real ops
+configs (org names, local paths) live there.
 
 ```bash
 cp configs/examples/example.yaml configs/local/<repo>.yaml
@@ -167,23 +172,21 @@ cp configs/examples/example.yaml configs/local/<repo>.yaml
 ./scripts/setup-ruleset.sh --config configs/local/<repo>.yaml            # create, disabled
 ```
 
-`setup-ruleset.sh` creates the `security-scan-gates` ruleset **disabled** by
-default (safe rollout). Private repos need a paid org/enterprise plan to
-enforce. Add `--dry-run` to preview the API payload without writing.
+`setup-ruleset.sh` creates the `security-scan-gates` ruleset **disabled**
+by default (safe rollout). Private repos need a paid org/enterprise plan
+to enforce. Add `--dry-run` to preview the API payload without writing.
 
-The ops YAML is schema-validated at load (typos fail with pathed errors; see
-`config/schema.json`) and carries **operations-only** fields: `target`,
-`ci_scans`, `ruleset`, plus optional `workflows`. Gate values live
-in your caller's `with:`, not here — a leftover `security_gate:` block is
-deprecated and ignored with a warning.
+The ops YAML is schema-validated at load and carries **operations-only**
+fields: `target`, `ci_scans`, `ruleset`, plus optional `workflows`. Gate
+values live in your caller's `with:`, not here.
 
-If piloting on a scratch branch, scope the ruleset now: `target.trunk_branches:
-[ci-scans]` and `ruleset.target_branch: ci-scans` (the ruleset then targets
-that literal ref, independent of the repo's default branch — use your name from
-the [branch conventions](#branch-conventions-decide-first)).
+If piloting on a scratch branch, scope the ruleset now:
+`target.trunk_branches: [ci-scans]` and `ruleset.target_branch: ci-scans`
+(use your name from the
+[branch conventions](#branch-conventions-decide-first)).
 
-**You should see:** the `security-scan-gates` ruleset in the consumer repo's
-Settings → Rules → Rulesets, in the **disabled** state.
+**You should see:** the `security-scan-gates` ruleset in the consumer
+repo's Settings → Rules → Rulesets, in the **disabled** state.
 
 ## 6. Enable the ruleset (operator)
 
@@ -191,74 +194,57 @@ Settings → Rules → Rulesets, in the **disabled** state.
 ./scripts/setup-ruleset.sh --config configs/local/<repo>.yaml --enable   # enforce
 ```
 
-`--enable` sets the ruleset to active so `security-scan / Security Gate`
-becomes a required check. The script is idempotent — re-run it to re-target.
-
-To check that the live ruleset still matches the config (drift detection —
-run it when inheriting a repo from another operator, since ops configs live
-gitignored in `configs/local/`), add `--diff`: it fetches the live ruleset,
-compares a normalized subset, and exits 0 when in sync or 3 with a unified
-diff on drift. `--diff` never writes; pass `--enable` alongside it when the
-ruleset is expected to be active.
-
 **You should see:** the ruleset flip to **active**, and
-`security-scan / Security Gate` listed as a required status check on the target
-branch.
+`security-scan / Security Gate` listed as a required status check on the
+target branch.
 
 ## 7. Set up the scratch-branch pilot (consumer + operator)
 
-To pilot on a shared repo without touching its real trunk, cut a scratch branch
-and scope both the trigger and the ruleset to it, using your name from the
-[branch conventions](#branch-conventions-decide-first) table:
+To pilot on a shared repo without touching its real trunk, cut a scratch
+branch and scope both the trigger and the ruleset to it:
 
 - caller: `on.pull_request.branches: [ci-scans]` (single-app repo)
-- ops YAML: `target.trunk_branches: [ci-scans]` and `ruleset.target_branch:
-  ci-scans` (the ruleset then targets that literal ref, independent of the
-  repo's default branch) — re-run step 6 if you re-target
-
-Prefer landing caller/contract edits on `ci-scans` via a PR rather than
-pushing to the branch directly — direct pushes skip caller lint until the
-next canary run (advisory, not enforced).
+- ops YAML: `target.trunk_branches: [ci-scans]` and
+  `ruleset.target_branch: ci-scans` — re-run step 6 if you re-target
 
 Full scratch-branch walkthrough:
 [CI CD Workflow runbook](https://c3energy.atlassian.net/wiki/spaces/CCA/pages/10910040079/).
 
-**You should see:** the scratch branch (e.g. `ci-scans`) pushed, the caller's
-trigger scoped to it, and the ruleset targeting it.
+**You should see:** the scratch branch pushed, the caller's trigger scoped
+to it, and the ruleset targeting it.
 
 ## 8. Trigger the gate with a canary PR (consumer)
 
-The scan target branch never receives direct pushes to trigger the gate — open
-a trigger-only PR into it from the canonical canary branch **`ci-scans-canary`**:
+The scan target branch never receives direct pushes to trigger the gate —
+open a trigger-only PR into it from the canonical canary branch
+**`ci-scans-canary`**:
 
 1. Cut `ci-scans-canary` off the `ci-scans` head and add a trivial marker
    commit (e.g. a `.ci-scans-canary` file).
 2. Open a PR `ci-scans-canary` → `ci-scans` titled
-   `canary: security-gate @<tag>`. The `on.pull_request.branches: [ci-scans]`
-   trigger fires the gate; existing rules on the repo's real trunk are never
-   touched.
-3. The canary PR is **never merged** — it exists only to trigger. Re-trigger a
-   fresh run after a caller change by merging the updated `ci-scans` head into
-   `ci-scans-canary` (`gh api -X POST repos/<owner>/<repo>/merges -f
-   base=ci-scans-canary -f head=ci-scans`).
-   Keep the PR a **draft** (`gh pr ready <n> --undo`): `pull_request` triggers
-   fire on drafts just the same, draft status signals "trigger vehicle, not a
-   merge candidate", and it mutes the re-review churn a wildcard `CODEOWNERS`
-   rule would otherwise generate on every push.
-4. Comment the per-job results table and run URL on the canary PR as evidence
-   (see `c3-e/c3cdao-ppubs#33` for the reference shape).
+   `canary: security-gate @<tag>`. The `on.pull_request.branches:
+   [ci-scans]` trigger fires the gate; existing rules on the repo's real
+   trunk are never touched.
+3. The canary PR is **never merged** — it exists only to trigger.
+   Re-trigger after a caller change by merging the updated `ci-scans` head
+   into `ci-scans-canary` (`gh api -X POST repos/<owner>/<repo>/merges -f
+   base=ci-scans-canary -f head=ci-scans`). Keep the PR a **draft**
+   (`gh pr ready <n> --undo`): `pull_request` triggers fire on drafts just
+   the same, and draft status signals "trigger vehicle, not a merge
+   candidate".
+4. Comment the per-job results table and run URL on the canary PR as
+   evidence.
 
-**Fleet testing:** canary **one** consumer through a pin/secrets change before
-fanning out many repos. Do not re-trigger a full multi-repo Security Scan
-matrix until the canary's real fail mode is fixed.
+**Fleet testing:** canary **one** consumer through a pin/secrets change
+before fanning out many repos.
 
 **You should see:** the check context **`security-scan / Security Gate`**
-appear on the canary PR and go green. The gate's `caller-lint` job runs first
-and names any scaffold violation in your copied caller before anything scans.
-Job order and fail-fast wiring are reference material: see
-[appendix D](#d-job-order-and-fail-fast-actions-minutes).
+appear on the canary PR and go green. The gate's `plan` job runs first:
+it lints your caller and repo shapes fail-closed, then publishes the
+[BOM](#a-reading-the-published-bom) before any build starts. Job order:
+[appendix E](#e-job-order-and-fail-fast-actions-minutes).
 
-List the live check names on a PR head (e.g. to verify a ruleset paste by eye):
+List the live check names on a PR head:
 
 ```bash
 gh api repos/<owner>/<repo>/commits/<sha>/check-runs --jq '.check_runs[].name'
@@ -266,235 +252,189 @@ gh api repos/<owner>/<repo>/commits/<sha>/check-runs --jq '.check_runs[].name'
 
 ## 9. Promote to trunk (consumer + operator)
 
-When the pilot is green, promote it to the repo's default branch:
+When the pilot is green:
 
 1. In the caller, point the trigger branches at the trunk
    (`on.pull_request.branches: [main]`).
-2. Re-target the ruleset: drop `ruleset.target_branch` from the ops YAML (or set
-   it to the default branch) and re-run
-   `./scripts/setup-ruleset.sh --config configs/local/<repo>.yaml --enable`.
-3. Pin the caller's `uses:` to a release tag if it was still on `@main`.
+2. Re-target the ruleset: drop `ruleset.target_branch` from the ops YAML
+   (or set it to the default branch) and re-run
+   `./scripts/setup-ruleset.sh --config configs/local/<repo>.yaml
+   --enable`.
+3. Confirm the caller's `uses:` pin is the released 40-hex SHA.
 
 **You should see:** real PRs into the default branch carry the
-`security-scan / Security Gate` required check, and the caller pinned at a
-release tag.
+`security-scan / Security Gate` required check.
 
 ## 10. Clean up the scratch branches (consumer)
 
-After promotion, the pilot branches have served their purpose — remove them so
-the scratch trigger and the never-merged canary PR do not linger:
-
-1. Close the canary PR (it is never merged — step 8).
-2. Delete the canary branch and the scratch scan-target branch (e.g.
-   `ci-scans-canary` and `ci-scans`):
+1. Close the canary PR (never merged — step 8).
+2. Delete the canary branch and the scratch scan-target branch:
 
 ```bash
 git push origin --delete ci-scans-canary
 git push origin --delete ci-scans
 ```
 
-Only do this after step 9 re-targeted the ruleset away from the scratch branch;
-a ruleset targeting a deleted literal ref gates nothing.
+Only after step 9 re-targeted the ruleset away from the scratch branch; a
+ruleset targeting a deleted literal ref gates nothing.
 
-**You should see:** no `ci-scans*` branches left on the consumer repo, and the
-canary PR closed.
+**You should see:** no `ci-scans*` branches left on the consumer repo,
+and the canary PR closed.
 
 ## 11. Flip enforcement to blocking (operator)
 
 The enforcement model has two knobs:
 
-- **Ruleset enable** (per-consumer): `setup-ruleset.sh --enable` (step 6) makes
-  `security-scan / Security Gate` a required check on the target branch.
-- **`SECURITY_SCAN_BLOCKING` repo variable** (gate-internal): hard-fail posture
-  for cluster-smoke and image-scan. Until it is `true` they warn instead of
-  failing; a skipped/cancelled/errored blocking job still fails the gate.
-  Flipping it to `true` is the **final** acceptance step — see
-  [REQUIREMENTS-MAP.md](REQUIREMENTS-MAP.md).
+- **Ruleset enable** (per-consumer): step 6 makes
+  `security-scan / Security Gate` a required check.
+- **`SECURITY_SCAN_BLOCKING` repo variable** (gate-internal): hard-fail
+  posture for cluster-smoke and image-scan findings. Until it is `true`
+  they warn instead of failing; a skipped/cancelled/errored blocking job
+  still fails the gate. Flipping it to `true` is the **final** acceptance
+  step — see [REQUIREMENTS-MAP.md](REQUIREMENTS-MAP.md).
 
 ```bash
 gh variable set SECURITY_SCAN_BLOCKING --body true --repo <owner>/<repo>
 ```
 
-**You should see:** the repo variable set to `true`, and subsequent gate runs
-hard-failing (not warning) on cluster-smoke / image-scan findings. Until then,
-the gate's job summary and log label each run with an advisory-mode warning.
+**You should see:** the repo variable set to `true`, and subsequent gate
+runs hard-failing (not warning) on cluster-smoke / image-scan findings.
 
-## Migrating from modular scans (consumer + operator)
+## Migrating from v0.5.x (consumer)
 
-For a repo that already runs the older modular scan workflows:
+The v0.6 cutover is a hard major-version migration — the consumer contract
+makefile path was removed, not deprecated:
 
-1. Add the caller: copy `templates/callers/security-gate.yml` and edit `with:`
-   (steps 1–2 above).
-2. Delete modular workflows: `secret-scan.yml`, `semgrep.yml`, `sca-scan.yml`,
-   `sonarqube.yml`, `helm-validate.yml`, `pr-gate.yml` (STIG stays separate if
-   still needed).
-3. Update the ruleset: only `security-scan / Security Gate` required.
-4. Set repo variable `SECURITY_SCAN_BLOCKING=true` when ready to enforce
-   vuln/cluster gates (step 11).
+1. Delete the contract makefile and its targets from your repo; the gate
+   no longer reads them.
+2. Make the repo conform (step 0): the Compose file, Dockerfiles, and
+   chart now carry the facts the makefile used to declare.
+3. Delete the removed inputs from your caller's `with:` — the
+   `unknown-input` rule names each one; the replacement table is in
+   [INPUTS.md](INPUTS.md#removed-inputs-v05--v06-migration).
+4. Re-pin `uses:` to a v0.6 40-hex SHA and re-run step 3's local lint.
 
 ## Appendix (reference)
 
-Reference prose kept out of the step flow. Operator/consumer labels do not
-apply here — this is background, not action.
+### A. Reading the published BOM
 
-### A. Scripts and operator surface
+Every run's `plan` job publishes the derived Image BOM to the job summary
+and the `plan-bom` artifact: the bake plan (`bake --print` JSON — target
+name, dockerfile, context, args, tags) plus the gate's annotation document
+(excluded services with reasons, declared dependencies with digest pins
+and chart-facing tags, the derived smoke target, and provenance comments
+for every field). A PR comment shows the scan-set diff whenever the
+derived set differs from the base branch. To review what a commit will
+scan: open its run's plan summary — or reproduce locally with
+`docker buildx bake -f docker-compose.yml --print <targets>`, which is the
+same resolver the gate pins.
 
-Onboarding a consumer is **six one-time commands run from an operator laptop**:
-four `gh secret set` (step 4), one `gh variable set SECURITY_SCAN_BLOCKING`
-(step 11), and one `./scripts/setup-ruleset.sh` (steps 5–6). None of this runs
-in CI, and none of it renders or rewrites the caller.
+Reviewers verifying a leg: each build leg re-prints its own target with
+identical overrides and diffs it against the published plan, so plan and
+execution cannot silently diverge.
 
-| Script | Purpose |
-|--------|---------|
-| `setup-ruleset.sh` | convenience wrapper around a single GitHub rulesets API call: create/update the `security-scan-gates` ruleset (created **disabled**; `--enable` to enforce; idempotent, so re-run it to re-target) |
+### B. Hardened-base registry login matrix
 
-`scripts/lib/` is mostly **not** operator tooling: `lint_caller.py`,
-`evaluate_security_gate.py`, and `assert_restricted_pss.py` run inside the gate
-(Layer 1); `extract_contract.py` is dev-time contract generation for this repo
-(the `contract-extract` hook); only the config loader supports
-`setup-ruleset.sh`.
+Logins are **independent** (docker stores credentials per registry host).
+Setting both `CGR_PULL_*` and `IRONBANK_*` authenticates **both** in one
+run. The gate's posture is fail-closed: no complete credential pair means
+the plan job blocks before docker or kind ever start — there is no public
+fallback and no consumer-side escape hatch. Base images and the failover
+order are gate-owned configuration; your Dockerfiles consume whatever the
+gate resolves through the `BUILDER_IMAGE`/`RUNTIME_IMAGE` ARGs.
 
-### B. Hardened-base registry login matrix (build)
+The gate authenticates only to `cgr.dev` and `registry1.dso.mil` and
+scans images **as built with those gate-reachable bases**. Approved-image
+/ OS-layer attestation for private-mirror or entitlement-unreachable
+bases stays with the consumer IL5 / Game Warden pipeline.
 
-Logins are **independent** (docker stores credentials per registry host). Setting
-both `CGR_PULL_*` and `IRONBANK_*` authenticates **both** in one run — required
-for mixed-base repos (e.g. Chainguard primary + Iron Bank extras in the manifest).
+### C. Lint rule ids and remediation
 
-1. `CGR_PULL_TOKEN` set → login `cgr.dev`.
-2. `IRONBANK_TOKEN` set → login `registry1.dso.mil` (does **not** require CGR to
-   be absent).
-3. **Primary-base image swap** (separate from login): only when Chainguard is
-   *absent* and Iron Bank is *present*, the primary builder/runtime may swap to
-   `ironbank_builder_image` / `ironbank_runtime_image`. With both creds set, the
-   primary keeps its Chainguard bases; extras pull Iron Bank bases via the
-   second login.
-4. Neither credential → `require_hardened_bases: false` warns and builds on the
-   consumer's own bases; otherwise fail (no silent public fallback).
+Every verdict names its rule and links a remediation anchor in the
+[CI-CONTRACT.md rule table](CI-CONTRACT.md#rule-table). Convention rules
+(fail-closed, run in `plan`): `compose-missing`, `compose-no-builds`,
+`matrix-cap`, `compose-image-tag`, `compose-healthcheck`,
+`dependency-shape`, `build-input-explicit`, `build-context-excludes`,
+`compose-platform`, `bake-resolve`, `hardened-args`, `chart-readiness`,
+`smoke-target`, `ship-set`, `smoke-resource-unknown`, plus the warn-only
+`built-unscheduled`. Caller-structure rules: `gate-ref-pin`,
+`gate-job-id`, `no-secrets-inherit`, `missing-secret-map`,
+`unknown-input`, `unreadable-caller`.
 
-#### Scan boundary (proxy vs approved image)
+Remediation flow: read the verdict message (it names the offending
+service/file/workload), open the linked rule heading for the required
+shape, fix the committed file, re-run the local lint from step 3.
 
-The gate authenticates only to `cgr.dev` and `registry1.dso.mil`. It scans the
-image **as built with those gate-reachable bases**. If the approved production
-image uses a private mirror or entitlement the runner cannot reach, OS-layer /
-approved-image attestation is **out of scope** for this gate — keep that in the
-consumer IL5 / Game Warden (or equivalent) pipeline.
+### D. Smoke catalog contract
 
-- Declare manifest extras for **self-authored, gate-reachable** images only.
-- When `require_hardened_bases: false` (pilot escape hatch / public substitutes),
-  every build and Vulnerability Scan leg emits a **proxy-scan** warning and
-  job-summary label. Green ≠ approved prod image clean.
+Smoke prerequisites are declared, not scripted: the caller's
+`smoke_resources` CSV selects gate-owned modules that `cluster-smoke`
+applies into the namespace **before** `helm install`, gating on each
+module's readiness (a timeout fails naming the module). Catalog:
 
-Consumers without a `ci-secctx` contract target get the gate's
-bundled restricted-PSS assertion in helm-check (it runs regardless — gate
-policy), and image-scan defaults empty
-`.trivyignore`/`.grype.yaml` when the consumer doesn't carry them.
-`helm-check` owns runner `uv` before either the consumer `ci-secctx` or bundled
-PSS step; Makefile targets must not assume the caller preinstalled it.
+| Module | Provides |
+|---|---|
+| `postgres-pgvector` | pgvector Postgres + Service + the `app-database-url` Secret (→ `DATABASE_URL`, ADR-08) with fixture credentials only |
+| `gateway-crds` | Gateway API CRDs, waited to Established |
 
-### C. Caller-lint rule ids and notices
+A resource type not in the catalog is a ci-scans feature request, not a
+consumer escape hatch (`smoke-resource-unknown`). Dependencies your chart
+deploys itself are not catalog resources: declare them in Compose as
+digest-pinned downloaded dependencies and let `helm install` deploy the
+chart's own copy (ADR-07).
 
-When `require_hardened_bases` is true (default), `caller-lint` also fails
-closed if neither Chainguard (`CGR_PULL_*`) nor Iron Bank (`IRONBANK_*`)
-complete pull credential pairs are present, so docker/kind never start on a
-missing-credentials run. Rule ids:
-`gate-job-id`, `no-secrets-inherit`, `no-caller-concurrency`, `uses-ref` (the
-gate `uses:` must carry a pinned @ref that is not a placeholder; `@main` or a
-branch ref is a pilot-window stderr notice, not a violation), `unknown-input`,
-`type-mismatch`,
-`missing-secret-map`, `image-values-mismatch`, `extras-values-mismatch`,
-`unreadable-caller`, the
-**blocking** contract validators `ci-contract-file`, `ci-contract-target`,
-`ci-contract-manifest` (a missing optional `ci-secctx` target is a notice),
-plus the `smoke_secrets` validators `smoke-secrets-json`, `smoke-secrets-name`,
-`smoke-secrets-duplicate`, `smoke-secrets-literals`. The non-failing style
-notice `smoke-secrets-format` fires when an array is packed onto one quoted
-line — prefer a multiline YAML `|` block (see [INPUTS.md](INPUTS.md)). Rules
-skipped for a stated reason announce on stderr
-(`notice: skip: image-values-mismatch: --consumer-root not given`); with a
-consumer checkout supplied, file-touching rules announce
-`notice: active: <rule>: checked <path>`. The image-values rule reads the
-values-local path from the manifest's `chart.values_local` and parses it as
-YAML: a string `image` equal to `scan_image`, or `repository` + `tag` that
-join to it, both pass; a comment-only mention does not. The extras-values
-rule applies the same pin check to each manifest extra's tag (its optional
-`image` key or `<name>:local`).
-
-### D. Job order and fail-fast (Actions minutes)
+### E. Job order and fail-fast (Actions minutes)
 
 Gate jobs are ordered so cheap failures stop expensive work from starting:
 
-1. **`caller-lint`** — caller contract + (when `require_hardened_bases`) hardened-registry secret presence.
-2. **`helm-check`** (unless `image_only`) — helm lint/template + restricted PSS — in parallel with SAST/secrets-scan.
-3. **`build`** — `make ci-build` per manifest image (matrixed) — **needs** successful `caller-lint` and, when helm runs, successful `helm-check`. A PSS failure does not start multi-minute image builds.
-4. **`cluster-smoke` / `image-scan`** — need a successful `build` (all matrix
-   legs, primary + extras).
+1. **`plan`** — fail-closed lint + registry login/failover + BOM + build
+   matrix. Nothing scans until it passes.
+2. **`helm-check`**, **`secrets-scan`**, **SAST** — parallel after plan;
+   `build` legs also start in parallel (matrixed, `fail-fast: false`).
+3. **`cluster-smoke`** — needs every build leg and helm-check;
+   **`image-scan`** legs need build only, so smoke and scanning consume
+   the same artifacts concurrently.
+4. **`Security Gate`** — fan-in over all jobs with `if: always()`; the one
+   required check, immune to dynamic matrix leg names.
 
-This is DAG `needs:` wiring, not in-job cancellation. Prior runs on the same ref are still cancelled by workflow `concurrency:`.
+This is DAG `needs:` wiring, not in-job cancellation. Prior runs on the
+same ref are cancelled by workflow `concurrency:`.
 
-### E. Why scan the shared umbrella repo at all?
+### F. Why scan the shared umbrella repo at all?
 
-Each usecase repo already builds and scans its own images, so a gate run on
-`c3cdao-apps` is not primarily an image scan — image and SAST results there
-largely duplicate the source repos' runs. When onboarded, its purpose is a
-left-shifted final integration check on the composed umbrella chart before
-handoff to the SecondFront / Game Warden vendor pipeline: umbrella-level values
-overrides can silently regress a subchart's securityContext/PSS posture,
-co-installed subcharts can conflict at deploy time, and the umbrella repo's own
-files (prod values, env samples) need their own secrets scan that no subchart
-repo covers. In short: a deliberately redundant "scan of already-scanned
-subcharts" that catches integration-time regressions before the vendor pipeline
-does. (A secondary rationale — vendor scanning is billed per chart, so gating
-one umbrella chart is cheaper than N subcharts — is plausible but unconfirmed;
-verify with SecondFront before relying on it.)
-
-### F. Consumer onboarding blockers (checklist)
-
-Gate product gaps for full-cluster smoke are tracked as [#23](https://github.com/c3-joshchiu/c3cdao-ci-scans/issues/23)
-(manifest-extras kind-load) and [#24](https://github.com/c3-joshchiu/c3cdao-ci-scans/issues/24)
-(smoke Secrets contract). **Consumer-owned** readiness gaps that repeatedly turn
-Security Scan red — restricted PSS on charts, hardened-base Dockerfiles, registry
-pull-secret pairs, and the canary-before-fleet process — live in
-[#27](https://github.com/c3-joshchiu/c3cdao-ci-scans/issues/27). Point adoption
-PRs there instead of inventing per-repo mystery reds; do not fan out an 8-repo
-Security Scan matrix until one canary's real fail mode is fixed.
+Each usecase repo already builds and scans its own images, so a gate run
+on the shared umbrella repo is not primarily an image scan. When
+onboarded, its purpose is a left-shifted final integration check on the
+composed umbrella chart before handoff to the vendor pipeline:
+umbrella-level values overrides can silently regress a subchart's
+securityContext/PSS posture, co-installed subcharts can conflict at deploy
+time, and the umbrella repo's own files need their own secrets scan that
+no subchart repo covers. (A secondary rationale — vendor scanning is
+billed per chart, so gating one umbrella chart is cheaper than N
+subcharts — is plausible but unconfirmed; verify with the vendor before
+relying on it.)
 
 ### G. Updating the reusable workflow (maintainer)
 
-`.github/workflows/reusable-security-gate.yml` is hand-maintained. When the
-upstream source-of-truth workflow it was derived from changes, port the relevant
-diff manually and re-tag:
+`.github/workflows/reusable-security-gate.yml` is hand-maintained. Port
+upstream diffs manually, re-tag, and publish the release SHA:
 
 ```bash
 git commit -am "update reusable-security-gate.yml"
 git tag v0.x.x && git push --tags
 ```
 
-Pin consumers at `@v0.x.x` instead of `@main`.
+Consumers pin the 40-hex commit SHA of the release (the tag rides along
+as a comment). The `with:` surface and the four secret names are guarded
+by `tests/lib/test_workflow_scan_fanin.py`; the docs in this directory
+are guarded by `tests/docs/` — a surface change fails CI until the docs
+move with it.
 
-The `contract-extract` pre-commit hook regenerates
-`contract/security-gate.schema.json` and `docs/INPUTS.md` whenever the reusable
-workflow changes, and CI fails on drift even when the hook is skipped — the
-contract is derived output, never hand-edited.
+ci-scans is public; if it ever goes private, this repo (the callee) must
+allow cross-repo reusable-workflow access (Settings → Actions → Access)
+before consumers can call it.
 
-ci-scans is public; if it ever goes private, this repo (the callee) must allow
-cross-repo reusable-workflow access (Settings → Actions → Access) before
-consumers can call it.
+### H. Note on path efficiency
 
-### H. Consumer build contract
-
-The only build path (since v0.5.0). Consumer build knowledge (image builds,
-secctx assertion, smoke prerequisites, chart/health metadata) lives in a
-consumer-owned `Makefile.ci` (`contract_file`) exposing `ci-manifest` /
-`ci-build` / `ci-secctx` / `ci-smoke-env`; `make ci-manifest` is the single
-source of truth for the containers list and chart/health sections. The
-bundled restricted-PSS assertion stays in-gate (gate policy). Caller lint
-validates the contract file **blocking** (`ci-contract-file`,
-`ci-contract-target`, `ci-contract-manifest`; a missing optional `ci-secctx`
-is a notice). Interface, env vars, and the manifest JSON shape:
-[CI-CONTRACT.md](CI-CONTRACT.md); reference implementation:
-`templates/consumer/Makefile.ci`.
-
-### I. Note on path efficiency
-
-The reusable gate runs all scan jobs on every PR (full gate). Path-based skipping
-(`detect-changes`) can be added later without changing the onboarding model.
+The reusable gate runs all scan jobs on every PR (full gate). Path-based
+skipping can be added later without changing the onboarding model.
