@@ -46,14 +46,35 @@ jobs:
           format: json
           output: trivy-alpine-jobenv.json
 
-      - name: Assert — job-level TRIVY_VEX drops the fixture CVE
+      - name: Record — does job-level TRIVY_VEX drop the fixture CVE?
         run: |
           set -euo pipefail
           cves=$(jq -c '[.Results[]?.Vulnerabilities[]?.VulnerabilityID] | unique' trivy-alpine-jobenv.json)
           echo "RESULT trivy/alpine/job-level-env cves=$cves" | tee -a "$GITHUB_STEP_SUMMARY"
+          # Informational only. Empirically, job-level ambient env does not reach
+          # trivy-action's inner entrypoint.sh step at this pin (57a97c7): the
+          # composite's "Run Trivy" step declares its own explicit `env:` block
+          # (INPUT_SCAN_TYPE, INPUT_IMAGE_REF, ..., TRIVY_CACHE_DIR only) and does
+          # not forward TRIVY_VEX from ambient/job-level env. See Proof 1c below
+          # for the actual working route (trivy-config: -> TRIVY_CONFIG, which IS
+          # one of the vars this action explicitly wires through).
+
+      - name: Proof 1c — Trivy + alpine fixture, VEX via trivy-config input (TRIVY_CONFIG IS wired through by this action)
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1  # v0.35.0
+        with:
+          image-ref: ${{ env.ALPINE_REF }}
+          format: json
+          output: trivy-alpine-config.json
+          trivy-config: tests/fixtures/vex/trivy-vex.yaml
+
+      - name: Assert — trivy-config route drops the fixture CVE
+        run: |
+          set -euo pipefail
+          cves=$(jq -c '[.Results[]?.Vulnerabilities[]?.VulnerabilityID] | unique' trivy-alpine-config.json)
+          echo "RESULT trivy/alpine/trivy-config-route cves=$cves" | tee -a "$GITHUB_STEP_SUMMARY"
           echo "$cves" | jq -e --arg cve "$ALPINE_CVE" 'index($cve) == null' \
-            && echo "PASS: job-level TRIVY_VEX suppressed $ALPINE_CVE" \
-            || { echo "FAIL: job-level TRIVY_VEX did NOT suppress $ALPINE_CVE"; exit 1; }
+            && echo "PASS: trivy-config: (vulnerability.vex key) suppressed $ALPINE_CVE" \
+            || { echo "FAIL: trivy-config: route did NOT suppress $ALPINE_CVE"; exit 1; }
 
       - name: Proof 1b — Trivy + ubi10 fixture, TRIVY_VEX overridden at STEP level (job default is the alpine doc)
         uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1  # v0.35.0

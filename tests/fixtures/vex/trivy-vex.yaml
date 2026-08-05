@@ -1,0 +1,8 @@
+# Fixture: routes tests/fixtures/vex/alpine-known-cve/main.openvex.json into
+# Trivy via the config-file path (`vulnerability.vex`), not TRIVY_VEX env.
+# See tests/fixtures/vex/README.md — TRIVY_VEX does not reach trivy-action's
+# inner entrypoint.sh step at pin 57a97c7 (v0.35.0), but trivy-config: does
+# (the action explicitly wires trivy-config -> TRIVY_CONFIG -> --config).
+vulnerability:
+  vex:
+    - tests/fixtures/vex/alpine-known-cve/main.openvex.json
