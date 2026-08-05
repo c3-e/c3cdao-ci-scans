@@ -114,7 +114,12 @@ def test_grype_sbom_step_has_no_vex_wiring():
 
 def test_scan_steps_stay_sha_pinned_with_version_comments():
     text = ACTION.read_text()
-    assert "aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1  # v0.35.0" in text
+    # 2 Trivy steps (gating table + T3 JSON export), 3 Grype steps (image +
+    # image SBOM gating tables + T3 JSON export) — every one SHA-pinned with
+    # its version comment.
+    assert text.count(
+        "aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1  # v0.35.0"
+    ) == 2
     assert text.count(
         "anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2  # v7.4.0"
-    ) == 2
+    ) == 3
