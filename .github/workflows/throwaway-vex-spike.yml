@@ -259,6 +259,179 @@ jobs:
           # this leg. Not asserted as a hard pass/fail — this run is the live
           # confirmation of that local finding, recorded in T1's acceptance notes.
 
+  # --- T2 end-to-end: the real composite (./.github/actions/image-vuln-scan)
+  # exercised on a runner with the same artifact contract as the gate's
+  # image-scan job (scan-image-<name> tarball + sbom-action artifact).
+  # Two legs: a "caller" with NO .openvex/ (must default an empty doc and
+  # scan bit-identical to baseline — the load-bearing must-not-break check)
+  # and a "caller" with a populated template (fixture CVE must be
+  # suppressed through the exact paths the composite exported).
+  t2-composite-noop:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+
+      - name: Precondition — this "caller" checkout has no .openvex/
+        run: test ! -e .openvex
+
+      - name: Stage image artifact (mirrors the gate's build job contract)
+        run: |
+          set -euo pipefail
+          docker pull "$ALPINE_REF"
+          docker tag "$ALPINE_REF" vex-t2:alpine
+          docker save vex-t2:alpine -o image.tar
+
+      - name: Upload image artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        with:
+          name: scan-image-vex-t2-noop
+          path: image.tar
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Generate image SBOM (mirrors the gate's build job contract)
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610  # v0.24.0
+        with:
+          image: vex-t2:alpine
+          format: cyclonedx-json
+          output-file: sbom-image-vex-t2-noop.json
+          artifact-name: sbom-image-vex-t2-noop
+
+      - name: Run the REAL composite — no consumer .openvex/
+        uses: ./.github/actions/image-vuln-scan
+        with:
+          image-tag: vex-t2:alpine
+          image-artifact-name: scan-image-vex-t2-noop
+          sbom-artifact-name: sbom-image-vex-t2-noop
+          trivy-severity: CRITICAL,HIGH
+
+      - name: Assert — composite defaulted an empty-statements doc
+        run: |
+          set -euo pipefail
+          echo "VEX_DOC=$VEX_DOC VEX_TRIVY_CONFIG=$VEX_TRIVY_CONFIG"
+          test -f "$VEX_DOC"
+          jq -e '.statements == []' "$VEX_DOC"
+          grep -F "$VEX_DOC" "$VEX_TRIVY_CONFIG"
+
+      - name: Assert — empty default is a no-op (fixture CVE still reported)
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1  # v0.35.0
+        with:
+          image-ref: vex-t2:alpine
+          format: json
+          output: trivy-t2-noop.json
+          trivy-config: ${{ env.VEX_TRIVY_CONFIG }}
+
+      - name: Assert — trivy/grype both still report the fixture CVE through the exported paths
+        run: |
+          set -euo pipefail
+          cves=$(jq -c '[.Results[]?.Vulnerabilities[]?.VulnerabilityID] | unique' trivy-t2-noop.json)
+          echo "RESULT t2/noop/trivy cves=$cves" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "$cves" | jq -e --arg cve "$ALPINE_CVE" 'index($cve) != null'
+
+      - name: Grype through the exported empty default
+        id: grype_t2_noop
+        uses: anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2  # v7.4.0
+        env:
+          GRYPE_VEX_DOCUMENTS: ${{ env.VEX_DOC }}
+        with:
+          image: vex-t2:alpine
+          output-format: json
+          severity-cutoff: negligible
+          fail-build: false
+
+      - name: Assert — grype still reports the fixture CVE with the empty default
+        run: |
+          set -euo pipefail
+          cves=$(jq -c '[.matches[]?.vulnerability.id] | unique' '${{ steps.grype_t2_noop.outputs.json }}')
+          echo "RESULT t2/noop/grype count=$(echo "$cves" | jq length)" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "$cves" | jq -e --arg cve "$ALPINE_CVE" 'index($cve) != null'
+
+  t2-composite-consumer:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+
+      - name: Simulate a consumer that committed a populated .openvex/ template
+        run: |
+          set -euo pipefail
+          mkdir -p .openvex/templates
+          cp "$ALPINE_VEX" .openvex/templates/main.openvex.json
+
+      - name: Stage image artifact (mirrors the gate's build job contract)
+        run: |
+          set -euo pipefail
+          docker pull "$ALPINE_REF"
+          docker tag "$ALPINE_REF" vex-t2:alpine
+          docker save vex-t2:alpine -o image.tar
+
+      - name: Upload image artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        with:
+          name: scan-image-vex-t2-consumer
+          path: image.tar
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Generate image SBOM (mirrors the gate's build job contract)
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610  # v0.24.0
+        with:
+          image: vex-t2:alpine
+          format: cyclonedx-json
+          output-file: sbom-image-vex-t2-consumer.json
+          artifact-name: sbom-image-vex-t2-consumer
+
+      - name: Run the REAL composite — populated consumer template
+        uses: ./.github/actions/image-vuln-scan
+        with:
+          image-tag: vex-t2:alpine
+          image-artifact-name: scan-image-vex-t2-consumer
+          sbom-artifact-name: sbom-image-vex-t2-consumer
+          trivy-severity: CRITICAL,HIGH
+
+      - name: Assert — composite resolved the consumer template, not the default
+        run: |
+          set -euo pipefail
+          echo "VEX_DOC=$VEX_DOC"
+          test "$VEX_DOC" = "${PWD}/.openvex/templates/main.openvex.json"
+          grep -F "$VEX_DOC" "$VEX_TRIVY_CONFIG"
+
+      - name: Trivy through the exported consumer config
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1  # v0.35.0
+        with:
+          image-ref: vex-t2:alpine
+          format: json
+          output: trivy-t2-consumer.json
+          trivy-config: ${{ env.VEX_TRIVY_CONFIG }}
+
+      - name: Assert — trivy suppresses the fixture CVE through the composite's config
+        run: |
+          set -euo pipefail
+          cves=$(jq -c '[.Results[]?.Vulnerabilities[]?.VulnerabilityID] | unique' trivy-t2-consumer.json)
+          echo "RESULT t2/consumer/trivy cves=$cves" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "$cves" | jq -e --arg cve "$ALPINE_CVE" 'index($cve) == null' \
+            && echo "PASS: composite-exported trivy config suppressed $ALPINE_CVE" \
+            || { echo "FAIL: composite-exported trivy config did NOT suppress $ALPINE_CVE"; exit 1; }
+
+      - name: Grype through the exported consumer doc
+        id: grype_t2_consumer
+        uses: anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2  # v7.4.0
+        env:
+          GRYPE_VEX_DOCUMENTS: ${{ env.VEX_DOC }}
+        with:
+          image: vex-t2:alpine
+          output-format: json
+          severity-cutoff: negligible
+          fail-build: false
+
+      - name: Assert — grype suppresses the fixture CVE through the composite's doc
+        run: |
+          set -euo pipefail
+          cves=$(jq -c '[.matches[]?.vulnerability.id] | unique' '${{ steps.grype_t2_consumer.outputs.json }}')
+          echo "RESULT t2/consumer/grype count=$(echo "$cves" | jq length)" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "$cves" | jq -e --arg cve "$ALPINE_CVE" 'index($cve) == null' \
+            && echo "PASS: composite-exported VEX_DOC suppressed $ALPINE_CVE on grype" \
+            || { echo "FAIL: composite-exported VEX_DOC did NOT suppress $ALPINE_CVE on grype"; exit 1; }
+
   # Cumulative smoke, per the throwaway-workflow convention (throwaway-bake-spikes.yml).
   baseline-smoke:
     runs-on: ubuntu-latest
