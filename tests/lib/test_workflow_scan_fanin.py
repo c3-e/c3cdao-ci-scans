@@ -184,6 +184,42 @@ def test_plan_builds_chart_dependencies_before_lint():
     assert dep_step.get("if") == "${{ inputs.image_only != true }}"
 
 
+# --- sonar.sources fallback for non-monorepo consumers -------------------------
+
+
+def test_sonarqube_sources_resolved_dynamically_not_hardcoded():
+    """`sonar.sources` must not hardcode `packages/,apps/` directly in the
+    scan step — a flat single-app repo (e.g. petegpt: source in server/,
+    no packages/ or apps/) has neither, and sonar-scanner exits 2 before
+    ever scanning. A preceding step resolves sonar.sources dynamically
+    (whichever of packages/,apps/ exist; '.' when neither does), and the
+    scan step consumes that resolved output instead of a literal."""
+    scan = _workflow()["jobs"]["sast-sonarqube"]
+    scanner_steps = [
+        s
+        for s in scan["steps"]
+        if "sonarqube-scan-action" in str(s.get("uses", ""))
+    ]
+    assert len(scanner_steps) == 1
+    args = str(scanner_steps[0]["with"]["args"])
+    assert "packages/,apps/" not in args, (
+        "sonar.sources must not hardcode a monorepo-only literal"
+    )
+    assert "steps.sonar-sources.outputs.sources" in args
+
+    resolve_steps = [s for s in scan["steps"] if s.get("id") == "sonar-sources"]
+    assert len(resolve_steps) == 1, (
+        "a step id='sonar-sources' must resolve sonar.sources before the scan step"
+    )
+    resolve_text = str(resolve_steps[0].get("run", ""))
+    assert "packages" in resolve_text and "apps" in resolve_text
+    scanner_idx = scan["steps"].index(scanner_steps[0])
+    resolve_idx = scan["steps"].index(resolve_steps[0])
+    assert resolve_idx < scanner_idx, (
+        "sonar.sources must be resolved before the scan step runs"
+    )
+
+
 # --- caller template usable verbatim (AC-4) -----------------------------------
 
 

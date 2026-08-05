@@ -637,6 +637,27 @@ jobs:
         with:
           fetch-depth: 0
 
+      # `packages/`/`apps/` is a monorepo-shaped convention, not universal —
+      # a flat single-app repo (e.g. petegpt: source in server/) has
+      # neither, and sonar-scanner exits 2 ("folder does not exist") before
+      # ever scanning. Scope to whichever of the two actually exist at the
+      # repo root; fall back to the whole tree only when neither does, so
+      # monorepo consumers keep their existing (narrower) scan surface.
+      - name: Resolve sonar.sources
+        id: sonar-sources
+        run: |
+          set -euo pipefail
+          dirs=()
+          [ -d packages ] && dirs+=("packages/")
+          [ -d apps ] && dirs+=("apps/")
+          if [ "${#dirs[@]}" -eq 0 ]; then
+            sources="."
+          else
+            IFS=,; sources="${dirs[*]}"; unset IFS
+          fi
+          echo "sources=$sources" >> "$GITHUB_OUTPUT"
+          echo "::notice::sast-sonarqube: sonar.sources=$sources"
+
       - name: Wait for SonarQube
         run: |
           for i in $(seq 1 60); do
@@ -667,7 +688,7 @@ jobs:
         with:
           args: >
             -Dsonar.projectKey=security-scan
-            -Dsonar.sources=packages/,apps/
+            -Dsonar.sources=${{ steps.sonar-sources.outputs.sources }}
             -Dsonar.exclusions=**/node_modules/**,**/.pnpm-store/**
 
       # Wait for the Compute Engine task to finish before reading the gate —
