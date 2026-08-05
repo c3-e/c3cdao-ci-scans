@@ -173,6 +173,7 @@ else blocks the run before any build starts.
 | [`built-unscheduled`](#rule-built-unscheduled) | warn | a built tag is never scheduled by the chart |
 | [`smoke-resource-unknown`](#rule-smoke-resource-unknown) | block | `smoke_resources` names a module outside the catalog |
 | [`gate-ref-pin`](#rule-gate-ref-pin) | block | gate ref is not a full 40-hex commit SHA |
+| [`gate-job-id`](#rule-gate-job-id) | block | the calling job id is not `security-scan` |
 | [`no-secrets-inherit`](#rule-no-secrets-inherit) | block | caller uses `secrets: inherit` |
 | [`missing-secret-map`](#rule-missing-secret-map) | block | one of the four registry secrets is unmapped |
 | [`unknown-input`](#rule-unknown-input) | block | a `with:` key is not a v0.6 input (removed v0.5 inputs rejected by name) |
@@ -302,6 +303,14 @@ ci-scans; there is no consumer escape hatch.
 
 The `uses:` ref must end in a full 40-hex commit SHA; tags and branches
 block. Remediation: pin the SHA and record the tag as a trailing comment.
+
+### Rule: gate-job-id
+
+The job calling the reusable workflow must keep the id `security-scan` —
+it is half of the required check context `security-scan / Security Gate`.
+A renamed id reports under a different context and the branch-protection
+ruleset silently no longer matches. Remediation: rename the job id back
+to `security-scan`.
 
 ### Rule: no-secrets-inherit
 

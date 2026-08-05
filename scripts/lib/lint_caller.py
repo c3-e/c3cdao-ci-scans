@@ -20,14 +20,15 @@ Rule ids: compose-missing, compose-no-builds, matrix-cap, compose-image-tag,
 compose-healthcheck, dependency-shape, build-input-explicit,
 build-context-excludes, compose-platform, bake-resolve, hardened-args,
 chart-readiness, smoke-target, ship-set, smoke-resource-unknown,
-built-unscheduled.
+built-unscheduled, gate-job-id.
 
 Caller structure rules carried over from v0.5.x (load-bearing only):
 gate-ref-pin (the reusable-workflow ref is a full 40-hex commit SHA),
-no-secrets-inherit + missing-secret-map (all four registry secrets mapped
-explicitly), unknown-input (the with: surface is exactly the v0.6 inputs;
-removed v0.5.x inputs are rejected by name), and unreadable-caller
-(fail closed on an unparseable caller).
+gate-job-id (the calling job id is exactly 'security-scan' — half of the
+required check context), no-secrets-inherit + missing-secret-map (all four
+registry secrets mapped explicitly), unknown-input (the with: surface is
+exactly the v0.6 inputs; removed v0.5.x inputs are rejected by name), and
+unreadable-caller (fail closed on an unparseable caller).
 
 Remediation refs point at onboarding-doc anchors authored at the docs
 cutover; the anchor names are stable now.
@@ -121,6 +122,17 @@ def lint_caller_workflow(caller_path: Path) -> list[Verdict]:
     gate_id, gate_job = gate
 
     verdicts = []
+    if gate_id != "security-scan":
+        verdicts.append(
+            verdict(
+                "gate-job-id",
+                f"gate job id is '{gate_id}', must be 'security-scan' — the "
+                "job id is half of the required check context "
+                "'security-scan / Security Gate'; a different id reports "
+                "under a different context and the ruleset silently no "
+                "longer matches",
+            )
+        )
     uses = str(gate_job.get("uses"))
     if not _FULL_SHA_RE.search(uses):
         verdicts.append(

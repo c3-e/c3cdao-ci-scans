@@ -14,6 +14,24 @@ import json
 import os
 from typing import Any
 
+ADVISORY_BANNER = (
+    "⚠ ADVISORY MODE — SECURITY_SCAN_BLOCKING is not 'true': cluster-smoke and "
+    "image-scan findings warn instead of failing. A green gate does not certify "
+    "vulnerability/smoke posture. "
+    "Flip with: gh variable set SECURITY_SCAN_BLOCKING --body true"
+)
+
+
+def warn_if_advisory() -> None:
+    """Surface advisory mode loudly; never changes exit-code semantics."""
+    if (os.environ.get("SECURITY_SCAN_BLOCKING") or "").lower() == "true":
+        return
+    print(f"{'=' * 78}\n{ADVISORY_BANNER}\n{'=' * 78}")
+    summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+    if summary_path:
+        with open(summary_path, "a", encoding="utf-8") as fh:
+            fh.write(f"> [!WARNING]\n> {ADVISORY_BANNER}\n\n")
+
 
 def blocking_jobs(image_only: bool) -> list[str]:
     # build and image-scan are matrixed (one leg per plan-derived build
@@ -51,6 +69,7 @@ def evaluate(needs: dict[str, Any], image_only: bool) -> int:
 def main() -> None:
     needs = json.loads(os.environ["NEEDS_JSON"])
     image_only = (os.environ.get("IMAGE_ONLY") or "").lower() == "true"
+    warn_if_advisory()
     raise SystemExit(evaluate(needs, image_only))
 
 

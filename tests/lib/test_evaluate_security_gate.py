@@ -110,3 +110,63 @@ def test_matrixed_image_scan_failure_blocks():
         smoke_ok="true",
     )
     assert mod.evaluate(needs, image_only=False) == 1
+
+
+# --- Advisory-mode banner (SECURITY_SCAN_BLOCKING visibility) -----------------
+
+_PASSING_IMAGE_ONLY = {
+    "plan": "success",
+    "build": "success",
+    "secrets-scan": "success",
+    "image-scan": "success",
+}
+
+
+def _run_main(monkeypatch, results: dict[str, str], blocking: str | None) -> int:
+    import json
+
+    monkeypatch.setenv("NEEDS_JSON", json.dumps(_needs(results)))
+    monkeypatch.setenv("IMAGE_ONLY", "true")
+    monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+    if blocking is None:
+        monkeypatch.delenv("SECURITY_SCAN_BLOCKING", raising=False)
+    else:
+        monkeypatch.setenv("SECURITY_SCAN_BLOCKING", blocking)
+    with pytest.raises(SystemExit) as exc:
+        mod.main()
+    return exc.value.code
+
+
+@pytest.mark.parametrize("blocking", [None, "false"])
+def test_advisory_banner_on_stdout_when_not_blocking(monkeypatch, capsys, blocking):
+    assert _run_main(monkeypatch, _PASSING_IMAGE_ONLY, blocking) == 0
+    assert mod.ADVISORY_BANNER in capsys.readouterr().out
+
+
+def test_advisory_banner_absent_when_blocking(monkeypatch, capsys):
+    assert _run_main(monkeypatch, _PASSING_IMAGE_ONLY, "true") == 0
+    assert mod.ADVISORY_BANNER not in capsys.readouterr().out
+
+
+def test_advisory_banner_appends_step_summary(monkeypatch, tmp_path):
+    summary = tmp_path / "summary.md"
+    monkeypatch.setenv("SECURITY_SCAN_BLOCKING", "false")
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
+    mod.warn_if_advisory()
+    text = summary.read_text(encoding="utf-8")
+    assert "[!WARNING]" in text
+    assert mod.ADVISORY_BANNER in text
+
+
+def test_no_step_summary_write_when_blocking(monkeypatch, tmp_path):
+    summary = tmp_path / "summary.md"
+    monkeypatch.setenv("SECURITY_SCAN_BLOCKING", "TRUE")
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
+    mod.warn_if_advisory()
+    assert not summary.exists()
+
+
+@pytest.mark.parametrize("blocking", [None, "false", "true"])
+def test_exit_code_unchanged_on_failure(monkeypatch, blocking):
+    failing = dict(_PASSING_IMAGE_ONLY, **{"image-scan": "failure"})
+    assert _run_main(monkeypatch, failing, blocking) == 1

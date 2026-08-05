@@ -358,8 +358,8 @@ Every verdict names its rule and links a remediation anchor in the
 `compose-platform`, `bake-resolve`, `hardened-args`, `chart-readiness`,
 `smoke-target`, `ship-set`, `smoke-resource-unknown`, plus the warn-only
 `built-unscheduled`. Caller-structure rules: `gate-ref-pin`,
-`no-secrets-inherit`, `missing-secret-map`, `unknown-input`,
-`unreadable-caller`.
+`gate-job-id`, `no-secrets-inherit`, `missing-secret-map`,
+`unknown-input`, `unreadable-caller`.
 
 Remediation flow: read the verdict message (it names the offending
 service/file/workload), open the linked rule heading for the required

@@ -19,3 +19,11 @@ jobs:
       - uses: astral-sh/setup-uv@v6
       - name: Assert caller-lint fixture verdicts
         run: ./scripts/test-lint-fixtures.sh
+
+  setup-ruleset-diff:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: Assert setup-ruleset --diff verdicts
+        run: ./scripts/test-setup-ruleset-diff.sh
