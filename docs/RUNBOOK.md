@@ -375,11 +375,17 @@ and the `plan-bom` artifact: the bake plan (`bake --print` JSON: target
 name, dockerfile, context, args, tags) plus the gate's annotation document
 (excluded services with reasons, declared dependencies with digest pins
 and chart-facing tags, the derived smoke target, and provenance comments
-for every field). A PR comment shows the scan-set diff whenever the
-derived set differs from the base branch. To review what a commit will
-scan: open its run's plan summary, or reproduce locally with
+for every field). To review what a commit will scan: open its run's plan
+summary, or reproduce locally with
 `docker buildx bake -f docker-compose.yml --print <targets>`, which is the
 same resolver the gate pins.
+
+On `pull_request`-triggered runs, `export-bundle` also posts (or, on a
+later push to the same PR, updates in place — see
+[Appendix I](#i-security-export-bundle-reference)) a PR comment
+summarizing each built service's scan results. A scan-set *diff* against
+the base branch's derived BOM is a separate, larger feature and not yet
+implemented.
 
 Reviewers verifying a leg: each build leg re-prints its own target with
 identical overrides and diffs it against the published plan, so plan and
@@ -526,6 +532,25 @@ convenience-only: not a required check, excluded from `security-gate`'s
 `needs:` so an assembly failure (e.g. zero image-scan legs ran) can never
 block the gate, and it changes nothing about the per-service bundles
 themselves.
+
+**PR comment.** On `pull_request`-triggered runs only (never
+`merge_group`/`schedule`/`workflow_dispatch`), `export-bundle` also
+posts a comment on the triggering PR summarizing, per built service, the
+Trivy and Grype High+Critical finding counts (read straight from the
+bundle's `trivy-image.json`/`grype-image.json`) and the VEX source
+(`consumer` / `empty-default`, from `metadata.json`), plus a link to the
+run page (`.../actions/runs/<run_id>` — the Artifacts list, including the
+consolidated bundle, lives there; there is no standalone
+authenticated-free download link for an individual artifact) and the
+consolidated artifact's name with a copy-paste
+`gh run download <run_id> -n security-export-full-<short-sha>` line. A
+hidden `<!-- security-export-summary -->` marker lets the job find its
+own prior comment on the same PR and `PATCH` it instead of posting a new
+one on every push. This is commentary only: both the comment-body and
+comment-posting steps are `continue-on-error: true`, gated on
+`github.event_name == 'pull_request'`, and live in the same non-blocking
+`export-bundle` job described above — a posting failure (e.g. a
+permissions edge case) can never affect `Security Gate`.
 
 ### J. Trivy SARIF in the Security tab (VEX-8)
 
