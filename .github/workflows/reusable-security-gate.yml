@@ -1155,6 +1155,15 @@ jobs:
   # `name:`-based single-artifact lookup throws on a miss). Deliberately
   # left out of security-gate's needs: below so an assembly failure (e.g.
   # no image-scan legs ran) can never fail the required check.
+  #
+  # On pull_request-triggered runs only, this job also posts (or, on a
+  # re-run for the same PR, updates in place via a hidden HTML marker) a
+  # single PR comment summarizing each built service's Trivy/Grype
+  # High+Critical counts and VEX source, plus a link to the run page and
+  # the consolidated artifact's `gh run download` line (RUNBOOK.md
+  # Appendix I). Both steps are `continue-on-error: true`; a posting
+  # failure can never fail this job, and this job is not in
+  # security-gate's needs: regardless.
   # --------------------------------------------------------------------------
   export-bundle:
     name: Consolidated Security Export Bundle
@@ -1200,6 +1209,128 @@ jobs:
           name: security-export-full-${{ steps.sha.outputs.short }}
           path: ${{ runner.temp }}/security-export-full
           if-no-files-found: warn
+
+      # ------------------------------------------------------------------
+      # PR comment: scan-results summary (RUNBOOK.md Appendix I). Only on
+      # pull_request-triggered runs (github.event.pull_request.number is
+      # only meaningful there; merge_group/schedule/workflow_dispatch/push
+      # never reach these two steps). Reads the bundle this job just
+      # assembled above — per-service trivy-image.json/grype-image.json
+      # (High+Critical counts) and metadata.json (VEX source) — plus the
+      # combined artifact name and the run page link (there is no
+      # standalone authenticated-free artifact download URL; the run's
+      # Artifacts list is the actual download surface). Commentary only:
+      # both steps are continue-on-error and this job is not in
+      # security-gate's needs:, so a comment-posting failure (e.g. a
+      # permissions edge case) can never affect the required check.
+      # ------------------------------------------------------------------
+      - name: Build PR scan-summary comment body
+        id: pr-summary
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        run: |
+          set -uo pipefail
+          bundle_dir="${{ runner.temp }}/security-export-full"
+          body_file="${{ runner.temp }}/pr-comment-body.md"
+          {
+            echo "<!-- security-export-summary -->"
+            echo "### Security export summary"
+            echo
+            echo "| Service | Trivy High+Critical | Grype High+Critical | VEX source |"
+            echo "| --- | --- | --- | --- |"
+            found=false
+            for dir in "$bundle_dir"/security-export-*/; do
+              [ -d "$dir" ] || continue
+              found=true
+              svc="$(basename "$dir")"
+              svc="${svc#security-export-}"
+              svc="${svc%-*}"  # strip the trailing -<short-sha> (7 hex chars, never dash-bearing)
+              trivy_count="n/a"
+              grype_count="n/a"
+              vex_source="unknown"
+              if [ -f "${dir}trivy-image.json" ]; then
+                trivy_count=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity == "HIGH" or .Severity == "CRITICAL")] | length' "${dir}trivy-image.json" 2>/dev/null) || trivy_count="n/a"
+              fi
+              if [ -f "${dir}grype-image.json" ]; then
+                grype_count=$(jq '[.matches[]? | select(.vulnerability.severity == "High" or .vulnerability.severity == "Critical")] | length' "${dir}grype-image.json" 2>/dev/null) || grype_count="n/a"
+              fi
+              if [ -f "${dir}metadata.json" ]; then
+                vex_source=$(jq -r '.vex.source // "unknown"' "${dir}metadata.json" 2>/dev/null) || vex_source="unknown"
+              fi
+              echo "| ${svc} | ${trivy_count} | ${grype_count} | ${vex_source} |"
+            done
+            if [ "$found" = false ]; then
+              echo "| _no per-service export bundles found in this run_ | | | |"
+            fi
+            echo
+            echo "**Run:** ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }} (Artifacts list, including the consolidated bundle, lives there)"
+            echo
+            echo "**Consolidated artifact:** \`security-export-full-${{ steps.sha.outputs.short }}\`"
+            echo
+            echo '```bash'
+            echo "gh run download ${{ github.run_id }} -n security-export-full-${{ steps.sha.outputs.short }}"
+            echo '```'
+          } > "$body_file"
+          echo "body_file=$body_file" >> "$GITHUB_OUTPUT"
+
+      # Find-or-create against the hidden marker, not the PR's comment
+      # history position, so re-runs on the same PR update one comment
+      # instead of spamming a new one per push. Uses the pull-requests:
+      # write permission already granted at the workflow level (no
+      # per-job permissions: override — same as every other job in this
+      # file, all of which rely on that single workflow-level block); per
+      # GitHub's token-permission model a PR's issue-comment write is
+      # governed by the pull-requests scope (not issues), even though the
+      # REST path is /issues/{number}/comments, so no additional scope is
+      # needed.
+      - name: Post or update PR scan-summary comment
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          BODY_FILE: ${{ steps.pr-summary.outputs.body_file }}
+        run: |
+          set -uo pipefail
+          if [ -z "${BODY_FILE:-}" ] || [ ! -f "$BODY_FILE" ]; then
+            echo "::warning::pr-summary comment body missing (prior step failed?); skipping post"
+            exit 0
+          fi
+          api="${GITHUB_API_URL:-https://api.github.com}"
+          marker='<!-- security-export-summary -->'
+
+          existing_id=""
+          page=1
+          while :; do
+            resp=$(curl -fsS \
+              -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              "${api}/repos/${REPO}/issues/${PR_NUMBER}/comments?per_page=100&page=${page}") || break
+            match=$(echo "$resp" | jq -r --arg marker "$marker" '[.[] | select(.body | contains($marker))][0].id // empty')
+            if [ -n "$match" ]; then existing_id="$match"; break; fi
+            count=$(echo "$resp" | jq 'length' 2>/dev/null || echo 0)
+            [ "${count:-0}" -lt 100 ] && break
+            page=$((page + 1))
+          done
+
+          payload=$(jq -Rs '{body: .}' < "$BODY_FILE")
+
+          if [ -n "$existing_id" ]; then
+            echo "updating existing security-export-summary comment id=${existing_id}"
+            curl -fsS -X PATCH \
+              -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              "${api}/repos/${REPO}/issues/comments/${existing_id}" \
+              -d "$payload" >/dev/null
+          else
+            echo "posting new security-export-summary comment"
+            curl -fsS -X POST \
+              -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              "${api}/repos/${REPO}/issues/${PR_NUMBER}/comments" \
+              -d "$payload" >/dev/null
+          fi
 
   # --------------------------------------------------------------------------
   # Security Gate: aggregate required check
