@@ -3,7 +3,7 @@
 The gate derives everything it builds, scans, and smokes from files your
 repository already maintains for local development: the canonical Compose
 file, its Dockerfiles, and the Helm chart. You hand-author no manifest, no
-contract makefile, and no CI scripts — the v0.5 consumer contract
+contract makefile, and no CI scripts; the v0.5 consumer contract
 (`Makefile.ci`, driven by `make` targets) was removed at this major
 version, not deprecated. Conventions are enforced by fail-closed lint in
 the gate's `plan` job; a nonconforming shape blocks with a named rule and
@@ -15,7 +15,7 @@ anything expensive runs.
 - **Image set (the BOM).** `docker buildx bake --print` over your Compose
   file resolves every non-local `build:` service into a build target
   (name, dockerfile, context, args, tags). The plan job publishes the
-  annotated BOM every run — job summary plus `plan-bom` artifact — with an
+  annotated BOM every run (job summary plus `plan-bom` artifact) with an
   `excluded:` section naming services filtered out and why, and a
   `dependencies:` section for declared downloaded dependencies. Each build
   leg re-prints its target and diffs it against the published plan, so the
@@ -38,7 +38,7 @@ not read by the derivation. The top level must map `services:`.
 
 - **Build services.** Every service with `build:` becomes a build + scan
   target unless it is local-only. Local-only means the exact profile
-  spelling `profiles: [local]` — `profiles: [dev]` or `[Local]` does not
+  spelling `profiles: [local]`; `profiles: [dev]` or `[Local]` does not
   exclude. Exclusions are published in the BOM's `excluded:` section, never
   silent. At most ten non-local build services are supported.
 - **Image tags.** Every non-local build service declares an explicit
@@ -48,14 +48,14 @@ not read by the derivation. The top level must map `services:`.
   ship-set check, so it must be a committed literal. A digest cannot exist
   before the build, so no digest is required here.
 - **Healthchecks.** Every non-local build service declares `healthcheck:`
-  with a truthy `test` command — HTTP, TCP, or exec. Compose healthchecks
+  with a truthy `test` command (HTTP, TCP, or exec). Compose healthchecks
   and Helm readiness probes are separate integration points: Compose
   proves the service can run locally; Helm proves Kubernetes can route to
   a ready workload. The two need not share a command or protocol.
 - **Platform.** v0.6 builds, scans, and smokes `linux/amd64` only, and the
   gate pins that platform on every build. A committed `platform:` (or
   `build.platforms`) other than `linux/amd64` blocks rather than being
-  silently overridden — including on image-only dependency services.
+  silently overridden, including on image-only dependency services.
 
 ## Downloaded runtime dependencies
 
@@ -64,14 +64,14 @@ provider your chart deploys itself) is a downloaded runtime dependency
 only when all three hold:
 
 1. it declares the marker key `x-downloaded-dependency` (hyphens exactly);
-2. its `image:` string pins the digest inline — `repo:tag@sha256:...` — a
+2. its `image:` string pins the digest inline (`repo:tag@sha256:...`), a
    separate digest field is not read. Registry tags are mutable, so the
    digest is the real supply-chain pin; the tag stays for readability;
 3. the marker records the chart-facing tag as
    `x-downloaded-dependency.chart-tag` (hyphen, not underscore).
 
 The gate does not treat dependencies as release artifacts and does not
-claim to scan them. An unmarked or tag-only external image blocks — v0.6
+claim to scan them. An unmarked or tag-only external image blocks; v0.6
 supports downloaded runtime dependencies, not external application release
 images. The ship-set cross-check matches a rendered chart reference
 against the declared `chart-tag` by **exact** string equality (no registry
@@ -82,41 +82,41 @@ Compose declaration is updated.
 
 ## Dockerfiles and build inputs
 
-- **Blessed base ARG pair.** Every target's Dockerfile declares both
-  `ARG BUILDER_IMAGE` and `ARG RUNTIME_IMAGE` — even single-stage builds
-  declare both. Dev defaults never survive CI: the gate overrides both
-  args with hardened bases after its registry login/failover resolution,
-  so no base-image pinning burden falls on developers. The Dockerfile is
-  resolved from `build.context`/`build.dockerfile` against the Compose
-  file's directory; `dockerfile_inline` is unsupported and fails closed.
+- **Base images are the consumer's choice.** The gate does not supply,
+  override, or require any base-image build arg. Pin bases to a registry
+  the gate can authenticate to per
+  [appendix B](RUNBOOK.md#b-hardened-base-registry-login-matrix) if you
+  want hardened bases; the gate scans whatever the Dockerfile builds. The
+  Dockerfile is resolved from `build.context`/`build.dockerfile` against
+  the Compose file's directory; `dockerfile_inline` is unsupported and
+  fails closed.
 - **Committed literal args.** `build.args` must be a mapping of committed
   literal values. List syntax, null pass-through values, any environment
   interpolation in a build-affecting field, `build.secrets`, and
   `build.ssh` all block. A literal dollar needs Compose's `$$` escape.
-  The gate supplies only the two base overrides.
 - **Secret-like arg names.** Arg names containing `TOKEN`, `SECRET`,
   `PASSW`, or `CREDENTIAL`, ending in `_KEY`, or exactly `KEY` block even
-  with harmless literal values — false positives are by design; rename
+  with harmless literal values. False positives are by design; rename
   the arg (`PUBLIC_KEY` → `PUBLIC_KEY_NAME` still blocks; pick a name
   without the fragment).
 - **Build-context exclusions.** Every build context directory carries its
   own `.dockerignore` containing the four literal lines `.env`, `*.pem`,
   `*.key`, and `*credentials*`. Equivalent patterns (`**/*.pem`, `.env*`)
-  do not satisfy the check — the four exact lines must be present.
+  do not satisfy the check; the four exact lines must be present.
 
 ## Chart conventions (non-image_only)
 
 The gate renders `helm template <chart_path> -f <values_local>`; a render
 failure fails closed before any chart rule runs.
 
-- **Readiness.** Every container of every rendered deployable workload —
-  kinds `Deployment`, `StatefulSet`, and `DaemonSet` — declares a
+- **Readiness.** Every container of every rendered deployable workload
+  (kinds `Deployment`, `StatefulSet`, and `DaemonSet`) declares a
   `readinessProbe`, sidecars included.
 - **One smoke target.** Exactly one container has an `httpGet`
   readinessProbe whose port a Service routes to. The Service's selector
   must be a label-subset of the pod template labels, and the probe port is
   matched against the Service's `targetPort` (falling back to `port`) by
-  equality — a named probe port (`port: http`) needs the Service
+  equality: a named probe port (`port: http`) needs the Service
   `targetPort` spelled identically.
 - **Ship-set invariant (`S \ D ⊆ B`).** Let `B` be the tags built from
   non-local Compose build services, `D` the declared downloaded
@@ -132,7 +132,7 @@ failure fails closed before any chart rule runs.
 
 ## Caller conventions
 
-The caller workflow is a thin pointer — data, never behavior. See
+The caller workflow is a thin pointer: data, never behavior. See
 [INPUTS.md](INPUTS.md) for the seven-input surface and
 [RUNBOOK.md](RUNBOOK.md) for onboarding steps.
 
@@ -145,7 +145,7 @@ The caller workflow is a thin pointer — data, never behavior. See
 - `smoke_resources` is a CSV drawn from the gate-owned catalog:
   `postgres-pgvector`, `gateway-crds`. A resource type not in the catalog
   is a ci-scans feature request, not a consumer escape hatch.
-- Keep the job id `security-scan` — it is half of the required check
+- Keep the job id `security-scan`; it is half of the required check
   context `security-scan / Security Gate`.
 
 ## Rule table
@@ -166,7 +166,9 @@ else blocks the run before any build starts.
 | [`build-context-excludes`](#rule-build-context-excludes) | block | a build context can include env/credential/key material |
 | [`compose-platform`](#rule-compose-platform) | block | a platform other than `linux/amd64` is declared |
 | [`bake-resolve`](#rule-bake-resolve) | block | `bake --print` fails on the Compose file |
-| [`hardened-args`](#rule-hardened-args) | block | a Dockerfile lacks the blessed base ARG pair |
+| [`chart-missing`](#rule-chart-missing) | block | `image_only` is false and no chart exists at `chart_path` |
+| [`chart-undeclared`](#rule-chart-undeclared) | block | `image_only` is true but a Helm chart exists anywhere in the repo |
+| [`chart-resolve`](#rule-chart-resolve) | block | `helm template` fails on the declared chart (e.g. unresolved dependency) |
 | [`chart-readiness`](#rule-chart-readiness) | block | a rendered workload container lacks readiness |
 | [`smoke-target`](#rule-smoke-target) | block | no single Service-backed HTTP readiness target |
 | [`ship-set`](#rule-ship-set) | block | a rendered image is neither built nor a declared dependency |
@@ -187,7 +189,7 @@ repository root (or point `compose_file` at it).
 
 ### Rule: compose-no-builds
 
-At least one non-local `build:` service must exist — `image_only`
+At least one non-local `build:` service must exist; `image_only`
 repositories included; the gate exists to build and scan at least one
 image. Remediation: add a `build:` stanza for the image this repository
 produces.
@@ -202,7 +204,7 @@ repository.
 ### Rule: compose-image-tag
 
 Every non-local build service needs `image:` with an explicit literal tag.
-`:latest`, untagged, and interpolated (`app:${TAG}`) references block —
+`:latest`, untagged, and interpolated (`app:${TAG}`) references block;
 the gate builds with a scrubbed environment, so an interpolated tag would
 resolve empty. Remediation: `image: app-api:1.4.2` (bump on release); a
 literal dollar needs the `$$` escape.
@@ -210,7 +212,7 @@ literal dollar needs the `$$` escape.
 ### Rule: compose-healthcheck
 
 Every non-local build service declares `healthcheck:` with a truthy
-`test` — HTTP, TCP, or exec (`healthcheck: {disable: true}` blocks).
+`test`: HTTP, TCP, or exec (`healthcheck: {disable: true}` blocks).
 Remediation: `healthcheck: {test: [CMD, /app/healthcheck]}`.
 
 ### Rule: dependency-shape
@@ -233,8 +235,8 @@ args, null pass-through values, environment interpolation in any
 build-affecting field, secret-like arg names (`TOKEN`/`SECRET`/`PASSW`/
 `CREDENTIAL` fragments, `_KEY` suffix, or exactly `KEY`), `build.secrets`,
 and `build.ssh`. Remediation: commit the literal value, escape literal
-dollars as `$$`, rename secret-like args; the gate alone supplies
-`BUILDER_IMAGE`/`RUNTIME_IMAGE`.
+dollars as `$$`, rename secret-like args. The gate does not supply or
+override any arg value.
 
 ### Rule: build-context-excludes
 
@@ -246,7 +248,7 @@ lines.
 ### Rule: compose-platform
 
 `platform:` and `build.platforms` may only say `linux/amd64`, on every
-service including dependencies — an arm64 dev override committed for
+service including dependencies; an arm64 dev override committed for
 Apple-silicon laptops blocks CI. Remediation: delete the field or set it
 to `linux/amd64`; multi-architecture builds are a follow-up.
 
@@ -256,18 +258,37 @@ to `linux/amd64`; multi-architecture builds are a follow-up.
 is attached to the verdict. Runs only after the shape rules above pass.
 Remediation: fix the Compose error bake names.
 
-### Rule: hardened-args
+### Rule: chart-missing
 
-Every target's Dockerfile declares `ARG BUILDER_IMAGE` and
-`ARG RUNTIME_IMAGE` (both, even single-stage builds), so the gate's
-hardened-base overrides take effect. An unreadable Dockerfile fails
-closed. Remediation: add both ARG lines and consume them as your base
-images.
+`image_only` is false (the default) and no `Chart.yaml` exists at
+`chart_path`; the gate verifies the declaration itself instead of
+letting helm fail downstream.
+Remediation: author the chart at `chart_path`, or set `image_only: true`
+if this repository has no deployable chart.
+
+### Rule: chart-undeclared
+
+`image_only` is true but a `Chart.yaml` exists anywhere in the repository
+tree (excluding vendored dependency copies under any `charts/`
+directory). The check is repo-wide, not `chart_path`-only, so an owned
+chart at a different path cannot evade it. Remediation: set
+`image_only: false` and declare `chart_path`, or remove the chart if it
+is not deployed from this repository.
+
+### Rule: chart-resolve
+
+`helm template` must resolve the declared chart; helm's stderr is
+attached to the verdict. A chart with an unresolved dependency (missing
+`helm dependency build`, or a broken repository/path) fails here with a
+named, remediation-linked message instead of a raw stack trace.
+Remediation: fix the dependency declaration, or commit the vendored
+`charts/` directory if the dependency source is unavailable at plan
+time.
 
 ### Rule: chart-readiness
 
 Every container of every rendered `Deployment`/`StatefulSet`/`DaemonSet`
-declares a `readinessProbe` — sidecars too. Remediation: add the probe to
+declares a `readinessProbe`, sidecars too. Remediation: add the probe to
 the named container.
 
 ### Rule: smoke-target
@@ -275,7 +296,7 @@ the named container.
 The render must yield exactly one container with an `httpGet`
 readinessProbe whose port a Service routes to (selector is a label-subset
 of the pod labels; probe port equals the Service `targetPort`, falling
-back to `port` — named ports must match spelling). Zero or multiple
+back to `port`; named ports must match spelling). Zero or multiple
 targets block, naming the candidates. Remediation: expose exactly one
 HTTP readiness target through a matching Service.
 
@@ -306,7 +327,7 @@ block. Remediation: pin the SHA and record the tag as a trailing comment.
 
 ### Rule: gate-job-id
 
-The job calling the reusable workflow must keep the id `security-scan` —
+The job calling the reusable workflow must keep the id `security-scan`;
 it is half of the required check context `security-scan / Security Gate`.
 A renamed id reports under a different context and the branch-protection
 ruleset silently no longer matches. Remediation: rename the job id back
@@ -327,7 +348,7 @@ missing mapping.
 
 The `with:` surface is exactly the seven v0.6 inputs; inputs removed at
 this major version are rejected by name with migration guidance.
-Remediation: delete the key — see the removed-inputs table in
+Remediation: delete the key; see the removed-inputs table in
 [INPUTS.md](INPUTS.md).
 
 ### Rule: unreadable-caller

@@ -1,5 +1,6 @@
 # Project Context
 
+- **NEVER push directly to `main` (or any protected branch).** Always work on a branch and open a PR, even for one-line fixes, even when a direct push would technically succeed (e.g. because branch protection is misconfigured). If you notice branch protection would allow a direct push, that is not permission to use it; open a PR anyway.
 - **Stack:** Python
 - Prefer package/app source directories (`scripts/`, `scripts/lib/`, `config/`, `templates/`, `.github/workflows/`).
 - Commits must be blocked by pre-commit hooks running static analysis (e.g. `ruff`, `mypy`).
@@ -16,11 +17,11 @@
 
 ### Discovery Order (Mandatory)
 
-1. `search_graph` — find functions, classes, routes, and variables by name/pattern
-2. `trace_call_path` — identify callers/callees and impact
-3. `get_code_snippet` — read implementation for exact qualified names
-4. `query_graph` — use for multi-hop or aggregate questions
-5. `get_architecture` — use for high-level structure when needed
+1. `search_graph`: find functions, classes, routes, and variables by name/pattern
+2. `trace_call_path`: identify callers/callees and impact
+3. `get_code_snippet`: read implementation for exact qualified names
+4. `query_graph`: use for multi-hop or aggregate questions
+5. `get_architecture`: use for high-level structure when needed
 
 ### Fallback Rules (Only When Needed)
 
@@ -45,7 +46,7 @@ Use grep/glob/file search only for:
 - `search_code` is content-based grep; it is not a filename index.
 - If `label="File"` looks sparse, retry with `label="Module"` before using grep/glob fallback.
 
-# Tokenify — Context & Token Optimization
+# Tokenify: Context & Token Optimization
 
 ## Goal
 Minimize token consumption and prevent context window pollution while maintaining high accuracy in code generation and task execution.
@@ -85,7 +86,7 @@ Minimize token consumption and prevent context window pollution while maintainin
 ## 1. Think Before Coding
 **Don't assume. Don't hide confusion. Surface tradeoffs.**
 - State your assumptions explicitly. If uncertain, ask.
-- If multiple interpretations exist, present them — don't pick silently.
+- If multiple interpretations exist, present them; don't pick silently.
 - If a simpler approach exists, say so. Push back when warranted.
 
 ## 2. Simplicity First
@@ -111,9 +112,33 @@ Minimize token consumption and prevent context window pollution while maintainin
 
 - **Do not** run two write agents in the same working tree. `git checkout` / `git switch` in one session moves `HEAD` for every session sharing that directory.
 - Prefer one linked worktree per concurrent branch under `.worktrees/<slug>/` (must be gitignored). Keep the primary checkout on `main` (or one stable integration branch).
-- Bind each write session’s cwd / workspace root to its worktree path — not the primary checkout.
+- Bind each write session’s cwd / workspace root to its worktree path, not the primary checkout.
 - Write subagents must receive an absolute worktree path and must not `checkout` / `switch` in the parent tree. Read-only explore/review may share the parent tree.
+- **No exception for quick, one-off, or corrective tasks.** A single `git checkout`/`git switch`/`git reset --hard` in the shared primary checkout is exactly as disruptive whether the task is large or small. If a task needs a different branch checked out, even briefly, cut a worktree for it.
 - Prefer harness-native isolation when already present; otherwise `git worktree add`. Full playbook: skill companion `project-onboarding/WORKTREES.md` (or repo docs that mirror it).
+
+## Stacked PRs (opt-in; only when the operator asks for a stacked-PR strategy)
+
+Reference (follow this doc for create/manage/merge mechanics):
+https://docs.github.com/en/pull-requests/how-tos/create-pull-requests/managing-stacked-pull-requests
+
+- Use GitHub's native stacks via the `gh stack` CLI extension
+  (`gh extension install github/gh-stack`; public preview).
+- Branches managed manually (e.g. per-worktree, as in this repo): link
+  already-open PRs bottom-to-top with `gh stack link <bottom> <top>...`;
+  no local tracking state required. It corrects base-branch chaining
+  automatically.
+- Change to a lower layer: commit on that layer's branch, then
+  cascade-rebase every branch above it (`gh stack rebase --upstack` +
+  `gh stack push`, or manual `git rebase --onto` + `git push
+  --force-with-lease` per branch).
+- After the bottom PR merges: `gh stack sync --prune` (fetches,
+  fast-forwards trunk, rebases + pushes the remaining branches).
+- Never use the website "Rebase stack" button when signed commits are
+  required: server-side rebase commits are unsigned; rebase via CLI.
+- Merge bottom-up only. A stacked PR still obeys every merge gate on it
+  (e.g. draft status, integration-gate banners); stacking changes review
+  topology while merge discipline stays intact.
 
 ## STANDARDS.md
 
@@ -124,6 +149,6 @@ Minimize token consumption and prevent context window pollution while maintainin
 
 ## Available MCP Tools
 
-- **codebase-memory-mcp** — graph-first code discovery (see block above)
-- **user-github** — PRs, issues, file contents on GitHub
-- **user-atlassian** — Jira / Confluence
+- **codebase-memory-mcp**: graph-first code discovery (see block above)
+- **user-github**: PRs, issues, file contents on GitHub
+- **user-atlassian**: Jira / Confluence

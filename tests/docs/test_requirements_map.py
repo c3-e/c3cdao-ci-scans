@@ -85,7 +85,7 @@ def lint_rule_ids():
 def test_all_lint_rules_documented():
     """The docstring enumeration matches the implemented v0.6 rule set."""
     rules = lint_rule_ids()
-    assert len(rules) == 17, f"expected 17 lint rule ids, parsed {rules}"
+    assert len(rules) == 19, f"expected 19 lint rule ids, parsed {rules}"
     sources = LINT.read_text() + "".join(
         p.read_text() for p in sorted(LINT.parent.glob("lint_rules/*.py"))
     )

@@ -18,13 +18,14 @@ never block.
 
 Rule ids: compose-missing, compose-no-builds, matrix-cap, compose-image-tag,
 compose-healthcheck, dependency-shape, build-input-explicit,
-build-context-excludes, compose-platform, bake-resolve, hardened-args,
-chart-readiness, smoke-target, ship-set, smoke-resource-unknown,
-built-unscheduled, gate-job-id.
+build-context-excludes, compose-platform, bake-resolve,
+chart-missing, chart-undeclared, chart-resolve, chart-readiness,
+smoke-target, ship-set, smoke-resource-unknown, built-unscheduled,
+gate-job-id.
 
 Caller structure rules carried over from v0.5.x (load-bearing only):
 gate-ref-pin (the reusable-workflow ref is a full 40-hex commit SHA),
-gate-job-id (the calling job id is exactly 'security-scan' — half of the
+gate-job-id (the calling job id is exactly 'security-scan', half of the
 required check context), no-secrets-inherit + missing-secret-map (all four
 registry secrets mapped explicitly), unknown-input (the with: surface is
 exactly the v0.6 inputs; removed v0.5.x inputs are rejected by name), and
@@ -63,7 +64,6 @@ from lint_rules.compose import (
     compose_no_builds,
     compose_platform,
     dependency_shape,
-    hardened_args,
     matrix_cap,
 )
 
@@ -85,6 +85,77 @@ KNOWN_INPUTS = (
 )
 REMOVED_INPUTS = ("contract_file", "require_hardened_bases", "scan_image")
 _FULL_SHA_RE = re.compile(r"@[0-9a-f]{40}$")
+# Helm vendors chart dependencies into a `charts/` subdirectory (tgz or,
+# once unpacked, a nested chart tree with its own Chart.yaml), excluded
+# from the repo-wide chart-undeclared glob so a legitimate dependency tree
+# never false-positives (e.g. a repo vendoring a template chart).
+_VENDORED_CHART_DIR = "charts"
+# The plan job checks out this repo's own tooling into `.ci-scans/` inside
+# the consumer's $GITHUB_WORKSPACE (--consumer-root). That checkout carries
+# this repo's own test fixtures, several with intentional Chart.yaml
+# files, which the repo-wide chart-undeclared glob would otherwise
+# misattribute to the consumer (every image_only consumer would
+# false-positive on this repo's own fixtures).
+_GATE_CHECKOUT_DIR = ".ci-scans"
+
+
+def chart_missing(chart_path: Path) -> list[Verdict]:
+    """A non-image_only consumer's declared chart_path must exist and be a chart."""
+    if (chart_path / "Chart.yaml").is_file():
+        return []
+    return [
+        verdict(
+            "chart-missing",
+            f"no Helm chart at '{chart_path}' (Chart.yaml not found); "
+            "image_only is false, so a deployable chart is required",
+        )
+    ]
+
+
+def chart_undeclared(repo_root: Path) -> list[Verdict]:
+    """An image_only consumer must not carry an undeclared chart anywhere.
+
+    Repo-wide glob (not chart_path-only): an image_only caller has no
+    chart_path checked by anything downstream, so a chart living at any
+    other path in the repo would otherwise evade detection entirely
+    (an owned chart at a nonstandard path while declaring
+    image_only: true).
+    """
+    found = [
+        p
+        for p in sorted(repo_root.rglob("Chart.yaml"))
+        if _VENDORED_CHART_DIR not in p.relative_to(repo_root).parts[:-1]
+        and _GATE_CHECKOUT_DIR not in p.relative_to(repo_root).parts[:-1]
+    ]
+    if not found:
+        return []
+    return [
+        verdict(
+            "chart-undeclared",
+            "image_only is true but the repo declares a Helm chart at "
+            + ", ".join(str(p) for p in found)
+            + "; either remove the chart or set image_only: false and "
+            "declare chart_path",
+        )
+    ]
+
+
+def chart_resolve(
+    chart_path: Path, values: list[Path] | None = None
+) -> tuple[list[dict[str, Any]] | None, list[Verdict]]:
+    """Resolve the rendered chart, converting a render failure into a verdict.
+
+    Mirrors `bake_resolve`: `helm template` fails closed (SystemExit) when
+    a chart's dependencies were never built: missing repo/path, or
+    not vendored (the plan job runs `helm dependency build`
+    first, but a broken dependency still fails here). This
+    converts that failure into a named, remediation-linked block instead
+    of letting the SystemExit surface as a raw stack trace.
+    """
+    try:
+        return render_chart(chart_path, values), []
+    except SystemExit as e:
+        return None, [verdict("chart-resolve", str(e.code))]
 
 
 def _find_gate_job(jobs: dict[str, Any]) -> tuple[str, dict[str, Any]] | None:
@@ -126,7 +197,7 @@ def lint_caller_workflow(caller_path: Path) -> list[Verdict]:
         verdicts.append(
             verdict(
                 "gate-job-id",
-                f"gate job id is '{gate_id}', must be 'security-scan' — the "
+                f"gate job id is '{gate_id}', must be 'security-scan'; the "
                 "job id is half of the required check context "
                 "'security-scan / Security Gate'; a different id reports "
                 "under a different context and the ruleset silently no "
@@ -198,12 +269,16 @@ def convention_verdicts(
     values_local: Path | None = None,
     image_only: bool = False,
     smoke_resources: str = "",
+    consumer_root: Path | None = None,
 ) -> list[Verdict]:
     """The full fail-closed convention pipeline for one consumer checkout.
 
     Chart rules run only for non-image_only consumers; bake resolution
     runs only when the committed shapes are already clean, so shape
-    violations surface before bake ever executes.
+    violations surface before bake ever executes. chart-missing/
+    chart-undeclared are verified declaration checks: image_only
+    is either backed by no chart anywhere in the repo, or a real chart
+    exists at chart_path, never a stale, unverified flag.
     """
     presence = compose_missing(compose_path)
     if presence:
@@ -219,22 +294,29 @@ def convention_verdicts(
         *dependency_shape(classified),
         *build_input_explicit(compose, classified),
         *build_context_excludes(compose_path, compose, classified),
-        *hardened_args(compose_path, compose, classified),
         *smoke_resource_unknown(smoke_resources),
     ]
     if not verdicts:
         _, resolve = bake_resolve(compose_path, classified["targets"])
         verdicts.extend(resolve)
-    if image_only or chart_path is None:
+    repo_root = consumer_root or compose_path.parent
+    if image_only:
+        return verdicts + chart_undeclared(repo_root)
+    if chart_path is None:
         return verdicts
+    verdicts += chart_missing(chart_path)
     if not any(v["level"] == "block" for v in verdicts):
-        rendered = render_chart(chart_path, [values_local] if values_local else None)
-        verdicts += [
-            *chart_readiness(rendered),
-            *smoke_target(rendered),
-            *ship_set(compose, classified, rendered),
-            *built_unscheduled(compose, classified, rendered),
-        ]
+        rendered, resolve = chart_resolve(
+            chart_path, [values_local] if values_local else None
+        )
+        verdicts.extend(resolve)
+        if rendered is not None:
+            verdicts += [
+                *chart_readiness(rendered),
+                *smoke_target(rendered),
+                *ship_set(compose, classified, rendered),
+                *built_unscheduled(compose, classified, rendered),
+            ]
     return verdicts
 
 
@@ -270,6 +352,7 @@ def main(argv: list[str]) -> int:
                 values_local=args.consumer_root / str(values) if values else None,
                 image_only=with_map.get("image_only") is True,
                 smoke_resources=str(with_map.get("smoke_resources", "")),
+                consumer_root=args.consumer_root,
             )
         )
     for v in verdicts:

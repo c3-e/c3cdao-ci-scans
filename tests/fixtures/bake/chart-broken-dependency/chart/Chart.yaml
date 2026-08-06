@@ -1,0 +1,11 @@
+apiVersion: v2
+name: chart-broken-dependency
+description: >-
+  Declares a dependency that can never be resolved (bad file:// path);
+  proves a chart-resolve failure surfaces as a named,
+  remediation-linked verdict instead of a raw SystemExit/stack trace.
+version: 0.1.0
+dependencies:
+  - name: missing-sub
+    version: 0.1.0
+    repository: "file://../does-not-exist"

@@ -3,7 +3,7 @@ explicit build inputs, and bake plan resolution.
 
 Rule ids here: compose-missing, compose-no-builds, matrix-cap,
 compose-image-tag, compose-healthcheck, compose-platform, dependency-shape,
-build-input-explicit, build-context-excludes, hardened-args, bake-resolve.
+build-input-explicit, build-context-excludes, bake-resolve.
 """
 
 from __future__ import annotations
@@ -19,7 +19,6 @@ from lint_rules import Verdict, verdict
 MATRIX_CAP = 10
 _SECRET_LIKE_FRAGMENTS = ("TOKEN", "SECRET", "PASSW", "CREDENTIAL")
 REQUIRED_DOCKERIGNORE = (".env", "*.pem", "*.key", "*credentials*")
-BLESSED_ARGS = ("BUILDER_IMAGE", "RUNTIME_IMAGE")
 
 
 # --- presence / shape -----------------------------------------------------------
@@ -91,7 +90,7 @@ def compose_image_tag(
                     "compose-image-tag",
                     f"build service '{name}' interpolates its image reference "
                     f"(image: {image!r}); the gate builds with a scrubbed "
-                    "environment, so the variable resolves empty — pin a "
+                    "environment, so the variable resolves empty; pin a "
                     "committed literal tag",
                 )
             )
@@ -179,8 +178,6 @@ def dependency_shape(classified: dict[str, Any]) -> list[Verdict]:
 
 def _secret_like(arg_name: str) -> bool:
     upper = arg_name.upper()
-    if upper in BLESSED_ARGS:
-        return False
     return (
         any(fragment in upper for fragment in _SECRET_LIKE_FRAGMENTS)
         or upper.endswith("_KEY")
@@ -205,7 +202,8 @@ def build_input_explicit(
     Rejected per build: non-mapping `args` (bare pass-through list), null
     arg values, environment interpolation in build-affecting fields,
     secret-like arg names, `build.secrets`, and `build.ssh`. The gate
-    supplies only the blessed BUILDER_IMAGE/RUNTIME_IMAGE overrides.
+    supplies no arg values of its own; the only execution-time override
+    is the platform pin.
     """
 
     def block(name: str, detail: str) -> Verdict:
@@ -314,54 +312,6 @@ def build_context_excludes(
     return verdicts
 
 
-def hardened_args(
-    compose_path: Path, compose: dict[str, Any], classified: dict[str, Any]
-) -> list[Verdict]:
-    """Every target's Dockerfile declares the blessed base ARG pair.
-
-    Hardened base injection relies on `ARG BUILDER_IMAGE` and
-    `ARG RUNTIME_IMAGE`; a Dockerfile without them silently ignores the
-    gate's overrides, so both must be present (an unreadable Dockerfile
-    fails closed).
-    """
-    verdicts = []
-    for name, svc in _target_services(compose, classified):
-        build = svc.get("build")
-        context = build.get("context", ".") if isinstance(build, dict) else "."
-        dockerfile = (
-            build.get("dockerfile", "Dockerfile")
-            if isinstance(build, dict)
-            else "Dockerfile"
-        )
-        path = (compose_path.parent / str(context) / str(dockerfile)).resolve()
-        try:
-            text = path.read_text()
-        except OSError as e:
-            verdicts.append(
-                verdict(
-                    "hardened-args",
-                    f"service '{name}': Dockerfile '{path}' unreadable ({e}); "
-                    "cannot prove the blessed ARG pair",
-                )
-            )
-            continue
-        declared = {
-            line.split()[1].partition("=")[0]
-            for line in text.splitlines()
-            if line.strip().upper().startswith("ARG ") and len(line.split()) > 1
-        }
-        missing = [arg for arg in BLESSED_ARGS if arg not in declared]
-        if missing:
-            verdicts.append(
-                verdict(
-                    "hardened-args",
-                    f"service '{name}': Dockerfile '{path}' lacks "
-                    "ARG " + " and ARG ".join(missing),
-                )
-            )
-    return verdicts
-
-
 # --- bake resolve -----------------------------------------------------------------
 
 
@@ -371,8 +321,8 @@ def bake_resolve(
     """Resolve the bake plan, converting a resolve failure into a verdict.
 
     Reuses the derivation's `run_bake_print` unchanged (same command, cwd,
-    scrubbed environment); its fail-closed stderr — which already names
-    this rule and attaches bake's stderr — becomes the verdict message.
+    scrubbed environment); its fail-closed stderr (which already names
+    this rule and attaches bake's stderr) becomes the verdict message.
     """
     stderr = io.StringIO()
     try:

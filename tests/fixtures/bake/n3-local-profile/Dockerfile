@@ -1,17 +1,16 @@
 # N=3 fixture service image (upgraded bootable for the live
 # cluster-smoke proof): a static HTTP server that serves /srv/healthz and
 # stays alive, runnable on a read-only root filesystem as nonroot. The
-# gate injects hardened bases via the blessed ARG pair; the runtime base
-# resolves to a Chainguard python image, so the chart runs
-# `python3 -m http.server`. The alpine defaults exist only so the ARG
-# pair has committed literals (hardened-args lint checks presence).
+# gate injects no base images; the committed defaults are the bases the
+# build uses. The runtime default carries python3 so the chart's
+# `python3 -m http.server` entrypoint boots (the chart runs each
+# container as uid 65532 with a read-only root filesystem).
 ARG BUILDER_IMAGE=alpine:3.20
-ARG RUNTIME_IMAGE=alpine:3.20
+ARG RUNTIME_IMAGE=python:3.12-alpine
 
 FROM ${BUILDER_IMAGE} AS build
 ARG SVC_NAME=unset
-# /tmp, not /: hardened builder bases (gate-injected BUILDER_IMAGE) run
-# nonroot and cannot write to the filesystem root.
+# /tmp, not /: nonroot builder bases cannot write to the filesystem root.
 RUN mkdir -p /tmp/srv && echo "built ${SVC_NAME}" > /tmp/srv/healthz \
     && cp /tmp/srv/healthz /tmp/srv/svc.txt
 

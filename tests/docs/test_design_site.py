@@ -224,8 +224,6 @@ def test_consumer_shape_assumptions_published() -> None:
         "chart-tag",               # D1 hyphen spelling
         "@sha256:",                # D2 in-image digest pin
         "exact",                   # D3 exact-string ship-set matching
-        "BUILDER_IMAGE",           # B2 blessed ARG pair
-        "RUNTIME_IMAGE",
         ".dockerignore",           # B5 four literal lines
         ".env",
         "*.pem",
