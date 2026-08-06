@@ -232,10 +232,10 @@ runs:
     - name: Upload Trivy SARIF to code scanning
       if: always()
       continue-on-error: true # fail-soft: consumer repos without Code Security enabled 403 here — must not fail the gate
-      uses: github/codeql-action/upload-sarif@9e3211c9a3b9311dfe05da2ed48eea3386f042dd  # v4.37.6
+      uses: github/codeql-action/upload-sarif@5595ccaf912efad79be6eef63a5619ff05969be3  # v4.37.6
       with:
         sarif_file: ${{ runner.temp }}/security-export/trivy-image.sarif
-        category: ${{ env.EXPORT_LEG }}
+        category: security-gate-image-${{ env.EXPORT_LEG }}
 
     - name: Assemble security export bundle
       if: always()

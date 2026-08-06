@@ -197,20 +197,23 @@ def test_sarif_step_scans_registry_backed_reference_with_same_suppression_surfac
 
 def test_sarif_upload_is_fail_soft_and_matrix_safe():
     """Code Security disabled on the consumer repo makes upload-sarif 403 —
-    verified live on petegpt during T6. That must never fail an otherwise
-    green gate, so the step must tolerate the failure, and its category
+    petegpt sits in that state today (T6 record: its code-scanning API
+    returns 403). That must never fail an otherwise green gate, so the step must tolerate the failure, and its category
     must vary per image-scan leg so multiple services don't collide in the
     Security tab."""
     upload = _step("Upload Trivy SARIF to code scanning")
     assert upload.get("continue-on-error") is True
     assert upload.get("if") == "always()"
-    assert upload["with"]["category"] == "${{ env.EXPORT_LEG }}"
+    assert upload["with"]["category"] == "security-gate-image-${{ env.EXPORT_LEG }}"
     assert upload["with"]["sarif_file"].endswith("trivy-image.sarif")
 
 
 def test_sarif_upload_action_is_sha_pinned_with_version_comment():
+    """Pin must be the release's COMMIT sha. The v4.37.6 annotated-tag
+    OBJECT sha (9e3211c...) looks like a valid pin but does not resolve in
+    a uses: line — tag objects are not commits."""
     text = ACTION.read_text()
-    assert "github/codeql-action/upload-sarif@9e3211c9a3b9311dfe05da2ed48eea3386f042dd  # v4.37.6" in text
+    assert "github/codeql-action/upload-sarif@5595ccaf912efad79be6eef63a5619ff05969be3  # v4.37.6" in text
 
 
 def test_sarif_scan_precedes_upload_and_follows_registry_publish():
