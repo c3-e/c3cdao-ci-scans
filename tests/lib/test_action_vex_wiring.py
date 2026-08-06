@@ -177,7 +177,45 @@ def test_scan_steps_stay_sha_pinned_with_version_comments():
     # its version comment.
     assert text.count(
         "aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1  # v0.35.0"
-    ) == 2
+    ) == 3
     assert text.count(
         "anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2  # v7.4.0"
     ) == 3
+
+
+# --- SARIF surface (VEX-8) -------------------------------------------------
+
+
+def test_sarif_step_scans_registry_backed_reference_with_same_suppression_surface():
+    sarif_scan = _step("Trivy scan — image (SARIF for code scanning)")
+    assert sarif_scan["with"]["image-ref"] == "${{ env.SCAN_REF }}"
+    assert sarif_scan["with"]["format"] == "sarif"
+    assert sarif_scan["with"]["trivyignores"] == ".trivyignore"
+    assert sarif_scan["with"]["trivy-config"] == "${{ env.VEX_TRIVY_CONFIG }}"
+    assert sarif_scan.get("if") == "always()"
+
+
+def test_sarif_upload_is_fail_soft_and_matrix_safe():
+    """Code Security disabled on the consumer repo makes upload-sarif 403 —
+    verified live on petegpt during T6. That must never fail an otherwise
+    green gate, so the step must tolerate the failure, and its category
+    must vary per image-scan leg so multiple services don't collide in the
+    Security tab."""
+    upload = _step("Upload Trivy SARIF to code scanning")
+    assert upload.get("continue-on-error") is True
+    assert upload.get("if") == "always()"
+    assert upload["with"]["category"] == "${{ env.EXPORT_LEG }}"
+    assert upload["with"]["sarif_file"].endswith("trivy-image.sarif")
+
+
+def test_sarif_upload_action_is_sha_pinned_with_version_comment():
+    text = ACTION.read_text()
+    assert "github/codeql-action/upload-sarif@9e3211c9a3b9311dfe05da2ed48eea3386f042dd  # v4.37.6" in text
+
+
+def test_sarif_scan_precedes_upload_and_follows_registry_publish():
+    names = [s.get("name") for s in _steps()]
+    publish_idx = names.index("Publish image to job-local registry (VEX product identity)")
+    scan_idx = names.index("Trivy scan — image (SARIF for code scanning)")
+    upload_idx = names.index("Upload Trivy SARIF to code scanning")
+    assert publish_idx < scan_idx < upload_idx
