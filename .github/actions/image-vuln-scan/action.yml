@@ -254,9 +254,16 @@ runs:
         BLOCKING: ${{ inputs.blocking }}
         GRYPE_JSON: ${{ steps.grype-export.outputs.json }}
         VEX_APPLIED: ${{ env.VEX_DOC }}
-        # github.job_workflow_sha (reusable-workflow file SHA) has no
-        # default env var — map it explicitly.
-        GATE_WORKFLOW_SHA: ${{ github.job_workflow_sha }}
+        # github.job_workflow_sha never populates for a job invoked from a
+        # reusable workflow — long-open runner bug, never fixed on that
+        # field: https://github.com/actions/runner/issues/2417. Likewise
+        # github.workflow_ref (and its $GITHUB_WORKFLOW_REF env mirror) is
+        # caller-scoped: it resolves to the consumer's own workflow file,
+        # not this gate's. job.workflow_sha / job.workflow_ref are GitHub's
+        # shipped replacement for exactly this reusable-workflow case — map
+        # both explicitly, same as everything else in this env: block.
+        GATE_WORKFLOW_SHA: ${{ job.workflow_sha }}
+        GATE_WORKFLOW_REF: ${{ job.workflow_ref }}
       run: |
         set -euo pipefail
         export_dir="${RUNNER_TEMP}/security-export"
@@ -280,7 +287,7 @@ runs:
           --arg image_digest "$image_digest" \
           --arg blocking "$BLOCKING" \
           --arg vex_source "$vex_source" \
-          --arg gate_workflow_ref "${GITHUB_WORKFLOW_REF:-}" \
+          --arg gate_workflow_ref "${GATE_WORKFLOW_REF:-}" \
           --arg gate_workflow_sha "${GATE_WORKFLOW_SHA:-}" \
           --arg caller_sha "${GITHUB_SHA:-}" \
           --arg run_id "${GITHUB_RUN_ID:-}" \
