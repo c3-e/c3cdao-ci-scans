@@ -63,10 +63,19 @@ runs:
         # its inner step; trivy-config: -> TRIVY_CONFIG is the explicitly
         # wired route (proven, spike run 31055413726 on spike/vex-gate).
         printf 'vulnerability:\n  vex:\n    - %s\n' "$vex_doc" > "${RUNNER_TEMP}/trivy-vex.yaml"
+        # Export-bundle naming (T3): leg name from the artifact naming
+        # convention (scan-image-<name>), short sha for per-run uniqueness.
+        # The dir must exist before the JSON export scans write into it.
+        mkdir -p "${RUNNER_TEMP}/security-export"
+        leg="${IMAGE_ARTIFACT_NAME#scan-image-}"
         {
           echo "VEX_DOC=${vex_doc}"
           echo "VEX_TRIVY_CONFIG=${RUNNER_TEMP}/trivy-vex.yaml"
+          echo "EXPORT_LEG=${leg}"
+          echo "EXPORT_SHORT_SHA=${GITHUB_SHA:0:7}"
         } >> "$GITHUB_ENV"
+      env:
+        IMAGE_ARTIFACT_NAME: ${{ inputs.image-artifact-name }}
 
     - name: Download image artifact
       uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4
@@ -124,3 +133,93 @@ runs:
         fail-build: ${{ inputs.blocking == 'true' }}
         output-format: table
         config: .grype.yaml
+
+    # ------------------------------------------------------------------------
+    # T3 — per-run security export bundle. Machine-readable evidence for one
+    # image-scan leg, downloadable via `gh run download`: both scan JSONs
+    # (tables above stay for logs), the image SBOM, the VEX doc exactly as
+    # applied (real consumer template or the empty default), and
+    # metadata.json. Every step is `if: always()` so the bundle uploads even
+    # when blocking=true fails the table scans above — a failing run is
+    # precisely when the evidence matters most. JSON re-scans reuse the DBs
+    # the table scans already downloaded and the same suppression surface
+    # (.trivyignore/.grype.yaml/VEX), so the JSONs mirror what gated.
+    - name: Trivy scan — image (JSON for export)
+      if: always()
+      uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1  # v0.35.0
+      with:
+        image-ref: ${{ inputs.image-tag }}
+        format: json
+        output: ${{ runner.temp }}/security-export/trivy-image.json
+        severity: ${{ inputs.trivy-severity }}
+        exit-code: '0'
+        trivyignores: .trivyignore
+        trivy-config: ${{ env.VEX_TRIVY_CONFIG }}
+
+    - name: Grype scan — image (JSON for export)
+      if: always()
+      id: grype-export
+      uses: anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2  # v7.4.0
+      env:
+        GRYPE_VEX_DOCUMENTS: ${{ env.VEX_DOC }}
+      with:
+        image: ${{ inputs.image-tag }}
+        severity-cutoff: high
+        fail-build: false
+        output-format: json
+        config: .grype.yaml
+
+    - name: Assemble security export bundle
+      if: always()
+      shell: bash
+      env:
+        IMAGE_TAG: ${{ inputs.image-tag }}
+        SBOM_FILE: ${{ inputs.sbom-artifact-name }}
+        BLOCKING: ${{ inputs.blocking }}
+        GRYPE_JSON: ${{ steps.grype-export.outputs.json }}
+        VEX_APPLIED: ${{ env.VEX_DOC }}
+      run: |
+        set -euo pipefail
+        export_dir="${RUNNER_TEMP}/security-export"
+        mkdir -p "$export_dir"
+        cp "$SBOM_FILE" "$export_dir/sbom-image.cdx.json"
+        cp "$GRYPE_JSON" "$export_dir/grype-image.json"
+        cp "$VEX_APPLIED" "$export_dir/vex-applied.openvex.json"
+        vex_source="consumer"
+        case "$VEX_APPLIED" in "${RUNNER_TEMP}"/*) vex_source="empty-default" ;; esac
+        image_digest="$(docker image inspect --format '{{if .RepoDigests}}{{index .RepoDigests 0}}{{else}}{{.Id}}{{end}}' "$IMAGE_TAG")"
+        # trivy-action leaves the pinned CLI on PATH; version + DB metadata
+        # come from `trivy version -f json` (grype's from its own report).
+        trivy_version="$(trivy version -f json 2>/dev/null | jq -c . 2>/dev/null || echo '{}')"
+        [ -n "$trivy_version" ] || trivy_version='{}'
+        jq -n \
+          --arg image_tag "$IMAGE_TAG" \
+          --arg image_digest "$image_digest" \
+          --arg blocking "$BLOCKING" \
+          --arg vex_source "$vex_source" \
+          --arg gate_workflow_ref "${GITHUB_WORKFLOW_REF:-}" \
+          --arg gate_workflow_sha "${GITHUB_JOB_WORKFLOW_SHA:-}" \
+          --arg caller_sha "${GITHUB_SHA:-}" \
+          --arg run_id "${GITHUB_RUN_ID:-}" \
+          --argjson trivy "$trivy_version" \
+          --slurpfile grype_report "$export_dir/grype-image.json" \
+          '{
+            image: {tag: $image_tag, digest: $image_digest},
+            blocking: $blocking,
+            vex: {source: $vex_source, file: "vex-applied.openvex.json"},
+            scanners: {
+              trivy: {version: ($trivy.Version // "unknown"), db: ($trivy.VulnerabilityDB // null)},
+              grype: ($grype_report[0].descriptor | {version: .version, db: (.db // null)})
+            },
+            gate: {workflow_ref: $gate_workflow_ref, workflow_sha: $gate_workflow_sha},
+            run: {caller_sha: $caller_sha, run_id: $run_id}
+          }' > "$export_dir/metadata.json"
+        ls -l "$export_dir"
+
+    - name: Upload security export bundle
+      if: always()
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+      with:
+        name: security-export-${{ env.EXPORT_LEG }}-${{ env.EXPORT_SHORT_SHA }}
+        path: ${{ runner.temp }}/security-export/
+        if-no-files-found: error
