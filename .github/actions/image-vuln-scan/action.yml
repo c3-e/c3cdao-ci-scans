@@ -36,9 +36,9 @@ runs:
     # .openvex/templates/main.openvex.json (data-only onboarding, resolved
     # against the caller checkout cwd like .trivyignore); absent that, an
     # empty-statements doc is written to RUNNER_TEMP so the scan steps can
-    # reference one unconditionally. Verified against the pinned CLIs
-    # (trivy 0.69.3 / grype 0.110.0): an empty-statements doc produces
-    # bit-identical findings to no VEX doc at all.
+    # reference one unconditionally. Verified against the pinned CLIs: an
+    # empty-statements doc produces bit-identical findings to no VEX doc
+    # at all.
     - name: Default scanner configs when consumer lacks them
       shell: bash
       run: |
@@ -59,13 +59,14 @@ runs:
         }
         VEXEOF
         fi
-        # trivy-action pin 57a97c7 (v0.35.0) does not forward ambient env to
-        # its inner step; trivy-config: -> TRIVY_CONFIG is the explicitly
-        # wired route (proven, spike run 31055413726 on spike/vex-gate).
+        # The pinned trivy-action does not forward ambient env to its inner
+        # step; trivy-config: -> TRIVY_CONFIG is its explicitly wired route.
         printf 'vulnerability:\n  vex:\n    - %s\n' "$vex_doc" > "${RUNNER_TEMP}/trivy-vex.yaml"
-        # Export-bundle naming (T3): leg name from the artifact naming
-        # convention (scan-image-<name>), short sha for per-run uniqueness.
-        # The dir must exist before the JSON export scans write into it.
+        # Precompute what the export-bundle steps below need and publish it
+        # via GITHUB_ENV: the resolved VEX doc + generated Trivy config, and
+        # the artifact-name parts — leg name from the scan-image-<name>
+        # artifact convention, short sha for per-run uniqueness. The export
+        # dir must exist before the JSON export scans write into it.
         mkdir -p "${RUNNER_TEMP}/security-export"
         leg="${IMAGE_ARTIFACT_NAME#scan-image-}"
         {
@@ -118,13 +119,12 @@ runs:
         output-format: table
         config: .grype.yaml
 
-    # Deliberately NO VEX wiring on the SBOM leg: anchore/sbom-action's
-    # CycloneDX root metadata.component carries no purl at the current pin
-    # (e22c389, v0.24.0 / Syft v1.42.3), so there is no product identity for
-    # GRYPE_VEX_DOCUMENTS to match against — VEX here would be a silent no-op
-    # that looks wired but isn't (T1 acceptance record, spike run
-    # 31055413726: root_component_purl=MISSING). Revisit only if the
-    # sbom-action pin changes its CycloneDX output shape.
+    # Deliberately NO VEX wiring on the SBOM leg: at the current pin,
+    # anchore/sbom-action's CycloneDX root metadata.component carries no
+    # purl, so there is no product identity for GRYPE_VEX_DOCUMENTS to
+    # match against — VEX here would be a silent no-op that looks wired
+    # but isn't. Revisit only if the sbom-action pin changes its CycloneDX
+    # output shape.
     - name: Grype scan — image SBOM
       uses: anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2  # v7.4.0
       with:
@@ -135,15 +135,14 @@ runs:
         config: .grype.yaml
 
     # ------------------------------------------------------------------------
-    # T3 — per-run security export bundle. Machine-readable evidence for one
+    # Per-run security export bundle. Machine-readable evidence for one
     # image-scan leg, downloadable via `gh run download`: both scan JSONs
     # (tables above stay for logs), the image SBOM, the VEX doc exactly as
     # applied (real consumer template or the empty default), and
     # metadata.json. Every step is `if: always()` so the bundle uploads even
-    # when blocking=true fails the table scans above — a failing run is
-    # precisely when the evidence matters most. JSON re-scans reuse the DBs
-    # the table scans already downloaded and the same suppression surface
-    # (.trivyignore/.grype.yaml/VEX), so the JSONs mirror what gated.
+    # when blocking=true fails the table scans above. JSON re-scans reuse
+    # the DBs the table scans already downloaded and the same suppression
+    # surface (.trivyignore/.grype.yaml/VEX), so the JSONs mirror what gated.
     - name: Trivy scan — image (JSON for export)
       if: always()
       uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1  # v0.35.0
@@ -178,6 +177,9 @@ runs:
         BLOCKING: ${{ inputs.blocking }}
         GRYPE_JSON: ${{ steps.grype-export.outputs.json }}
         VEX_APPLIED: ${{ env.VEX_DOC }}
+        # github.job_workflow_sha (reusable-workflow file SHA) has no
+        # default env var — map it explicitly.
+        GATE_WORKFLOW_SHA: ${{ github.job_workflow_sha }}
       run: |
         set -euo pipefail
         export_dir="${RUNNER_TEMP}/security-export"
@@ -198,7 +200,7 @@ runs:
           --arg blocking "$BLOCKING" \
           --arg vex_source "$vex_source" \
           --arg gate_workflow_ref "${GITHUB_WORKFLOW_REF:-}" \
-          --arg gate_workflow_sha "${GITHUB_JOB_WORKFLOW_SHA:-}" \
+          --arg gate_workflow_sha "${GATE_WORKFLOW_SHA:-}" \
           --arg caller_sha "${GITHUB_SHA:-}" \
           --arg run_id "${GITHUB_RUN_ID:-}" \
           --argjson trivy "$trivy_version" \

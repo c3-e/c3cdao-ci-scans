@@ -64,8 +64,7 @@ VEX document when the consumer has no `.openvex/`, and a committed
 `.openvex/templates/main.openvex.json` is consumed by the Trivy/Grype
 image legs. Unlike raw ignore files, a VEX statement carries a status and
 justification, and the document as applied is preserved in every run's
-security export bundle (RUNBOOK appendix I) — a suppression audit trail
-rather than a bare CVE list.
+security export bundle (RUNBOOK appendix I).
 
 ### App build is subsumed into the container build (no separate Phase-1 stage)
 

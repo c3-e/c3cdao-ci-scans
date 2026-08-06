@@ -1,4 +1,4 @@
-"""Structural drift guards for the per-run security export bundle (T3).
+"""Structural drift guards for the per-run security export bundle.
 
 Each image-scan matrix leg must upload a self-contained evidence bundle —
 security-export-<leg>-<short-sha> — holding the image SBOM, machine-readable

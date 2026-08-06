@@ -325,8 +325,7 @@ required — without the file, scans behave exactly as before.
      repeated `--product`: Trivy computes it with the image name included
      (`.../cdao/landing`), Grype without (`.../cdao`). One form suppresses
      on one scanner only. Worked, A/B-tested example: c3cdao-landing's
-     `.openvex/templates/README.md` ("PURL matching footguns", in
-     [c3cdao-landing#2](https://github.com/c3-e/c3cdao-landing/pull/2)).
+     `.openvex/templates/README.md` ("PURL matching footguns").
 4. Add a `CODEOWNERS` entry for `.openvex/` so every disposition change
    gets a named security reviewer.
 
@@ -336,23 +335,9 @@ legs are the suppression surface, and they cover the same packages.
 
 **You should see:** the dispositioned CVE absent from the Trivy and Grype
 image-scan tables on the next run, and the run's
-`security-export-<service>-<sha>` artifact carrying your document as
+`security-export-<service>-<short-sha>` artifact carrying your document as
 `vex-applied.openvex.json` with `metadata.json` showing
 `"vex": {"source": "consumer"}`.
-
-## Migrating from v0.5.x (consumer)
-
-The v0.6 cutover is a hard major-version migration; the consumer contract
-makefile path was removed, not deprecated:
-
-1. Delete the contract makefile and its targets from your repo; the gate
-   no longer reads them.
-2. Make the repo conform (step 0): the Compose file, Dockerfiles, and
-   chart now carry the facts the makefile used to declare.
-3. Delete the removed inputs from your caller's `with:`; the
-   `unknown-input` rule names each one; the replacement table is in
-   [INPUTS.md](INPUTS.md#removed-inputs-v05--v06-migration).
-4. Re-pin `uses:` to a v0.6 40-hex SHA and re-run step 3's local lint.
 
 ## Appendix (reference)
 
@@ -477,11 +462,16 @@ ci-scans is public; if it ever goes private, this repo (the callee) must
 allow cross-repo reusable-workflow access (Settings → Actions → Access)
 before consumers can call it.
 
+### H. Note on path efficiency
+
+The reusable gate runs all scan jobs on every PR (full gate). Path-based
+skipping can be added later without changing the onboarding model.
+
 ### I. Security export bundle reference
 
 Every image-scan matrix leg uploads `security-export-<service>-<short-sha>`
-(90-day artifact retention; uploads even when a blocking scan fails —
-that's when the evidence matters). Download with
+(repo default artifact retention; uploads even when a blocking scan
+fails). Download with
 `gh run download <run-id> -p 'security-export-*'`. Contents:
 
 | File | What it is |
@@ -495,8 +485,3 @@ that's when the evidence matters). Download with
 Scan results are only interpretable next to the exact VEX statements that
 were applied — the bundle is self-contained so an auditor needs nothing
 else from the run.
-
-### H. Note on path efficiency
-
-The reusable gate runs all scan jobs on every PR (full gate). Path-based
-skipping can be added later without changing the onboarding model.

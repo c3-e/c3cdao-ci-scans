@@ -1,14 +1,13 @@
-"""Structural drift guards for OpenVEX consumption in image-vuln-scan (T2).
+"""Structural drift guards for OpenVEX consumption in image-vuln-scan.
 
 The composite action must consume a consumer-committed
 .openvex/templates/main.openvex.json with no-op-when-absent semantics
 (mirror of the .trivyignore defaulting): absent the template, an
 empty-statements OpenVEX doc is defaulted so consumers without .openvex/
-scan bit-identical to before. Wiring routes are the ones T1's spike proved
-at the current pins (run 31055413726 on spike/vex-gate): trivy-config: for
-Trivy, GRYPE_VEX_DOCUMENTS for the Grype image leg only — the Grype SBOM
-leg has no root-component PURL to match and must stay VEX-free (a silent
-no-op there would look wired but isn't).
+scan bit-identical to before. Wiring routes are the ones proven at the
+current pins: trivy-config: for Trivy, GRYPE_VEX_DOCUMENTS for the Grype
+image leg only — the Grype SBOM leg has no root-component PURL to match
+and must stay VEX-free (a silent no-op there would look wired but isn't).
 """
 
 from __future__ import annotations
@@ -76,7 +75,7 @@ def test_defaulting_step_exports_resolved_paths_via_github_env():
     assert "vulnerability:" in run and "vex:" in run
 
 
-# --- per-leg wiring (exactly the routes T1 proved) ------------------------------
+# --- per-leg wiring (exactly the proven routes) ---------------------------------
 
 
 def test_trivy_step_consumes_vex_via_trivy_config_input():
@@ -96,10 +95,9 @@ def test_grype_image_step_consumes_vex_via_step_scoped_env():
 
 def test_grype_sbom_step_has_no_vex_wiring():
     """anchore/sbom-action's CycloneDX root component has no purl at the
-    current pin, so VEX cannot match on the SBOM leg (T1 acceptance
-    record) — wiring it anyway would be a silent no-op that reads as
-    coverage. The step must stay VEX-free, with the exemption explained
-    in a comment next to it."""
+    current pin, so VEX cannot match on the SBOM leg — wiring it anyway
+    would be a silent no-op that reads as coverage. The step must stay
+    VEX-free, with the exemption explained in a comment next to it."""
     sbom = _step("Grype scan — image SBOM")
     assert "vex" not in sbom["with"]
     assert "GRYPE_VEX_DOCUMENTS" not in str(sbom.get("env", {}))
@@ -114,8 +112,8 @@ def test_grype_sbom_step_has_no_vex_wiring():
 
 def test_scan_steps_stay_sha_pinned_with_version_comments():
     text = ACTION.read_text()
-    # 2 Trivy steps (gating table + T3 JSON export), 3 Grype steps (image +
-    # image SBOM gating tables + T3 JSON export) — every one SHA-pinned with
+    # 2 Trivy steps (gating table + JSON export), 3 Grype steps (image +
+    # image SBOM gating tables + JSON export) — every one SHA-pinned with
     # its version comment.
     assert text.count(
         "aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1  # v0.35.0"
