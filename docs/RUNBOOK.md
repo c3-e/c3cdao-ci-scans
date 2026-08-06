@@ -130,7 +130,8 @@ Compose/Dockerfile/chart convention pipeline runs (chart rules need
 [appendix C](#c-lint-rule-ids-and-remediation).
 
 Your caller must also grant the permissions the reusable workflow needs,
-`pull-requests: write`, `actions: write` (the caller is the ceiling),
+`pull-requests: write`, `actions: write`, `security-events: write` (SARIF
+upload to code scanning, VEX-8; the caller is the ceiling),
 and must not set `concurrency:` (the reusable workflow owns the group).
 
 **You should see:** `OK: <caller>: caller lint clean`.
@@ -511,3 +512,24 @@ fails). Download with
 Scan results are only interpretable next to the exact VEX statements that
 were applied — the bundle is self-contained so an auditor needs nothing
 else from the run.
+
+### J. Trivy SARIF in the Security tab (VEX-8)
+
+Every image-scan leg additionally uploads Trivy's image findings as SARIF
+to the consumer repo's **Security → Code scanning** tab
+(`github/codeql-action/upload-sarif`), matrix-safe (`category` per leg via
+the `scan-image-<name>` convention) — a retention surface beyond the
+90-day artifact window the [export bundle](#i-security-export-bundle-reference)
+lives under. Same suppression surface as the gating table scan (severity
+filter, `.trivyignore`, applied VEX doc).
+
+**Fail-soft, not fail-closed.** The upload step tolerates failure
+(`continue-on-error: true`): a consumer repo with Code Security disabled
+gets an HTTP 403 on upload and stays green end-to-end. Enable Code
+Security (**Settings → Code security and analysis**) to get the surface;
+nothing else to configure, the caller's `security-events: write`
+permission (template default) is the only prerequisite.
+
+**You should see:** `gh api repos/<owner>/<repo>/code-scanning/analyses
+--jq '.[].tool.name'` lists `Trivy` after a run, for any consumer with
+Code Security enabled.
