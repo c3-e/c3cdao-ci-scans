@@ -513,6 +513,20 @@ Scan results are only interpretable next to the exact VEX statements that
 were applied — the bundle is self-contained so an auditor needs nothing
 else from the run.
 
+**Combined download.** A run with N built services produces N of the
+per-service bundles above, plus `sbom-source` and `plan-bom` — several
+separate artifacts to click through one at a time in the Actions UI
+(there is no "download all" button). The `export-bundle` job (`if:
+always()`, needs `plan` + `image-scan`) re-packages exactly those three
+artifact kinds — every `security-export-<service>-<short-sha>`,
+`sbom-source`, `plan-bom` — into one combined
+`security-export-full-<short-sha>` artifact, each service's files kept in
+its own subdirectory (no `metadata.json`-name collisions). It is
+convenience-only: not a required check, excluded from `security-gate`'s
+`needs:` so an assembly failure (e.g. zero image-scan legs ran) can never
+block the gate, and it changes nothing about the per-service bundles
+themselves.
+
 ### J. Trivy SARIF in the Security tab (VEX-8)
 
 Every image-scan leg additionally uploads Trivy's image findings as SARIF

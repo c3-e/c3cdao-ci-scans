@@ -38,7 +38,7 @@ def test_files_exist():
 
 def test_every_job_mapped():
     job_ids = workflow_job_ids()
-    assert len(job_ids) == 9, f"expected 9 jobs, parsed {job_ids}"
+    assert len(job_ids) == 10, f"expected 10 jobs, parsed {job_ids}"
     text = REQ_MAP.read_text()
     missing = [j for j in job_ids if j not in text]
     assert not missing, f"jobs missing from REQUIREMENTS-MAP.md: {missing}"
