@@ -85,6 +85,66 @@ def test_trivy_step_consumes_vex_via_trivy_config_input():
     assert trivy["with"]["trivyignores"] == ".trivyignore"
 
 
+# --- job-local registry (Grype VEX product identity, F-T6-2) --------------------
+
+
+def test_registry_publish_step_precedes_scans_and_exports_scan_ref():
+    """Grype derives VEX product identity exclusively from repoDigests; a
+    docker-load'ed local build has none, so without the registry publish
+    every committed product PURL silently no-ops on the Grype image leg
+    (F-T6-2, petegpt canary). The step must push to the deterministic
+    localhost:5000 identity, verify the repoDigest actually exists
+    (fail-closed), and publish SCAN_REF for the scan steps."""
+    names = [s.get("name") for s in _steps()]
+    publish_idx = names.index("Publish image to job-local registry (VEX product identity)")
+    assert names.index("Load image into local daemon") < publish_idx
+    assert publish_idx < names.index("Trivy scan — image")
+    run = _step("Publish image to job-local registry (VEX product identity)")["run"]
+    assert "localhost:5000/" in run
+    assert "SCAN_REF=" in run and "$GITHUB_ENV" in run
+    # Fail-closed repoDigest verification — a missing digest must fail the
+    # step, not silently degrade back to the F-T6-2 no-op.
+    assert "RepoDigests" in run and "exit 1" in run
+
+
+def test_registry_guard_checks_running_state_not_mere_existence():
+    """docker inspect success only proves the name is taken, not that the
+    registry is serving — a leftover *stopped* vex-registry container (e.g.
+    a reused/self-hosted runner) would pass a bare existence check, then
+    the readiness loop spins for 30s against a dead endpoint before the
+    push fails with a confusing connection error. The guard must check
+    State.Running and clear a stale container before recreating it."""
+    run = _step("Publish image to job-local registry (VEX product identity)")["run"]
+    assert "State.Running" in run, "guard must check the container is actually running"
+    assert "docker rm -f vex-registry" in run, (
+        "a stopped container must be removed before recreating, not left in place"
+    )
+
+
+def test_registry_image_is_digest_pinned():
+    run = _step("Publish image to job-local registry (VEX product identity)")["run"]
+    assert "registry@sha256:" in run, (
+        "the job-local registry image must be digest-pinned (repo convention: "
+        "no floating tags in gate-executed pulls)"
+    )
+
+
+def test_image_scans_target_the_registry_backed_reference():
+    """All four image scans (2 gating tables + 2 JSON exports) must scan
+    SCAN_REF — scanning the bare load tag reintroduces the digest-less
+    identity Grype cannot match."""
+    assert _step("Trivy scan — image")["with"]["image-ref"] == "${{ env.SCAN_REF }}"
+    assert _step("Grype scan — image")["with"]["image"] == "${{ env.SCAN_REF }}"
+    assert (
+        _step("Trivy scan — image (JSON for export)")["with"]["image-ref"]
+        == "${{ env.SCAN_REF }}"
+    )
+    assert (
+        _step("Grype scan — image (JSON for export)")["with"]["image"]
+        == "${{ env.SCAN_REF }}"
+    )
+
+
 def test_grype_image_step_consumes_vex_via_step_scoped_env():
     grype = _step("Grype scan — image")
     assert grype.get("env", {}).get("GRYPE_VEX_DOCUMENTS") == "${{ env.VEX_DOC }}"

@@ -317,15 +317,41 @@ required — without the file, scans behave exactly as before.
    scanner-derivable data, and never written by a pipeline. CI consumes
    the document; it must not author or upgrade it.
 3. **Product PURL rules** — matching failures are silent (the statement
-   just never suppresses), so all three matter:
+   just never suppresses), so all of these matter:
    - No `tag=` qualifier, and no `arch=` qualifier — either silently
      breaks matching (an `arch=arm64` PURL authored on Apple Silicon
      matches nothing on the gate's `amd64` runners).
-   - Every statement needs **both** scanners' `repository_url` forms via
-     repeated `--product`: Trivy computes it with the image name included
-     (`.../cdao/landing`), Grype without (`.../cdao`). One form suppresses
-     on one scanner only. Worked, A/B-tested example: c3cdao-landing's
-     `.openvex/templates/README.md` ("PURL matching footguns").
+   - **Gate-built images (the normal case): author against the gate's
+     job-local registry identity.** The gate publishes every built image
+     to `localhost:5000/<name>` before scanning, because Grype derives
+     VEX product identity exclusively from registry digests — a plain
+     locally-built image has none, and every PURL form silently no-ops
+     on the Grype leg. Every statement needs **both** scanners' forms
+     via repeated `--product`: Trivy includes the image name, Grype
+     excludes it:
+
+     ```bash
+     vexctl add --in-place .openvex/templates/main.openvex.json \
+       --product "pkg:oci/<name>?repository_url=localhost:5000/<name>" \
+       --product "pkg:oci/<name>?repository_url=localhost:5000" \
+       --vuln CVE-XXXX-NNNNN --status not_affected \
+       --justification <enum>
+     ```
+
+     `<name>` is your Compose service's image name (e.g. `myapp` for
+     `image: myapp:local`). The per-build digest is recorded in the
+     export bundle's `metadata.json` (`image.scan_ref` + `image.digest`)
+     — the committed product stays version-less so the disposition
+     survives rebuilds.
+   - Externally-delivered images scanned outside this gate keep their
+     real registry forms — the rule is always "the `repository_url` each
+     scanner computes at scan time". Worked, A/B-tested example:
+     c3cdao-landing's `.openvex/templates/README.md` ("PURL matching
+     footguns").
+   - **Older gate pins (before the job-local registry): Grype
+     suppression is impossible for gate-built images.** Any committed
+     product form silently no-ops on the Grype image leg; only Trivy
+     matches. Re-pin before relying on Grype-side VEX.
 4. Add a `CODEOWNERS` entry for `.openvex/` so every disposition change
    gets a named security reviewer.
 
@@ -480,7 +506,7 @@ fails). Download with
 | `trivy-image.json` | Trivy image findings, JSON, same severity filter and suppression surface as the gating table scan |
 | `grype-image.json` | Grype image findings, JSON, same config and VEX surface as the gating table scan |
 | `vex-applied.openvex.json` | The OpenVEX document exactly as applied — your committed template, or the gate's empty-statements default |
-| `metadata.json` | `image` (tag + digest), `blocking` flag, `vex.source` (`consumer` / `empty-default`), `scanners` (Trivy + Grype versions and vulnerability-DB metadata), `gate` (workflow ref + sha), `run` (caller sha + run id) |
+| `metadata.json` | `image` (tag + `scan_ref`, the job-local-registry reference the scanners actually scanned + registry digest), `blocking` flag, `vex.source` (`consumer` / `empty-default`), `scanners` (Trivy + Grype versions and vulnerability-DB metadata), `gate` (workflow ref + sha), `run` (caller sha + run id) |
 
 Scan results are only interpretable next to the exact VEX statements that
 were applied — the bundle is self-contained so an auditor needs nothing

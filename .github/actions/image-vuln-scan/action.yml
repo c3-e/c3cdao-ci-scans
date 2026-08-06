@@ -87,6 +87,47 @@ runs:
       shell: bash
       run: docker load -i image.tar
 
+    # Grype derives OpenVEX product identity exclusively from the image's
+    # repoDigests; a docker-load'ed local build has none, so every committed
+    # product PURL is a silent no-op on the Grype image leg (F-T6-2,
+    # discovered on the petegpt VEX canary). A job-local registry gives the
+    # image a real, deterministic, digest-backed identity: consumers author
+    # statements against repository_url=localhost:5000/<name> (Trivy form)
+    # and repository_url=localhost:5000 (Grype form) — stable across builds,
+    # per-build digest recorded in the export bundle's metadata.json.
+    - name: Publish image to job-local registry (VEX product identity)
+      shell: bash
+      env:
+        IMAGE_TAG: ${{ inputs.image-tag }}
+      run: |
+        set -euo pipefail
+        # docker inspect alone only proves the name is taken, not that the
+        # registry is serving — a leftover *stopped* container (e.g. a
+        # reused/self-hosted runner) would pass that check, then the loop
+        # below spins for 30s against a dead endpoint. Check running state
+        # and clear a stale container before recreating it.
+        if ! docker inspect -f '{{.State.Running}}' vex-registry 2>/dev/null | grep -q true; then
+          docker rm -f vex-registry >/dev/null 2>&1 || true
+          docker run -d --name vex-registry -p 127.0.0.1:5000:5000 \
+            registry@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373  # registry:2
+        fi
+        for _ in $(seq 1 30); do
+          curl -fsS http://127.0.0.1:5000/v2/ >/dev/null 2>&1 && break
+          sleep 1
+        done
+        scan_ref="localhost:5000/${IMAGE_TAG}"
+        docker tag "$IMAGE_TAG" "$scan_ref"
+        docker push -q "$scan_ref"
+        # Re-pull so the daemon records the registry repoDigest (push alone
+        # is not guaranteed to on every storage driver); layers are cached,
+        # this is metadata-cheap.
+        docker rmi "$scan_ref" >/dev/null
+        docker pull -q "$scan_ref"
+        docker image inspect --format '{{join .RepoDigests "\n"}}' "$scan_ref" \
+          | grep -q '^localhost:5000/' \
+          || { echo "::error::job-local registry repoDigest missing — Grype VEX product identity would silently no-op (F-T6-2)"; exit 1; }
+        echo "SCAN_REF=${scan_ref}" >> "$GITHUB_ENV"
+
     - name: Download image SBOM
       uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4
       with:
@@ -95,7 +136,9 @@ runs:
     - name: Trivy scan — image
       uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1  # v0.35.0
       with:
-        image-ref: ${{ inputs.image-tag }}
+        # Registry-backed reference (not the bare load tag): both scanners
+        # must compute the localhost:5000 product identity VEX matches on.
+        image-ref: ${{ env.SCAN_REF }}
         format: table
         severity: ${{ inputs.trivy-severity }}
         exit-code: ${{ inputs.blocking == 'true' && '1' || '0' }}
@@ -113,7 +156,7 @@ runs:
       env:
         GRYPE_VEX_DOCUMENTS: ${{ env.VEX_DOC }}
       with:
-        image: ${{ inputs.image-tag }}
+        image: ${{ env.SCAN_REF }}
         severity-cutoff: high
         fail-build: ${{ inputs.blocking == 'true' }}
         output-format: table
@@ -147,7 +190,7 @@ runs:
       if: always()
       uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1  # v0.35.0
       with:
-        image-ref: ${{ inputs.image-tag }}
+        image-ref: ${{ env.SCAN_REF }}
         format: json
         output: ${{ runner.temp }}/security-export/trivy-image.json
         severity: ${{ inputs.trivy-severity }}
@@ -162,7 +205,7 @@ runs:
       env:
         GRYPE_VEX_DOCUMENTS: ${{ env.VEX_DOC }}
       with:
-        image: ${{ inputs.image-tag }}
+        image: ${{ env.SCAN_REF }}
         severity-cutoff: high
         fail-build: false
         output-format: json
@@ -173,6 +216,7 @@ runs:
       shell: bash
       env:
         IMAGE_TAG: ${{ inputs.image-tag }}
+        SCAN_REF: ${{ env.SCAN_REF }}
         SBOM_FILE: ${{ inputs.sbom-artifact-name }}
         BLOCKING: ${{ inputs.blocking }}
         GRYPE_JSON: ${{ steps.grype-export.outputs.json }}
@@ -189,13 +233,17 @@ runs:
         cp "$VEX_APPLIED" "$export_dir/vex-applied.openvex.json"
         vex_source="consumer"
         case "$VEX_APPLIED" in "${RUNNER_TEMP}"/*) vex_source="empty-default" ;; esac
-        image_digest="$(docker image inspect --format '{{if .RepoDigests}}{{index .RepoDigests 0}}{{else}}{{.Id}}{{end}}' "$IMAGE_TAG")"
+        # Digest from the registry-backed reference the scanners actually
+        # scanned (localhost:5000 repoDigest) — per-build precise even
+        # though the committed VEX product forms are version-less.
+        image_digest="$(docker image inspect --format '{{if .RepoDigests}}{{index .RepoDigests 0}}{{else}}{{.Id}}{{end}}' "${SCAN_REF:-$IMAGE_TAG}")"
         # trivy-action leaves the pinned CLI on PATH; version + DB metadata
         # come from `trivy version -f json` (grype's from its own report).
         trivy_version="$(trivy version -f json 2>/dev/null | jq -c . 2>/dev/null || echo '{}')"
         [ -n "$trivy_version" ] || trivy_version='{}'
         jq -n \
           --arg image_tag "$IMAGE_TAG" \
+          --arg scan_ref "${SCAN_REF:-$IMAGE_TAG}" \
           --arg image_digest "$image_digest" \
           --arg blocking "$BLOCKING" \
           --arg vex_source "$vex_source" \
@@ -206,7 +254,7 @@ runs:
           --argjson trivy "$trivy_version" \
           --slurpfile grype_report "$export_dir/grype-image.json" \
           '{
-            image: {tag: $image_tag, digest: $image_digest},
+            image: {tag: $image_tag, scan_ref: $scan_ref, digest: $image_digest},
             blocking: $blocking,
             vex: {source: $vex_source, file: "vex-applied.openvex.json"},
             scanners: {
