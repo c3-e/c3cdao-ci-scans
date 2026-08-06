@@ -224,3 +224,33 @@ def test_sarif_scan_precedes_upload_and_follows_registry_publish():
     scan_idx = names.index("Trivy scan — image (SARIF for code scanning)")
     upload_idx = names.index("Upload Trivy SARIF to code scanning")
     assert publish_idx < scan_idx < upload_idx
+
+
+# --- gate.workflow_sha / gate.workflow_ref source (VEX-9) -------------------
+
+
+def test_gate_workflow_fields_use_job_context_not_github_context():
+    """github.job_workflow_sha never populates for a job invoked from a
+    reusable workflow (actions/runner#2417) — it must not appear anywhere
+    in the action. github.workflow_ref / $GITHUB_WORKFLOW_REF is
+    caller-scoped (resolves to the consumer's own workflow file, not the
+    gate's), so it must not back gate.workflow_ref either. job.workflow_sha
+    and job.workflow_ref are GitHub's shipped replacement for this exact
+    reusable-workflow case."""
+    step = _step("Assemble security export bundle")
+    assert step["env"]["GATE_WORKFLOW_SHA"] == "${{ job.workflow_sha }}"
+    assert step["env"]["GATE_WORKFLOW_REF"] == "${{ job.workflow_ref }}"
+    # The bug's explanation stays in a comment (mentions the old, broken
+    # fields by name) — only the live expressions/env-reads must be gone.
+    assert "${{ github.job_workflow_sha }}" not in ACTION.read_text()
+    assert "${GITHUB_WORKFLOW_REF" not in _step("Assemble security export bundle")["run"]
+
+
+def test_gate_workflow_fields_mapped_via_explicit_env_not_run_block():
+    """Same style as every other value the export step consumes: mapped
+    through an explicit env: var, not read directly off an ambient
+    $GITHUB_* variable inside the run: block."""
+    step = _step("Assemble security export bundle")
+    run = step["run"]
+    assert '"${GATE_WORKFLOW_SHA:-}"' in run
+    assert '"${GATE_WORKFLOW_REF:-}"' in run
