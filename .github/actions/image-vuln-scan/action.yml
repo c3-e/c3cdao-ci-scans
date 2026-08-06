@@ -123,6 +123,10 @@ runs:
         # this is metadata-cheap.
         docker rmi "$scan_ref" >/dev/null
         docker pull -q "$scan_ref"
+        # Fail-closed even for report-only consumers: a missing repoDigest
+        # means committed VEX statements silently stop matching on Grype —
+        # an infrastructure fault, not a scan finding, so it fails the job
+        # regardless of the blocking input.
         docker image inspect --format '{{join .RepoDigests "\n"}}' "$scan_ref" \
           | grep -q '^localhost:5000/' \
           || { echo "::error::job-local registry repoDigest missing — Grype VEX product identity would silently no-op (F-T6-2)"; exit 1; }
@@ -190,7 +194,10 @@ runs:
       if: always()
       uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1  # v0.35.0
       with:
-        image-ref: ${{ env.SCAN_REF }}
+        # Fallback: if the registry publish failed, this always() step still
+        # captures evidence against the load tag (VEX identity degraded but
+        # the bundle survives, which is when it matters).
+        image-ref: ${{ env.SCAN_REF || inputs.image-tag }}
         format: json
         output: ${{ runner.temp }}/security-export/trivy-image.json
         severity: ${{ inputs.trivy-severity }}
@@ -205,7 +212,7 @@ runs:
       env:
         GRYPE_VEX_DOCUMENTS: ${{ env.VEX_DOC }}
       with:
-        image: ${{ env.SCAN_REF }}
+        image: ${{ env.SCAN_REF || inputs.image-tag }}
         severity-cutoff: high
         fail-build: false
         output-format: json
@@ -221,7 +228,7 @@ runs:
       if: always()
       uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1  # v0.35.0
       with:
-        image-ref: ${{ env.SCAN_REF }}
+        image-ref: ${{ env.SCAN_REF || inputs.image-tag }}
         format: sarif
         output: ${{ runner.temp }}/security-export/trivy-image.sarif
         severity: ${{ inputs.trivy-severity }}

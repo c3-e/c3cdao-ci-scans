@@ -135,13 +135,15 @@ def test_image_scans_target_the_registry_backed_reference():
     identity Grype cannot match."""
     assert _step("Trivy scan — image")["with"]["image-ref"] == "${{ env.SCAN_REF }}"
     assert _step("Grype scan — image")["with"]["image"] == "${{ env.SCAN_REF }}"
+    # The always() export steps fall back to the load tag so a failed
+    # registry publish still yields an evidence bundle.
     assert (
         _step("Trivy scan — image (JSON for export)")["with"]["image-ref"]
-        == "${{ env.SCAN_REF }}"
+        == "${{ env.SCAN_REF || inputs.image-tag }}"
     )
     assert (
         _step("Grype scan — image (JSON for export)")["with"]["image"]
-        == "${{ env.SCAN_REF }}"
+        == "${{ env.SCAN_REF || inputs.image-tag }}"
     )
 
 
@@ -188,7 +190,7 @@ def test_scan_steps_stay_sha_pinned_with_version_comments():
 
 def test_sarif_step_scans_registry_backed_reference_with_same_suppression_surface():
     sarif_scan = _step("Trivy scan — image (SARIF for code scanning)")
-    assert sarif_scan["with"]["image-ref"] == "${{ env.SCAN_REF }}"
+    assert sarif_scan["with"]["image-ref"] == "${{ env.SCAN_REF || inputs.image-tag }}"
     assert sarif_scan["with"]["format"] == "sarif"
     assert sarif_scan["with"]["trivyignores"] == ".trivyignore"
     assert sarif_scan["with"]["trivy-config"] == "${{ env.VEX_TRIVY_CONFIG }}"
