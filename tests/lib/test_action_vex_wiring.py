@@ -107,6 +107,20 @@ def test_registry_publish_step_precedes_scans_and_exports_scan_ref():
     assert "RepoDigests" in run and "exit 1" in run
 
 
+def test_registry_guard_checks_running_state_not_mere_existence():
+    """docker inspect success only proves the name is taken, not that the
+    registry is serving — a leftover *stopped* vex-registry container (e.g.
+    a reused/self-hosted runner) would pass a bare existence check, then
+    the readiness loop spins for 30s against a dead endpoint before the
+    push fails with a confusing connection error. The guard must check
+    State.Running and clear a stale container before recreating it."""
+    run = _step("Publish image to job-local registry (VEX product identity)")["run"]
+    assert "State.Running" in run, "guard must check the container is actually running"
+    assert "docker rm -f vex-registry" in run, (
+        "a stopped container must be removed before recreating, not left in place"
+    )
+
+
 def test_registry_image_is_digest_pinned():
     run = _step("Publish image to job-local registry (VEX product identity)")["run"]
     assert "registry@sha256:" in run, (

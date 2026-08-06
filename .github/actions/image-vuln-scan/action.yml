@@ -101,9 +101,16 @@ runs:
         IMAGE_TAG: ${{ inputs.image-tag }}
       run: |
         set -euo pipefail
-        docker inspect vex-registry >/dev/null 2>&1 || \
+        # docker inspect alone only proves the name is taken, not that the
+        # registry is serving — a leftover *stopped* container (e.g. a
+        # reused/self-hosted runner) would pass that check, then the loop
+        # below spins for 30s against a dead endpoint. Check running state
+        # and clear a stale container before recreating it.
+        if ! docker inspect -f '{{.State.Running}}' vex-registry 2>/dev/null | grep -q true; then
+          docker rm -f vex-registry >/dev/null 2>&1 || true
           docker run -d --name vex-registry -p 127.0.0.1:5000:5000 \
             registry@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373  # registry:2
+        fi
         for _ in $(seq 1 30); do
           curl -fsS http://127.0.0.1:5000/v2/ >/dev/null 2>&1 && break
           sleep 1
