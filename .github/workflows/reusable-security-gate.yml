@@ -121,7 +121,6 @@ permissions:
   # grant it (or have Code Security disabled) lose only the Security-tab
   # surface, never the gate.
   security-events: write
-  security-events: write  # Trivy SARIF upload to code scanning (VEX-8); fail-soft when the consumer repo lacks Code Security
 
 concurrency:
   group: security-scan-${{ github.ref }}
