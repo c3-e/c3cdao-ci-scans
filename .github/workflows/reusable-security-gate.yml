@@ -115,12 +115,6 @@ on:
 permissions:
   contents: read
   pull-requests: write
-  # Requested for the Trivy SARIF upload to the consumer's Security tab
-  # (VEX-8); effective permissions are the intersection with the caller's
-  # grant, and the upload step is continue-on-error — consumers that don't
-  # grant it (or have Code Security disabled) lose only the Security-tab
-  # surface, never the gate.
-  security-events: write
 
 concurrency:
   group: security-scan-${{ github.ref }}
