@@ -21,6 +21,7 @@ here.
 | `helm-check` | Helm lint + restricted-PSS | helm + PSS assert | chart | blocking unless `image_only` | aligned |
 | `cluster-smoke` | kind deploy + health probe (catalog `smoke_resources` provisioned before install; probe target derived from the rendered chart) | kind + kubectl + helm | chart+images | skipped when `image_only`; else advisory until `SECURITY_SCAN_BLOCKING=true` | intentional ramp |
 | `image-scan` | Image + SBOM vuln scan (matrixed over the same derived targets as `build`; one designated leg carries the source-SBOM scans) | Trivy (image+source SBOM) + Grype (image+source+image SBOM) | images + SBOM | advisory until `SECURITY_SCAN_BLOCKING=true` | aligned |
+| `export-bundle` | (convenience, not a spec gate) re-package the per-service export bundles + `sbom-source` + `plan-bom` into one `security-export-full-<short-sha>` download | `actions/download-artifact` (pattern) + `actions/upload-artifact` | evidence artifacts | `if: always()`; excluded from `security-gate`'s `needs:`, so it can never block | aligned (never gates) |
 | `security-gate` | aggregate required check | — | — | the one required check (`security-scan / Security Gate`) | aligned |
 
 ## Deliberate deviations & path to steady-state

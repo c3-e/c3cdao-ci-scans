@@ -1136,6 +1136,72 @@ jobs:
           config: .grype.yaml
 
   # --------------------------------------------------------------------------
+  # Export bundle: convenience-only re-packaging of this run's evidence
+  # artifacts into ONE combined download. Every image-scan leg already
+  # uploads its own security-export-<service>-<short-sha> bundle (RUNBOOK.md
+  # appendix I); a repo with N built services means N separate artifacts to
+  # click through in the Actions UI (there is no "download all" button)
+  # plus sbom-source and plan-bom. This job downloads exactly those
+  # artifacts — pattern-matched, since the per-service names aren't known
+  # statically here (image-scan is matrixed over the plan-derived targets)
+  # — and re-uploads them as ONE security-export-full-<short-sha> artifact.
+  # Purely additive: the per-service artifacts still upload exactly as
+  # image-vuln-scan always did; this job only copies them.
+  #
+  # NOT a gate: if: always(), and every download below is pattern-scoped so
+  # a zero-match run logs "0 artifact(s) downloaded" and succeeds rather
+  # than throwing (verified against the pinned download-artifact action's
+  # source: a `pattern:` filter of zero matches returns cleanly; only a
+  # `name:`-based single-artifact lookup throws on a miss). Deliberately
+  # left out of security-gate's needs: below so an assembly failure (e.g.
+  # no image-scan legs ran) can never fail the required check.
+  # --------------------------------------------------------------------------
+  export-bundle:
+    name: Consolidated Security Export Bundle
+    runs-on: ubuntu-latest
+    needs: [plan, image-scan]
+    if: always()
+    steps:
+      - name: Resolve short SHA
+        id: sha
+        run: echo "short=${GITHUB_SHA:0:7}" >> "$GITHUB_OUTPUT"
+
+      # One pattern covers all three documented export-bundle inputs
+      # (security-export-<service>-<short-sha> per leg, sbom-source,
+      # plan-bom); merge-multiple: false keeps every artifact in its own
+      # subdirectory so two services' metadata.json (etc.) can't collide.
+      # Deliberately excludes semgrep-results/sonarqube-*/raw
+      # scan-image-*/sbom-image-*/docker build-cache blobs: duplicates
+      # already inside the per-service bundles, or outside the documented
+      # export-bundle contract.
+      - name: Download this run's export-bundle artifacts
+        id: download
+        continue-on-error: true
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4
+        with:
+          pattern: "{security-export-*,sbom-source,plan-bom}"
+          path: ${{ runner.temp }}/security-export-full
+          merge-multiple: false
+
+      - name: Report bundle contents
+        if: always()
+        run: |
+          echo "download step outcome: ${{ steps.download.outcome }}"
+          find "${{ runner.temp }}/security-export-full" -maxdepth 2 2>/dev/null | sort || true
+
+      # if-no-files-found: warn (not error) — a zero-artifact bundle (e.g.
+      # plan failed before publishing plan-bom, and no image-scan leg ran)
+      # is a legitimate empty-evidence outcome for a convenience job, not a
+      # failure worth surfacing loudly.
+      - name: Upload combined security export bundle
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        with:
+          name: security-export-full-${{ steps.sha.outputs.short }}
+          path: ${{ runner.temp }}/security-export-full
+          if-no-files-found: warn
+
+  # --------------------------------------------------------------------------
   # Security Gate: aggregate required check
   # --------------------------------------------------------------------------
   security-gate:
