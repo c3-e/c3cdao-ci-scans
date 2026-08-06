@@ -31,12 +31,42 @@ runs:
   using: composite
   steps:
     # Consumers aren't required to carry scanner config files — default to
-    # empty ones so Trivy/Grype don't error on a missing path.
+    # empty ones so Trivy/Grype don't error on a missing path. Same
+    # no-op-when-absent pattern for OpenVEX: consumers opt in by committing
+    # .openvex/templates/main.openvex.json (data-only onboarding, resolved
+    # against the caller checkout cwd like .trivyignore); absent that, an
+    # empty-statements doc is written to RUNNER_TEMP so the scan steps can
+    # reference one unconditionally. Verified against the pinned CLIs
+    # (trivy 0.69.3 / grype 0.110.0): an empty-statements doc produces
+    # bit-identical findings to no VEX doc at all.
     - name: Default scanner configs when consumer lacks them
       shell: bash
       run: |
         [ -f .trivyignore ] || : > .trivyignore
         [ -f .grype.yaml ] || echo 'ignore: []' > .grype.yaml
+        if [ -f .openvex/templates/main.openvex.json ]; then
+          vex_doc="${PWD}/.openvex/templates/main.openvex.json"
+        else
+          vex_doc="${RUNNER_TEMP}/empty.openvex.json"
+          cat > "$vex_doc" <<'VEXEOF'
+        {
+          "@context": "https://openvex.dev/ns/v0.2.0",
+          "@id": "https://openvex.dev/docs/public/vex-c3cdao-ci-scans-empty-default",
+          "author": "c3cdao-ci-scans image-vuln-scan (empty no-op default; consumer has no .openvex/)",
+          "timestamp": "2026-01-01T00:00:00Z",
+          "version": 1,
+          "statements": []
+        }
+        VEXEOF
+        fi
+        # trivy-action pin 57a97c7 (v0.35.0) does not forward ambient env to
+        # its inner step; trivy-config: -> TRIVY_CONFIG is the explicitly
+        # wired route (proven, spike run 31055413726 on spike/vex-gate).
+        printf 'vulnerability:\n  vex:\n    - %s\n' "$vex_doc" > "${RUNNER_TEMP}/trivy-vex.yaml"
+        {
+          echo "VEX_DOC=${vex_doc}"
+          echo "VEX_TRIVY_CONFIG=${RUNNER_TEMP}/trivy-vex.yaml"
+        } >> "$GITHUB_ENV"
 
     - name: Download image artifact
       uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4
@@ -62,9 +92,16 @@ runs:
         # No ignore-unfixed: the modular pr-gate/sca-scan surfaced unfixed
         # HIGH/CRITICAL too, so we keep reporting them (no coverage reduction).
         trivyignores: .trivyignore
+        # OpenVEX consumption (vulnerability.vex in the config file): real
+        # consumer template or the empty no-op default from the step above.
+        trivy-config: ${{ env.VEX_TRIVY_CONFIG }}
 
     - name: Grype scan — image
       uses: anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2  # v7.4.0
+      # OpenVEX consumption, image leg only — scoped to this step's own env
+      # (not GITHUB_ENV-ambient) so the SBOM leg below stays VEX-free.
+      env:
+        GRYPE_VEX_DOCUMENTS: ${{ env.VEX_DOC }}
       with:
         image: ${{ inputs.image-tag }}
         severity-cutoff: high
@@ -72,6 +109,13 @@ runs:
         output-format: table
         config: .grype.yaml
 
+    # Deliberately NO VEX wiring on the SBOM leg: anchore/sbom-action's
+    # CycloneDX root metadata.component carries no purl at the current pin
+    # (e22c389, v0.24.0 / Syft v1.42.3), so there is no product identity for
+    # GRYPE_VEX_DOCUMENTS to match against — VEX here would be a silent no-op
+    # that looks wired but isn't (T1 acceptance record, spike run
+    # 31055413726: root_component_purl=MISSING). Revisit only if the
+    # sbom-action pin changes its CycloneDX output shape.
     - name: Grype scan — image SBOM
       uses: anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2  # v7.4.0
       with:
