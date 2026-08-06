@@ -117,6 +117,29 @@ Minimize token consumption and prevent context window pollution while maintainin
 - **No exception for quick, one-off, or corrective tasks.** A single `git checkout`/`git switch`/`git reset --hard` in the shared primary checkout is exactly as disruptive whether the task is large or small. If a task needs a different branch checked out, even briefly, cut a worktree for it.
 - Prefer harness-native isolation when already present; otherwise `git worktree add`. Full playbook: skill companion `project-onboarding/WORKTREES.md` (or repo docs that mirror it).
 
+## Stacked PRs (opt-in — only when the operator asks for a stacked-PR strategy)
+
+Reference (follow this doc for create/manage/merge mechanics):
+https://docs.github.com/en/pull-requests/how-tos/create-pull-requests/managing-stacked-pull-requests
+
+- Use GitHub's native stacks via the `gh stack` CLI extension
+  (`gh extension install github/gh-stack`; public preview).
+- Branches managed manually (e.g. per-worktree, as in this repo): link
+  already-open PRs bottom-to-top with `gh stack link <bottom> <top>...` —
+  no local tracking state required. It corrects base-branch chaining
+  automatically.
+- Change to a lower layer: commit on that layer's branch, then
+  cascade-rebase every branch above it (`gh stack rebase --upstack` +
+  `gh stack push`, or manual `git rebase --onto` + `git push
+  --force-with-lease` per branch).
+- After the bottom PR merges: `gh stack sync --prune` (fetches,
+  fast-forwards trunk, rebases + pushes the remaining branches).
+- Never use the website "Rebase stack" button when signed commits are
+  required — server-side rebase commits are unsigned; rebase via CLI.
+- Merge bottom-up only. A stacked PR still obeys every merge gate on it
+  (e.g. draft status, integration-gate banners); stacking changes review
+  topology, not merge discipline.
+
 ## STANDARDS.md
 
 - Global standards: `~/.skills/STANDARDS.md` (authoritative for patterns)
