@@ -18,14 +18,14 @@ never block.
 
 Rule ids: compose-missing, compose-no-builds, matrix-cap, compose-image-tag,
 compose-healthcheck, dependency-shape, build-input-explicit,
-build-context-excludes, compose-platform, bake-resolve, hardened-args,
+build-context-excludes, compose-platform, bake-resolve,
 chart-missing, chart-undeclared, chart-resolve, chart-readiness,
 smoke-target, ship-set, smoke-resource-unknown, built-unscheduled,
 gate-job-id.
 
 Caller structure rules carried over from v0.5.x (load-bearing only):
 gate-ref-pin (the reusable-workflow ref is a full 40-hex commit SHA),
-gate-job-id (the calling job id is exactly 'security-scan' — half of the
+gate-job-id (the calling job id is exactly 'security-scan', half of the
 required check context), no-secrets-inherit + missing-secret-map (all four
 registry secrets mapped explicitly), unknown-input (the with: surface is
 exactly the v0.6 inputs; removed v0.5.x inputs are rejected by name), and
@@ -64,7 +64,6 @@ from lint_rules.compose import (
     compose_no_builds,
     compose_platform,
     dependency_shape,
-    hardened_args,
     matrix_cap,
 )
 
@@ -87,16 +86,16 @@ KNOWN_INPUTS = (
 REMOVED_INPUTS = ("contract_file", "require_hardened_bases", "scan_image")
 _FULL_SHA_RE = re.compile(r"@[0-9a-f]{40}$")
 # Helm vendors chart dependencies into a `charts/` subdirectory (tgz or,
-# once unpacked, a nested chart tree with its own Chart.yaml) — excluded
+# once unpacked, a nested chart tree with its own Chart.yaml), excluded
 # from the repo-wide chart-undeclared glob so a legitimate dependency tree
-# never false-positives (e.g. cra's vendored fullstack-template).
+# never false-positives (e.g. a repo vendoring a template chart).
 _VENDORED_CHART_DIR = "charts"
 # The plan job checks out this repo's own tooling into `.ci-scans/` inside
 # the consumer's $GITHUB_WORKSPACE (--consumer-root). That checkout carries
-# this repo's own test fixtures — several with intentional Chart.yaml
-# files — which the repo-wide chart-undeclared glob would otherwise
-# misattribute to the consumer (surfaced by petegpt, an image_only: true
-# consumer, false-positiving on this repo's own fixtures).
+# this repo's own test fixtures, several with intentional Chart.yaml
+# files, which the repo-wide chart-undeclared glob would otherwise
+# misattribute to the consumer (every image_only consumer would
+# false-positive on this repo's own fixtures).
 _GATE_CHECKOUT_DIR = ".ci-scans"
 
 
@@ -118,9 +117,9 @@ def chart_undeclared(repo_root: Path) -> list[Verdict]:
 
     Repo-wide glob (not chart_path-only): an image_only caller has no
     chart_path checked by anything downstream, so a chart living at any
-    other path in the repo would otherwise evade detection entirely —
-    the exact rescreen pre-rollout shape (owned `helm/resume-screener`
-    while declaring image_only: true).
+    other path in the repo would otherwise evade detection entirely
+    (an owned chart at a nonstandard path while declaring
+    image_only: true).
     """
     found = [
         p
@@ -147,9 +146,9 @@ def chart_resolve(
     """Resolve the rendered chart, converting a render failure into a verdict.
 
     Mirrors `bake_resolve`: `helm template` fails closed (SystemExit) when
-    a chart's dependencies were never built — missing repo/path, or simply
-    not vendored (F-C1; the plan job now runs `helm dependency build`
-    first, but a genuinely broken dependency still fails here) — this
+    a chart's dependencies were never built: missing repo/path, or
+    not vendored (the plan job runs `helm dependency build`
+    first, but a broken dependency still fails here). This
     converts that failure into a named, remediation-linked block instead
     of letting the SystemExit surface as a raw stack trace.
     """
@@ -198,7 +197,7 @@ def lint_caller_workflow(caller_path: Path) -> list[Verdict]:
         verdicts.append(
             verdict(
                 "gate-job-id",
-                f"gate job id is '{gate_id}', must be 'security-scan' — the "
+                f"gate job id is '{gate_id}', must be 'security-scan'; the "
                 "job id is half of the required check context "
                 "'security-scan / Security Gate'; a different id reports "
                 "under a different context and the ruleset silently no "
@@ -277,9 +276,9 @@ def convention_verdicts(
     Chart rules run only for non-image_only consumers; bake resolution
     runs only when the committed shapes are already clean, so shape
     violations surface before bake ever executes. chart-missing/
-    chart-undeclared are verified declaration checks (BL-1): image_only
+    chart-undeclared are verified declaration checks: image_only
     is either backed by no chart anywhere in the repo, or a real chart
-    exists at chart_path — never a stale, unverified flag.
+    exists at chart_path, never a stale, unverified flag.
     """
     presence = compose_missing(compose_path)
     if presence:
@@ -295,7 +294,6 @@ def convention_verdicts(
         *dependency_shape(classified),
         *build_input_explicit(compose, classified),
         *build_context_excludes(compose_path, compose, classified),
-        *hardened_args(compose_path, compose, classified),
         *smoke_resource_unknown(smoke_resources),
     ]
     if not verdicts:

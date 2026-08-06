@@ -1,4 +1,4 @@
 apiVersion: v2
 name: subchart
-description: Minimal subchart consumed via a file:// dependency (T-13 fixture).
+description: Minimal subchart consumed via a file:// dependency fixture.
 version: 0.1.0

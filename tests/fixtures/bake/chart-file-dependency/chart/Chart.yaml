@@ -1,10 +1,10 @@
 apiVersion: v2
 name: chart-file-dependency
 description: >-
-  Umbrella chart with a file:// dependency and no committed charts/ — the
-  F-C1 shape (T-13). Renders only after `helm dependency build` vendors
-  the subchart; proves the plan job's chart lint no longer needs a
-  vendored tgz workaround (cra's fullstack-template).
+  Umbrella chart with a file:// dependency and no committed charts/.
+  Renders only after `helm dependency build` vendors
+  the subchart; proves the plan job's chart lint needs no
+  vendored tgz workaround.
 version: 0.1.0
 dependencies:
   - name: subchart

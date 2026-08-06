@@ -98,8 +98,8 @@ def bake_print_command(
 ) -> list[str]:
     """The exact bake --print invocation, mirroring execution's overrides.
 
-    `overrides` are extra --set values (e.g. the gate's resolved
-    `*.args.BUILDER_IMAGE`/`*.args.RUNTIME_IMAGE`); plan/execution parity
+    `overrides` are extra --set values (e.g. the gate's
+    `*.platform=linux/amd64` pin); plan/execution parity
     requires the published plan to resolve with the same override set the
     build legs execute with.
     """

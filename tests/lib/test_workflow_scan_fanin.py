@@ -101,11 +101,11 @@ def test_caller_template_keeps_required_check_job_id():
         (ROOT / "templates/callers/security-gate.yml").read_text()
     )
     # `security-scan` is half of the required check context
-    # `security-scan / Security Gate` — renaming it un-gates merges.
+    # `security-scan / Security Gate`; renaming it un-gates merges.
     assert "security-scan" in caller["jobs"]
 
 
-# --- image-scan per-leg wiring (AC-1) -----------------------------------------
+# --- image-scan per-leg wiring --------------------------------------------------
 
 
 def test_image_scan_is_matrix_over_plan_output():
@@ -157,14 +157,14 @@ def test_containers_bridge_outputs_retired():
     assert "needs.plan.outputs.containers" not in WORKFLOW.read_text()
 
 
-# --- plan-time helm dependency build (T-13, F-C1) ------------------------------
+# --- plan-time helm dependency build --------------------------------------------
 
 
 def test_plan_builds_chart_dependencies_before_lint():
     """The plan job runs `helm dependency build` before lint_caller.py so a
     chart with a file://-or-remote dependency and no committed charts/
-    renders normally in plan lint (cra's F-C1: it had to force-add a
-    vendored tgz to work around this gap)."""
+    renders normally in plan lint (without it, consumers must commit a
+    vendored tgz to work around the gap)."""
     plan = _workflow()["jobs"]["plan"]
     steps = plan["steps"]
     dep_build_idx = next(
@@ -178,7 +178,7 @@ def test_plan_builds_chart_dependencies_before_lint():
         if s.get("name") == "Lint caller against v0.6 conventions"
     )
     assert dep_build_idx < lint_idx, (
-        "helm dependency build must run before the lint step (F-C1)"
+        "helm dependency build must run before the lint step"
     )
     dep_step = steps[dep_build_idx]
     assert dep_step.get("if") == "${{ inputs.image_only != true }}"
@@ -189,7 +189,7 @@ def test_plan_builds_chart_dependencies_before_lint():
 
 def test_sonarqube_sources_resolved_dynamically_not_hardcoded():
     """`sonar.sources` must not hardcode `packages/,apps/` directly in the
-    scan step — a flat single-app repo (e.g. petegpt: source in server/,
+    scan step. A flat single-app repo (source directories at the root,
     no packages/ or apps/) has neither, and sonar-scanner exits 2 before
     ever scanning. A preceding step resolves sonar.sources dynamically
     (whichever of packages/,apps/ exist; '.' when neither does), and the
@@ -220,12 +220,12 @@ def test_sonarqube_sources_resolved_dynamically_not_hardcoded():
     )
 
 
-# --- caller template usable verbatim (AC-4) -----------------------------------
+# --- caller template usable verbatim ---------------------------------------------
 
 
 def test_caller_template_is_thin_surface_and_lint_clean(tmp_path):
-    """The template (with only the placeholder gate ref pinned to a SHA —
-    a repo-specific value per AC-4) must pass the v0.6 caller structure
+    """The template (with only the placeholder gate ref pinned to a SHA,
+    a repo-specific value) must pass the v0.6 caller structure
     lint: known inputs only, four secrets mapped, no removed v0.5 inputs."""
     import importlib.util
     import sys

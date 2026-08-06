@@ -300,8 +300,8 @@
                 <span>Dockerfile</span>
                 <h3>Build inputs stay explicit</h3>
                 <p>
-                  Build args use literal mapping values. Every target declares both <code>BUILDER_IMAGE</code> and
-                  <code>RUNTIME_IMAGE</code>; the gate does not override either value, and every build targets
+                  Build args use literal mapping values. The gate neither supplies nor overrides any build arg;
+                  base images are the Dockerfile's own choice, and every build targets
                   <code>linux/amd64</code>. Caller lint rejects host pass-through, build secrets, and SSH in v1.
                 </p>
               </article>
@@ -393,7 +393,7 @@
           <details class="lint-panel">
             <summary>
               <span>Fail-closed lint catalog</span>
-              <small>15 design rules</small>
+              <small>14 design rules</small>
             </summary>
             <div class="lint-grid">
               <code>compose-missing</code><span>Canonical Compose file is absent.</span>
@@ -406,7 +406,6 @@
               <code>build-context-excludes</code><span>Docker context can include environment or key material.</span>
               <code>compose-platform</code><span>A service pins a platform other than linux/amd64.</span>
               <code>bake-resolve</code><span>Bake cannot print a normalized plan.</span>
-              <code>hardened-args</code><span>Dockerfile lacks the blessed base ARG pair.</span>
               <code>chart-readiness</code><span>A rendered workload lacks readiness.</span>
               <code>smoke-target</code><span>The HTTP smoke target is missing or ambiguous.</span>
               <code>ship-set</code><span>A scheduled image is neither built nor a declared dependency.</span>
@@ -474,8 +473,8 @@
             <article>
               <h3>Hardened bases</h3>
               <p>
-                The gate handles Chainguard and Iron Bank authentication and failover. The major version requires
-                hardened bases for each consumer build.
+                The gate handles Chainguard and Iron Bank authentication and failover. Base images are the
+                consumer Dockerfile's own choice; the gate scans each image as built.
               </p>
             </article>
           </div>

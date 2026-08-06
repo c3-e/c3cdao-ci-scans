@@ -1,4 +1,4 @@
-# Unified security scan — single PR gate covering all CI spec gates.
+# Unified security scan: single PR gate covering all CI spec gates.
 #
 # A single workflow owns the entire PR gate and reports as the required
 # status check, instead of several independent modular scan workflows.
@@ -11,7 +11,7 @@
 # (compose_file, chart_path, values_local, release, namespace,
 # smoke_resources, image_only) + the 4 registry secrets; the v0.5
 # scan_image/contract_file/require_hardened_bases and base-image override
-# inputs are gone (base images + posture are gate config — see env below).
+# inputs are gone (base images + posture are gate config; see env below).
 #
 # Structure:
 #   plan              configuration pre-flight: v0.6 fail-closed convention
@@ -33,17 +33,17 @@
 #   build             matrixed over the plan job's derived matrix output: one
 #                     leg per non-local Compose build target, `bake <target>`
 #                     with `--set '*.platform=linux/amd64'` (identical to the
-#                     published plan — each leg diffs its re-printed target
+#                     published plan; each leg diffs its re-printed target
 #                     entry against the plan-bom artifact), then Syft image
 #                     SBOM + `docker save` tar upload, both artifacts named
 #                     by target (scan-image-<target> / sbom-image-<target>).
-#                     needs: plan only — helm-check runs in parallel with
+#                     needs: plan only; helm-check runs in parallel with
 #                     builds in v0.6.
 #   cluster-smoke     kind + provision declared smoke_resources catalog
 #                     modules (Ready gate) + load per-leg image tars +
 #                     helm install --wait + chart-derived HTTP probe
-#                     (needs: build, helm-check) — proves the images
-#                     actually boot behind the chart; skipped when
+#                     (needs: build, helm-check); proves the images
+#                     boot behind the chart; skipped when
 #                     image_only.
 #   image-scan        matrixed over the plan job's derived matrix (same
 #                     include as build): Trivy + Grype on each leg's
@@ -55,16 +55,16 @@
 # Build artifact handling (mirrors the modular workflows' "transient, runner-
 # scoped" approach): the image moves between jobs as an uploaded artifact using
 # the runner's built-in token. No GHCR push, no `packages: write`, no per-org
-# hardcoding, no cleanup job — so this is fork-safe (fork PRs get a read-only
+# hardcoding, no cleanup job, so this is fork-safe (fork PRs get a read-only
 # token and can't push to a registry, but they can upload artifacts).
 #
 # Blocking:
 #   plan, build, secrets-scan are always blocking.
 #   helm-check and cluster-smoke are blocking unless image_only is true
-#   (infra/image-only consumers — same skip predicate as the job `if:`).
+#   (infra/image-only consumers; same skip predicate as the job `if:`).
 #   cluster-smoke and image-scan gate their hard-fail on the SECURITY_SCAN_BLOCKING
 #   repo variable, but the gate still fails if they are skipped/cancelled/errored
-#   (e.g. because the build died) — a non-success on any blocking job is a gate
+#   (e.g. because the build died); a non-success on any blocking job is a gate
 #   failure, so a broken build can never sign off green.
 #   sast-semgrep and sast-sonarqube are continue-on-error (warn-only)
 #   until the harden baseline lands.
@@ -99,7 +99,7 @@ on:
         type: string
         default: ""
       image_only:
-        description: "When true, skip helm-check and cluster-smoke (and omit them from the Security Gate blocking set) — for infra/image-only repos that build and vuln-scan images without a deployable app chart. Default false keeps app callers unchanged (helm + smoke still blocking)."
+        description: "When true, skip helm-check and cluster-smoke (and omit them from the Security Gate blocking set), for infra/image-only repos that build and vuln-scan images without a deployable app chart. Default false keeps app callers unchanged (helm + smoke still blocking)."
         type: boolean
         default: false
     secrets:
@@ -122,15 +122,13 @@ concurrency:
 
 env:
   # Gate config (v0.6): base images, Iron Bank registry, and hardened-base
-  # posture are gate-owned operator decisions, not caller inputs — the v0.5
+  # posture are gate-owned operator decisions, not caller inputs; the v0.5
   # builder_image/runtime_image/ironbank_*/require_hardened_bases inputs
   # folded into these literals at the v0.6 cutover. These feed the
   # registry-login/failover resolution action (docker login + fail-closed
-  # credential check) only — v0.6.1 stopped injecting them into any build
-  # (declare-only convention: `hardened-args` lint checks that both ARGs
-  # are declared, not their value; consuming a hardened base in `FROM` is
-  # the consumer's own choice). GATE_REQUIRE_HARDENED_BASES is fail-closed
-  # by design: no credential pair means no build.
+  # credential check) only. The gate injects no build args; base images
+  # are the consumer Dockerfile's own choice. GATE_REQUIRE_HARDENED_BASES
+  # is fail-closed by design: no credential pair means no build.
   GATE_BUILDER_IMAGE: cgr.dev/chainguard/python:latest-dev
   GATE_RUNTIME_IMAGE: cgr.dev/chainguard/python:latest
   GATE_IRONBANK_REGISTRY: registry1.dso.mil
@@ -139,13 +137,13 @@ env:
 
 jobs:
   # --------------------------------------------------------------------------
-  # Plan — configuration pre-flight + derivation before anything expensive
+  # Plan: configuration pre-flight + derivation before anything expensive
   # runs. Fail-closed v0.6 convention lint (lint_caller.py: caller structure,
   # Compose/Dockerfile/chart shape rules) on the consumer checkout, then
-  # hardened-registry login/failover resolution — the SAME composite action
+  # hardened-registry login/failover resolution, the SAME composite action
   # every build leg runs (docker login + fail-closed credential check; its
-  # resolved builder/runtime outputs are not injected into any build — see
-  # hardened-args) — then derive_bom.py publishes the bake plan + annotated
+  # resolved builder/runtime outputs are not injected into any build),
+  # then derive_bom.py publishes the bake plan + annotated
   # BOM and emits the build matrix. Bad caller, nonconforming shapes, or
   # missing required registry secrets never scan.
   # --------------------------------------------------------------------------
@@ -169,9 +167,9 @@ jobs:
 
       # Resolve which ci-scans ref to lint against. github.job_workflow_sha is
       # empty on pull_request-triggered reusable calls, so prefer the ref the
-      # caller actually pins in its `uses:` (parsed from the caller file), then
+      # caller pins in its `uses:` (parsed from the caller file), then
       # job_workflow_sha, then main. Without this the lint validates against
-      # main's contract regardless of the pinned ref — the wrong contract the
+      # main's contract regardless of the pinned ref, the wrong contract the
       # moment they diverge (e.g. piloting an as-yet-unmerged input).
       - name: Resolve callee (ci-scans) ref
         id: calleeref
@@ -204,8 +202,7 @@ jobs:
       # Login + failover resolution replaces the v0.5 presence-only secrets
       # check: the action fails closed per require-hardened-bases when no
       # credential pair exists. Its resolved builder/runtime outputs are
-      # not consumed downstream (v0.6.1 declare-only convention — the gate
-      # no longer injects them into any build).
+      # not consumed downstream; the gate injects nothing into any build.
       - name: Login to hardened base registries (Chainguard + Iron Bank)
         id: base-registry
         uses: ./.ci-scans/.github/actions/hardened-registry-login
@@ -221,10 +218,10 @@ jobs:
 
       # helm-check and cluster-smoke both run `helm dependency build` before
       # rendering the chart; plan's chart lint (lint_caller.py -> helm
-      # template) must match or a chart with a `file://`/remote dependency
+      # template) must match, or a chart with a `file://`/remote dependency
       # and no committed `charts/` fails plan lint before it ever reaches
-      # helm-check (F-C1 — cra's rollout had to force-add a vendored tgz
-      # past its own .gitignore to work around this gap). Skipped when
+      # helm-check, pushing consumers to commit vendored dependency
+      # archives as a workaround. Skipped when
       # image_only or when chart_path doesn't exist yet (chart-missing,
       # a lint_caller.py rule, names that failure instead).
       - name: Set up Helm
@@ -245,7 +242,7 @@ jobs:
         env:
           WORKFLOW_REF: ${{ github.workflow_ref }}
         run: |
-          # WORKFLOW_REF: <owner>/<repo>/<path>@<ref> — strip repo prefix + @ref
+          # WORKFLOW_REF: <owner>/<repo>/<path>@<ref>; strip repo prefix + @ref
           caller="${WORKFLOW_REF#"$GITHUB_REPOSITORY/"}"
           caller="${caller%%@*}"
           if [ ! -f "$caller" ]; then
@@ -256,9 +253,8 @@ jobs:
             --consumer-root "$GITHUB_WORKSPACE"
 
       # The published plan is `bake --print` (platform pin is
-      # derive_bom-internal) — no base-image --set overrides (v0.6.1
-      # declare-only convention, see hardened-args) — each leg re-prints
-      # its target and diffs against this artifact.
+      # derive_bom-internal) with no base-image --set overrides; each leg
+      # re-prints its target and diffs against this artifact.
       - name: Derive bake plan + annotated BOM
         env:
           GATE_COMPOSE_FILE: ${{ inputs.compose_file }}
@@ -322,19 +318,19 @@ jobs:
           PY
 
   # --------------------------------------------------------------------------
-  # Build — one matrixed job over the plan job's derived matrix
+  # Build: one matrixed job over the plan job's derived matrix
   # ([{target, tag, dockerfile, context}], one leg per non-local Compose
-  # build target — no primary/extras distinction). Each leg proves
+  # build target; no primary/extras distinction). Each leg proves
   # plan/execution parity (re-print its target with the identical --set
   # overrides and diff against the published plan-bom artifact), executes
   # `bake <target>` via docker/bake-action with the platform pin (no
-  # base-image arg overrides — v0.6.1 declare-only convention, see
-  # hardened-args), verifies the planned tag exists, generates the Syft
-  # image SBOM, and uploads the `docker save` tarball — artifacts named by
+  # base-image arg overrides), verifies the planned tag exists, generates
+  # the Syft
+  # image SBOM, and uploads the `docker save` tarball; artifacts named by
   # target: scan-image-<target> / sbom-image-<target>. The matrix is never
   # empty (compose-no-builds lint
   # blocks first) and capped at 10 (matrix-cap lint), so no empty-include
-  # plan failure is possible. needs: plan only — helm-check runs in parallel
+  # plan failure is possible. needs: plan only; helm-check runs in parallel
   # with builds in v0.6 (approved job-mapping); fan-in still gates on both.
   # --------------------------------------------------------------------------
   build:
@@ -382,10 +378,10 @@ jobs:
 
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f  # v3
 
-      # Hardened-base login + failover resolution — every leg (and the plan
+      # Hardened-base login + failover resolution: every leg (and the plan
       # job) resolves through this shared action for its docker-login and
       # fail-closed credential check; the resolved builder/runtime outputs
-      # are not injected into any build (v0.6.1 declare-only convention).
+      # are not injected into any build.
       - name: Login to hardened base registries (Chainguard + Iron Bank)
         id: base-registry
         uses: ./.ci-scans/.github/actions/hardened-registry-login
@@ -401,7 +397,7 @@ jobs:
 
       # bake resolves compose `context:` against the process cwd (spike
       # Finding A), so both the parity re-print and the execution below run
-      # from the compose file's directory — same as the plan job's derive.
+      # from the compose file's directory, same as the plan job's derive.
       - name: Resolve compose location
         id: compose
         run: |
@@ -417,8 +413,9 @@ jobs:
       # Plan/execution parity: re-print this leg's target with the identical
       # target + platform pin (scrubbed env, mirroring derive_bom) and
       # diff the resolved target entry against the published plan. Any drift
-      # fails the leg before the build runs — a parity failure is a design
-      # flaw, not a bug: stop and re-design, do not patch around it.
+      # fails the leg before the build runs; a parity failure means the
+      # plan and execution disagree by construction: stop and re-design,
+      # do not patch around it.
       - name: Plan/execution parity check
         env:
           TARGET: ${{ matrix.target }}
@@ -435,7 +432,7 @@ jobs:
           jq -S --arg t "$TARGET" '.target[$t]' /tmp/plan/bake-plan.json > /tmp/planned-target.json
           jq -S --arg t "$TARGET" '.target[$t]' /tmp/executed-print.json > /tmp/executed-target.json
           diff /tmp/planned-target.json /tmp/executed-target.json || {
-            echo "::error::plan/execution parity drift for target '$TARGET' — published plan and execution-time resolution disagree"
+            echo "::error::plan/execution parity drift for target '$TARGET': published plan and execution-time resolution disagree"
             exit 1
           }
           echo "parity OK: planned target entry == executed target entry (${TARGET})"
@@ -485,7 +482,7 @@ jobs:
           retention-days: 1
 
   # --------------------------------------------------------------------------
-  # Secrets detection — TruffleHog (diff-aware, verified only)
+  # Secrets detection: TruffleHog (diff-aware, verified only)
   #
   # Job name MUST stay "TruffleHog verified-secret scan": the main ruleset
   # requires exactly that status-check context (strict policy + merge queue).
@@ -505,7 +502,7 @@ jobs:
       # Resolve the scan range per event so the scan is diff-aware. Scanning
       # only the PR/merge-queue range (not full history) means a pre-existing
       # verified secret elsewhere in history can't block every future PR once
-      # SECURITY_SCAN_BLOCKING=true — the failure mode the modular design avoided.
+      # SECURITY_SCAN_BLOCKING=true, the failure mode the modular design avoided.
       - name: Resolve scan range
         id: range
         run: |
@@ -551,7 +548,7 @@ jobs:
           fi
 
   # --------------------------------------------------------------------------
-  # SAST — Semgrep (warn-only until harden baseline)
+  # SAST: Semgrep (warn-only until harden baseline)
   # --------------------------------------------------------------------------
   sast-semgrep:
     name: SAST (Semgrep)
@@ -596,11 +593,11 @@ jobs:
         run: |
           set -uo pipefail
           if [ ! -f semgrep-results.json ]; then
-            echo "::warning::Semgrep results artifact missing — cannot count ERROR findings"
+            echo "::warning::Semgrep results artifact missing; cannot count ERROR findings"
             exit 1
           fi
           if ! ERRORS=$(jq '[.results[] | select(.extra.severity == "ERROR")] | length' semgrep-results.json); then
-            echo "::warning::Semgrep results JSON unreadable — cannot count ERROR findings"
+            echo "::warning::Semgrep results JSON unreadable; cannot count ERROR findings"
             exit 1
           fi
           if [ "$ERRORS" -gt 0 ]; then
@@ -610,7 +607,7 @@ jobs:
           echo "No ERROR-severity Semgrep findings."
 
   # --------------------------------------------------------------------------
-  # SAST — SonarQube ephemeral (warn-only until baseline)
+  # SAST: SonarQube ephemeral (warn-only until baseline)
   # --------------------------------------------------------------------------
   sast-sonarqube:
     name: SAST (SonarQube ephemeral)
@@ -637,10 +634,10 @@ jobs:
         with:
           fetch-depth: 0
 
-      # `packages/`/`apps/` is a monorepo-shaped convention, not universal —
-      # a flat single-app repo (e.g. petegpt: source in server/) has
+      # `packages/`/`apps/` is a monorepo-shaped convention, not universal;
+      # a flat single-app repo (source directories at the repo root) has
       # neither, and sonar-scanner exits 2 ("folder does not exist") before
-      # ever scanning. Scope to whichever of the two actually exist at the
+      # ever scanning. Scope to whichever of the two exist at the
       # repo root; fall back to the whole tree only when neither does, so
       # monorepo consumers keep their existing (narrower) scan surface.
       - name: Resolve sonar.sources
@@ -691,7 +688,7 @@ jobs:
             -Dsonar.sources=${{ steps.sonar-sources.outputs.sources }}
             -Dsonar.exclusions=**/node_modules/**,**/.pnpm-store/**
 
-      # Wait for the Compute Engine task to finish before reading the gate —
+      # Wait for the Compute Engine task to finish before reading the gate;
       # otherwise project_status can return a stale or empty result from a prior
       # (or not-yet-computed) analysis. Mirrors the modular sonarqube.yml.
       - name: Wait for analysis task to complete
@@ -755,7 +752,7 @@ jobs:
           include-hidden-files: true
 
   # --------------------------------------------------------------------------
-  # Helm chart validity — blocking unless image_only. Chart location comes
+  # Helm chart validity: blocking unless image_only. Chart location comes
   # from the caller's chart_path/values_local/release inputs (v0.6 thin
   # surface). The consumer ci-secctx hook is dropped with no successor
   # (approved job-mapping): the bundled restricted-PSS assertion below is
@@ -785,7 +782,7 @@ jobs:
       - name: helm template (render check)
         run: helm template "${HELM_RELEASE_NAME}" "./${HELM_CHART_PATH}" -f "${HELM_VALUES_FILE}" > /tmp/rendered-chart.yaml
 
-      # Restricted-PSS assertion on the rendered releases — a machine-checkable
+      # Restricted-PSS assertion on the rendered releases, a machine-checkable
       # re-scan of the templated securityContext rows. Ported from the modular
       # helm-validate.yml (which this workflow replaces) so that pod-security
       # enforcement isn't lost.
@@ -813,7 +810,7 @@ jobs:
         uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e  # v6
 
       # The bundled restricted-PSS assertion is GATE POLICY: it always runs
-      # in-gate (tamper-proof — a consumer cannot edit it out of a file they
+      # in-gate (tamper-proof: a consumer cannot edit it out of a file they
       # own; the v0.5 consumer ci-secctx hook is dropped with no successor).
       - name: Assert rendered pod-security controls (bundled, gate policy)
         run: |
@@ -825,14 +822,14 @@ jobs:
           uv run .ci-scans/scripts/lib/assert_restricted_pss.py /tmp/rendered-chart.yaml
 
   # --------------------------------------------------------------------------
-  # Cluster smoke — kind + catalog provisioning + helm install + derived probe.
+  # Cluster smoke: kind + catalog provisioning + helm install + derived probe.
   # helm-check (lint/template) is a static render; it can't catch a chart that
   # renders clean but crash-loops on boot (bad env, failed migration, broken
   # entrypoint). Flow: create kind cluster -> load every per-leg image
   # tar -> apply the declared smoke_resources catalog modules and gate on
   # their readiness (a timeout fails naming the module, BEFORE any helm
   # install) -> helm install --wait -> probe the chart-derived HTTP target
-  # (derive_smoke_target.py over the local-values render — same semantics the
+  # (derive_smoke_target.py over the local-values render, same semantics the
   # smoke-target lint enforced in plan, so a lint-clean chart always derives).
   # Warn-only unless SECURITY_SCAN_BLOCKING.
   # --------------------------------------------------------------------------
@@ -990,7 +987,7 @@ jobs:
           helm dependency build "./${HELM_CHART_PATH}" || fail "helm dependency build failed"
 
           # Chart-derived probe target: derive from the local-values
-          # render — the same Service-backed HTTP readiness semantics the
+          # render, the same Service-backed HTTP readiness semantics the
           # smoke-target lint rule enforced in plan, so a lint-clean chart
           # always derives exactly one target.
           helm template "${HELM_RELEASE_NAME}" "./${HELM_CHART_PATH}" \
@@ -1008,7 +1005,7 @@ jobs:
             -f "${HELM_VALUES_LOCAL_FILE}" \
             --wait \
             --timeout 5m || {
-              echo "=== helm install failed — cluster diagnostics ==="
+              echo "=== helm install failed: cluster diagnostics ==="
               kubectl -n "${NAMESPACE}" get pods,jobs -o wide || true
               kubectl -n "${NAMESPACE}" get events --sort-by=.lastTimestamp | tail -30 || true
               for p in $(kubectl -n "${NAMESPACE}" get pods -o name 2>/dev/null); do
@@ -1029,7 +1026,7 @@ jobs:
           kill "${pf_pid}" 2>/dev/null || true
           echo "GET ${PROBE_PATH} via svc/${PROBE_SVC}:${PROBE_PORT} -> ${code}"
           [ "${code}" = "200" ] || fail "${PROBE_PATH} returned ${code}, expected 200"
-          echo "probe 200 — smoke OK"
+          echo "probe 200: smoke OK"
 
       - name: Record smoke step outcome
         id: smoke_outcome
@@ -1041,7 +1038,7 @@ jobs:
           echo "cluster-smoke step outcome=${{ steps.smoke.outcome }} smoke_ok=$ok"
 
   # --------------------------------------------------------------------------
-  # Image scan — one matrixed job over the plan job's derived matrix, the
+  # Image scan: one matrixed job over the plan job's derived matrix, the
   # same include the build job fans out over (never empty; <=10 via the
   # matrix-cap lint). Every leg runs the shared image-side scans (Trivy
   # image, Grype image, Grype image-SBOM) against its leg's per-target
@@ -1051,7 +1048,7 @@ jobs:
   # Same SECURITY_SCAN_BLOCKING exit-code semantics on every leg.
   # --------------------------------------------------------------------------
   image-scan:
-    name: Vulnerability Scan — ${{ matrix.target }} (Trivy + Grype)
+    name: Vulnerability Scan ${{ matrix.target }} (Trivy + Grype)
     runs-on: ubuntu-latest
     # plan is needed only to reference its matrix / source_sbom_target outputs.
     needs: [plan, build]
@@ -1063,7 +1060,7 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
 
-      # Source SBOM is whole-repo and runs once — designated leg only.
+      # Source SBOM is whole-repo and runs once, designated leg only.
       - name: Generate source SBOM (pnpm + uv)
         if: ${{ matrix.target == needs.plan.outputs.source_sbom_target }}
         uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610  # v0.24.0
@@ -1109,7 +1106,7 @@ jobs:
           trivy-severity: ${{ env.TRIVY_SEVERITY }}
           blocking: ${{ vars.SECURITY_SCAN_BLOCKING }}
 
-      - name: Trivy scan — source SBOM
+      - name: Trivy scan (source SBOM)
         if: ${{ matrix.target == needs.plan.outputs.source_sbom_target }}
         uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1  # v0.35.0
         with:
@@ -1122,7 +1119,7 @@ jobs:
       # Trivy is not run on the image SBOM (Syft-SBOM incompatibility); the
       # direct Trivy image scan above covers those packages.
 
-      - name: Grype scan — source SBOM
+      - name: Grype scan (source SBOM)
         if: ${{ matrix.target == needs.plan.outputs.source_sbom_target }}
         uses: anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2  # v7.4.0
         with:
@@ -1133,7 +1130,7 @@ jobs:
           config: .grype.yaml
 
   # --------------------------------------------------------------------------
-  # Security Gate — aggregate required check
+  # Security Gate: aggregate required check
   # --------------------------------------------------------------------------
   security-gate:
     name: Security Gate

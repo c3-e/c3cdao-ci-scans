@@ -5,8 +5,8 @@ hand-authored against `workflow_call.inputs` in
 `.github/workflows/reusable-security-gate.yml` (the source of truth; the
 doc tests cross-check every input and secret name against it).
 
-Since v0.6 the gate derives build facts — images, Dockerfiles, contexts,
-build args, smoke target — from your Compose file and Helm chart; see
+Since v0.6 the gate derives build facts (images, Dockerfiles, contexts,
+build args, smoke target) from your Compose file and Helm chart; see
 [CI-CONTRACT.md](CI-CONTRACT.md). The seven inputs that remain are paths
 and orchestration knobs, all defaulted: a conforming repository with
 default paths passes nothing but secrets.
@@ -21,23 +21,23 @@ default paths passes nothing but secrets.
 | `release` | string | `app` | Helm release name helm-check templates under and cluster-smoke installs as. |
 | `namespace` | string | `app-ci` | Kubernetes namespace cluster-smoke creates and installs the release into. |
 | `smoke_resources` | string | `""` | CSV of gate-owned smoke catalog module ids (`postgres-pgvector`, `gateway-crds`) provisioned before helm install. Unknown ids block (`smoke-resource-unknown`). Default provisions none. |
-| `image_only` | boolean | `false` | When true, skip helm-check and cluster-smoke (and drop them from the blocking set) — for repos that build and scan images without a deployable chart. |
+| `image_only` | boolean | `false` | When true, skip helm-check and cluster-smoke (and drop them from the blocking set), for repos that build and scan images without a deployable chart. |
 
 ## Secrets
 
 The four registry secrets are the whole secret surface. Pass them
-explicitly — `secrets: inherit` only works within one org/enterprise
+explicitly; `secrets: inherit` only works within one org/enterprise
 (across owners it silently passes nothing) and is rejected by the
 `no-secrets-inherit` rule.
 
 | Secret | Used by |
 | --- | --- |
-| `CGR_PULL_TOKEN`, `CGR_PULL_USERNAME` | plan + every build leg — Chainguard (`cgr.dev`) login |
-| `IRONBANK_TOKEN`, `IRONBANK_USERNAME` | SonarQube ephemeral + plan/build Iron Bank (`registry1.dso.mil`) login — runs alongside Chainguard when both are set |
+| `CGR_PULL_TOKEN`, `CGR_PULL_USERNAME` | plan + every build leg: Chainguard (`cgr.dev`) login |
+| `IRONBANK_TOKEN`, `IRONBANK_USERNAME` | SonarQube ephemeral + plan/build Iron Bank (`registry1.dso.mil`) login; runs alongside Chainguard when both are set |
 
 Base images, the Iron Bank registry host, and the hardened-base posture
 are gate-owned configuration (workflow `env`), not inputs: the gate is
-fail-closed — no credential pair means no build.
+fail-closed: no credential pair means no build.
 
 ## Worked example
 
@@ -66,16 +66,16 @@ where local development already declares them.
 
 ## Removed inputs (v0.5 → v0.6 migration)
 
-The unknown-input lint rule rejects each of these by name — delete them
+The unknown-input lint rule rejects each of these by name; delete them
 from your caller. Their jobs moved into the derivation or into gate-owned
 configuration.
 
 | Removed input | Replaced by |
 | --- | --- |
-| `contract_file` | removed — no contract makefile exists; build facts are derived from Compose + Dockerfiles + chart |
-| `scan_image` | removed — no primary image; every non-local Compose build service is scanned as its own matrix leg |
-| `require_hardened_bases` | removed — hardened bases are always required (fail-closed gate posture) |
-| `builder_image`, `runtime_image` | removed — gate-owned base-image config; consume via the `BUILDER_IMAGE`/`RUNTIME_IMAGE` Dockerfile ARGs |
-| `ironbank_registry`, `ironbank_builder_image`, `ironbank_runtime_image` | removed — gate-owned registry/failover configuration |
-| `cluster_name` | removed — gate-owned kind cluster name |
-| `smoke_secrets` | removed — smoke prerequisites come from the gate-owned `smoke_resources` catalog (fixture Secrets included, e.g. `app-database-url`) |
+| `contract_file` | removed: no contract makefile exists; build facts are derived from Compose + Dockerfiles + chart |
+| `scan_image` | removed: no primary image; every non-local Compose build service is scanned as its own matrix leg |
+| `require_hardened_bases` | removed: hardened bases are always required (fail-closed gate posture) |
+| `builder_image`, `runtime_image` | removed: the gate neither supplies nor overrides base-image args; base images are the consumer Dockerfile's own choice |
+| `ironbank_registry`, `ironbank_builder_image`, `ironbank_runtime_image` | removed: gate-owned registry/failover configuration |
+| `cluster_name` | removed: gate-owned kind cluster name |
+| `smoke_secrets` | removed: smoke prerequisites come from the gate-owned `smoke_resources` catalog (fixture Secrets included, e.g. `app-database-url`) |

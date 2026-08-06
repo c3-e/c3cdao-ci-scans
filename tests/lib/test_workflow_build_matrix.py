@@ -7,9 +7,9 @@ and the new action pins are full commit SHAs. Later cutover stages modify
 the same file; these assertions keep the build-matrix surface from
 regressing.
 
-v0.6.1 (T-14): the gate stopped injecting `*.args.BUILDER_IMAGE`/
-`*.args.RUNTIME_IMAGE` into any bake invocation (declare-only convention —
-see `hardened-args`); the platform pin remains gate-owned and injected.
+v0.6.1: the gate stopped injecting `*.args.BUILDER_IMAGE`/
+`*.args.RUNTIME_IMAGE` into any bake invocation; the platform pin
+remains gate-owned and injected.
 """
 
 from __future__ import annotations
@@ -48,7 +48,7 @@ def test_caller_lint_renamed_to_plan():
 def test_plan_outputs_matrix_and_bridge_outputs():
     outputs = _jobs()["plan"]["outputs"]
     # The scan-matrix cutover retired the containers/has_extras/chart bridges; the smoke rewiring retired
-    # health when it rewired cluster-smoke — no bridge outputs remain.
+    # health when it rewired cluster-smoke; no bridge outputs remain.
     for key in ("matrix", "source_sbom_target"):
         assert key in outputs, f"plan must declare output '{key}'"
     assert "health" not in outputs, "bridge output 'health' must be retired"
@@ -59,7 +59,7 @@ def test_plan_wires_lint_and_derive_without_arg_overrides():
     assert "lint_caller.py" in text
     assert "derive_bom.py" in text
     for override in REMOVED_ARG_OVERRIDES:
-        assert override not in text, f"plan job must not inject {override!r} (T-14)"
+        assert override not in text, f"plan job must not inject {override!r}"
 
 
 def test_build_is_matrix_over_plan_output():
@@ -83,7 +83,7 @@ def test_build_leg_runs_bake_with_platform_pin_only():
         assert override in str(with_map["set"]), f"missing --set {override!r}"
     for override in REMOVED_ARG_OVERRIDES:
         assert override not in str(with_map["set"]), (
-            f"build leg must not inject {override!r} (T-14)"
+            f"build leg must not inject {override!r}"
         )
 
 
@@ -93,7 +93,7 @@ def test_build_leg_checks_plan_execution_parity():
     assert "jq -S" in text
     assert "bake-plan.json" in text
     for override in REMOVED_ARG_OVERRIDES:
-        assert override not in text, f"parity re-print must not inject {override!r} (T-14)"
+        assert override not in text, f"parity re-print must not inject {override!r}"
 
 
 def test_build_artifacts_named_by_target():
