@@ -65,6 +65,20 @@ Consumers pin the immutable release revision:
 `uses: …/reusable-security-gate.yml@<40-hex sha>  # v0.6.0`. Tags and branches
 are rejected by the `gate-ref-pin` lint rule.
 
+## Releases
+
+Versioning and the CHANGELOG are automated by
+[release-please](https://github.com/googleapis/release-please) (`.github/workflows/release-please.yml`),
+driven entirely by [Conventional Commits](https://www.conventionalcommits.org/):
+on every push to `main` it scans commits since the last release tag for a
+`feat:`/`fix:`/`docs:`/etc. type prefix and opens or updates a
+`chore(main): release X.Y.Z` PR; merging that PR cuts the tag and GitHub
+Release. **This is squash-merge-friendly but not currently enforced** — a
+PR merged with a non-conventional title produces a commit release-please
+can't see, and it silently skips releasing rather than erroring. Title every
+PR with a type prefix (`feat:`, `fix:`, `docs:`, `chore:`, …) so its
+squash-merged commit is picked up automatically.
+
 ## Docs
 
 - [docs/RUNBOOK.md](docs/RUNBOOK.md): full onboarding, ruleset provenance, enforcement
