@@ -51,21 +51,39 @@ get their own equal build + scan leg (no positional primary image).
 Single-image consumers declare one build service and run a one-leg matrix;
 the `matrix-cap` rule bounds the fan-out at ten.
 
-### Suppression files: unsuppressed by default, consumer-owned overrides
+### No suppression of unfixed findings: OpenVEX is the only sanctioned exception path
 
-The spec's "no suppression of unfixed findings" is the gate's **default**
-posture: image-scan defaults empty `.trivyignore` / `.grype.yaml` when the
-consumer doesn't carry them. Consumer-carried suppression files are
-honored when present: the gate defaults to the spec posture, and a
-consumer that commits an ignore file explicitly owns the deviation in its
-own reviewable tree.
+The spec's "no suppression of unfixed findings" names two sanctioned
+exits only: wait for an upstream patch, or resolve internally. Raw
+scanner ignore files (`.trivyignore`, `.grype.yaml`) carry neither a
+justification nor a review trail, so they are a third, unsanctioned exit
+the spec doesn't contemplate — the gate's `plan` job now blocks a
+committed `.trivyignore`/`.grype.yaml` with any real entry
+(`suppression-format` lint rule); empty/absent files still pass (the
+gate itself defaults empty ones so Trivy/Grype always have a config
+path).
 
-The same model covers OpenVEX: image-scan defaults an empty-statements
-VEX document when the consumer has no `.openvex/`, and a committed
-`.openvex/templates/main.openvex.json` is consumed by the Trivy/Grype
-image legs. Unlike raw ignore files, a VEX statement carries a status and
-justification, and the document as applied is preserved in every run's
-security export bundle (RUNBOOK appendix I).
+OpenVEX is the converged, sole suppression surface: Trivy and Grype's
+image legs *consume* a consumer-authored
+`.openvex/templates/main.openvex.json` (`vulnerability.vex` /
+`GRYPE_VEX_DOCUMENTS`) when present, disposing of exactly the CVEs it
+names, and default to an empty-statements document when the consumer has
+no `.openvex/`. Every VEX statement carries a `status` and
+`justification` — the structural rigor the spec's invariant is protecting
+— and the document as applied is preserved in every run's security
+export bundle. This does not relax the spec's letter: it is a stricter
+reading of "resolve internally" (a documented, reviewable disposition,
+not a bare CVE-ID list) via the one mechanism that can't be silent.
+
+One correction to the spec's own framing: the spec lists "OpenVEX JSON
+generation (vexctl)" as its own Phase 2 gate, but the gate does not run
+`vexctl` to generate a per-run VEX document — a real VEX statement's
+`status`/`justification` requires an analyst's judgment about why a CVE
+doesn't apply, which can't be synthesized at scan time. What the gate
+automates is the empty-statements default, bit-identical to what an
+empty `vexctl generate` would produce when the consumer has no
+`.openvex/`; a consumer authors real statements once, locally, via
+`vexctl`, and commits them (RUNBOOK §12).
 
 ### App build is subsumed into the container build (no separate Phase-1 stage)
 

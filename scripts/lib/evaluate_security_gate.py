@@ -4,8 +4,8 @@
 # ///
 """Evaluate Security Gate blocking membership from needs JSON.
 
-Exit 0 when all blocking jobs succeeded (and cluster-smoke smoke_ok when
-applicable). Exit 1 otherwise.
+Exit 0 when all blocking jobs succeeded (and cluster-smoke smoke_ok, once
+SECURITY_SCAN_BLOCKING=true). Exit 1 otherwise.
 """
 
 from __future__ import annotations
@@ -48,7 +48,9 @@ def blocking_jobs(image_only: bool) -> list[str]:
     return blocking
 
 
-def evaluate(needs: dict[str, Any], image_only: bool) -> int:
+def evaluate(
+    needs: dict[str, Any], image_only: bool, security_scan_blocking: bool
+) -> int:
     blocking = blocking_jobs(image_only)
     bad = {
         k: needs.get(k, {}).get("result")
@@ -58,7 +60,12 @@ def evaluate(needs: dict[str, Any], image_only: bool) -> int:
     if bad:
         print("Blocking jobs not successful:", bad)
         return 1
-    if "cluster-smoke" in blocking:
+    # smoke_ok reflects the real probe outcome regardless of the job's own
+    # continue-on-error masking; only fail the gate on it once
+    # SECURITY_SCAN_BLOCKING=true — same ramp rule as secrets-scan/image-scan,
+    # so cluster-smoke doesn't silently block merges during the verification
+    # ramp while every other advisory job stays advisory.
+    if security_scan_blocking and "cluster-smoke" in blocking:
         smoke = needs.get("cluster-smoke") or {}
         smoke_ok = (smoke.get("outputs") or {}).get("smoke_ok")
         if smoke_ok != "true":
@@ -74,8 +81,11 @@ def evaluate(needs: dict[str, Any], image_only: bool) -> int:
 def main() -> None:
     needs = json.loads(os.environ["NEEDS_JSON"])
     image_only = (os.environ.get("IMAGE_ONLY") or "").lower() == "true"
+    security_scan_blocking = (
+        os.environ.get("SECURITY_SCAN_BLOCKING") or ""
+    ).lower() == "true"
     warn_if_advisory()
-    raise SystemExit(evaluate(needs, image_only))
+    raise SystemExit(evaluate(needs, image_only, security_scan_blocking))
 
 
 if __name__ == "__main__":

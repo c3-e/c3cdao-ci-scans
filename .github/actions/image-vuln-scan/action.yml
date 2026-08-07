@@ -31,8 +31,11 @@ runs:
   using: composite
   steps:
     # Consumers aren't required to carry scanner config files — default to
-    # empty ones so Trivy/Grype don't error on a missing path. Same
-    # no-op-when-absent pattern for OpenVEX: consumers opt in by committing
+    # empty ones so Trivy/Grype don't error on a missing path. plan's
+    # suppression-format lint already blocks a non-empty .trivyignore/
+    # .grype.yaml before this job can run, so "honor if present" only ever
+    # sees an empty file here — OpenVEX is the one real suppression
+    # surface. Same no-op-when-absent pattern for OpenVEX: consumers opt in by committing
     # .openvex/templates/main.openvex.json (data-only onboarding, resolved
     # against the caller checkout cwd like .trivyignore); absent that, an
     # empty-statements doc is written to RUNNER_TEMP so the scan steps can
@@ -188,8 +191,10 @@ runs:
     # applied (real consumer template or the empty default), and
     # metadata.json. Every step is `if: always()` so the bundle uploads even
     # when blocking=true fails the table scans above. JSON re-scans reuse
-    # the DBs the table scans already downloaded and the same suppression
-    # surface (.trivyignore/.grype.yaml/VEX), so the JSONs mirror what gated.
+    # JSON re-scans reuse the DBs the table scans already downloaded and
+    # the same VEX doc (.trivyignore/.grype.yaml are always empty by
+    # construction — plan's suppression-format lint blocks any real
+    # entry), so the JSONs mirror what gated.
     - name: Trivy scan — image (JSON for export)
       if: always()
       uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1  # v0.35.0

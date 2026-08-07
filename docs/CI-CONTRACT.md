@@ -174,6 +174,7 @@ else blocks the run before any build starts.
 | [`ship-set`](#rule-ship-set) | block | a rendered image is neither built nor a declared dependency |
 | [`built-unscheduled`](#rule-built-unscheduled) | warn | a built tag is never scheduled by the chart |
 | [`smoke-resource-unknown`](#rule-smoke-resource-unknown) | block | `smoke_resources` names a module outside the catalog |
+| [`suppression-format`](#rule-suppression-format) | block | `.trivyignore` / `.grype.yaml` carries a real suppression entry |
 | [`gate-ref-pin`](#rule-gate-ref-pin) | block | gate ref is not a full 40-hex commit SHA |
 | [`gate-job-id`](#rule-gate-job-id) | block | the calling job id is not `security-scan` |
 | [`no-secrets-inherit`](#rule-no-secrets-inherit) | block | caller uses `secrets: inherit` |
@@ -319,6 +320,18 @@ mark the service `profiles: [local]`.
 `smoke_resources` entries must come from the gate catalog:
 `postgres-pgvector`, `gateway-crds`. Remediation: request the module from
 ci-scans; there is no consumer escape hatch.
+
+### Rule: suppression-format
+
+A committed `.trivyignore` with a real entry, or a `.grype.yaml` with a
+non-empty `ignore:` list, blocks. OpenVEX is the only sanctioned way to
+dispose of a finding: a VEX statement carries `status` and `justification`,
+where a raw ignore entry carries neither. Empty or absent files pass — the
+gate itself defaults empty ones so Trivy/Grype always have a config path.
+Remediation: delete the ignore entry and express the exception as a
+statement in `.openvex/templates/main.openvex.json` instead (see
+[RUNBOOK §12](RUNBOOK.md#12-suppress-dispositioned-cves-with-openvex-consumer-optional)
+for the statement shape and how it's applied).
 
 ### Rule: gate-ref-pin
 

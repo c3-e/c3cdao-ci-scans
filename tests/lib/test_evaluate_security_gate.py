@@ -48,7 +48,7 @@ def test_image_only_omits_helm_and_smoke():
             "cluster-smoke": "skipped",
         }
     )
-    assert mod.evaluate(needs, image_only=True) == 0
+    assert mod.evaluate(needs, image_only=True, security_scan_blocking=True) == 0
 
 
 def test_app_mode_requires_helm_and_smoke_ok():
@@ -63,10 +63,13 @@ def test_app_mode_requires_helm_and_smoke_ok():
         },
         smoke_ok="true",
     )
-    assert mod.evaluate(needs, image_only=False) == 0
+    assert mod.evaluate(needs, image_only=False, security_scan_blocking=True) == 0
 
 
-def test_smoke_continue_on_error_false_green():
+def test_smoke_failure_advisory_until_blocking_flag():
+    """Same ramp as secrets-scan/image-scan: a real probe failure
+    (smoke_ok=false) stays advisory (green gate) until
+    SECURITY_SCAN_BLOCKING=true — it must not block by default."""
     needs = _needs(
         {
             "plan": "success",
@@ -78,7 +81,22 @@ def test_smoke_continue_on_error_false_green():
         },
         smoke_ok="false",
     )
-    assert mod.evaluate(needs, image_only=False) == 1
+    assert mod.evaluate(needs, image_only=False, security_scan_blocking=False) == 0
+
+
+def test_smoke_failure_blocks_once_blocking_flag_set():
+    needs = _needs(
+        {
+            "plan": "success",
+            "build": "success",
+            "secrets-scan": "success",
+            "image-scan": "success",
+            "helm-check": "success",
+            "cluster-smoke": "success",
+        },
+        smoke_ok="false",
+    )
+    assert mod.evaluate(needs, image_only=False, security_scan_blocking=True) == 1
 
 
 def test_matrixed_build_failure_blocks():
@@ -94,7 +112,7 @@ def test_matrixed_build_failure_blocks():
             "cluster-smoke": "skipped",
         }
     )
-    assert mod.evaluate(needs, image_only=False) == 1
+    assert mod.evaluate(needs, image_only=False, security_scan_blocking=True) == 1
 
 
 def test_matrixed_image_scan_failure_blocks():
@@ -109,7 +127,7 @@ def test_matrixed_image_scan_failure_blocks():
         },
         smoke_ok="true",
     )
-    assert mod.evaluate(needs, image_only=False) == 1
+    assert mod.evaluate(needs, image_only=False, security_scan_blocking=True) == 1
 
 
 # --- Advisory-mode banner (SECURITY_SCAN_BLOCKING visibility) -----------------

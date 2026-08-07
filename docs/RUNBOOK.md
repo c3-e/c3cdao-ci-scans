@@ -307,6 +307,12 @@ image scans, with the applied document preserved in every run's
 [security export bundle](#i-security-export-bundle-reference). Nothing is
 required — without the file, scans behave exactly as before.
 
+**This is the only sanctioned suppression path.** A committed
+`.trivyignore` or `.grype.yaml` with a real entry blocks in `plan`
+(`suppression-format`) — those formats carry no justification, so the
+gate no longer honors them. Migrate any existing entries to OpenVEX
+statements below.
+
 1. Commit `.openvex/templates/main.openvex.json` at your repo root (the
    `vexctl generate --init` layout). Author statements with
    `vexctl add` — pin `vexctl >= v0.3.0` (older releases silently keep
@@ -518,7 +524,8 @@ Every verdict names its rule and links a remediation anchor in the
 `dependency-shape`, `build-input-explicit`, `build-context-excludes`,
 `compose-platform`, `bake-resolve`, `chart-missing`,
 `chart-undeclared`, `chart-resolve`, `chart-readiness`,
-`smoke-target`, `ship-set`, `smoke-resource-unknown`, plus the warn-only
+`smoke-target`, `ship-set`, `smoke-resource-unknown`,
+`suppression-format`, plus the warn-only
 `built-unscheduled`. Caller-structure rules: `gate-ref-pin`,
 `gate-job-id`, `no-secrets-inherit`, `missing-secret-map`,
 `unknown-input`, `unreadable-caller`.
