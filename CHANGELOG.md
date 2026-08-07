@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.1](https://github.com/c3-e/c3cdao-ci-scans/compare/v0.7.0...v0.7.1) (2026-08-07)
+
+
+### Performance
+
+* **gate:** add GHA layer caching to build job ([#18](https://github.com/c3-e/c3cdao-ci-scans/issues/18)) ([d38bd47](https://github.com/c3-e/c3cdao-ci-scans/commit/d38bd476015f08abbf26d58e5425447b4c7c10d0))
+
 ## [0.7.0](https://github.com/c3-e/c3cdao-ci-scans/compare/v0.6.0...v0.7.0) (2026-08-07)
 
 
