@@ -21,6 +21,7 @@ from lint_caller import (  # noqa: E402
     bake_resolve,
     build_context_excludes,
     build_input_explicit,
+    built_unscheduled,
     chart_missing,
     chart_readiness,
     chart_resolve,
@@ -38,7 +39,7 @@ from lint_caller import (  # noqa: E402
     ship_set,
     smoke_resource_unknown,
     smoke_target,
-    built_unscheduled,
+    suppression_format,
 )
 
 FIXTURES = REPO_ROOT / "tests" / "fixtures" / "bake"
@@ -620,6 +621,45 @@ def test_smoke_resource_unknown():
 def test_smoke_resource_unknown_passes_on_catalog_and_empty():
     assert smoke_resource_unknown("postgres-pgvector, gateway-crds") == []
     assert smoke_resource_unknown("") == []
+
+
+# --- suppression format (OpenVEX-only) ------------------------------------------
+
+
+def test_suppression_format_passes_when_absent(tmp_path):
+    assert suppression_format(tmp_path) == []
+
+
+def test_suppression_format_passes_when_empty(tmp_path):
+    (tmp_path / ".trivyignore").write_text("")
+    (tmp_path / ".grype.yaml").write_text("ignore: []\n")
+    assert suppression_format(tmp_path) == []
+
+
+def test_suppression_format_passes_comment_only_trivyignore(tmp_path):
+    (tmp_path / ".trivyignore").write_text("# no active suppressions\n")
+    assert suppression_format(tmp_path) == []
+
+
+def test_suppression_format_blocks_real_trivyignore_entry(tmp_path):
+    (tmp_path / ".trivyignore").write_text("CVE-2024-12345\n")
+    v = only_rule(suppression_format(tmp_path), "suppression-format")
+    assert ".trivyignore" in v["message"]
+    assert "openvex" in v["message"].lower()
+
+
+def test_suppression_format_blocks_real_grype_ignore_rule(tmp_path):
+    (tmp_path / ".grype.yaml").write_text(
+        "ignore:\n  - vulnerability: CVE-2024-99999\n"
+    )
+    v = only_rule(suppression_format(tmp_path), "suppression-format")
+    assert ".grype.yaml" in v["message"]
+
+
+def test_suppression_format_blocks_invalid_grype_yaml(tmp_path):
+    (tmp_path / ".grype.yaml").write_text("ignore: [\n")
+    v = only_rule(suppression_format(tmp_path), "suppression-format")
+    assert ".grype.yaml" in v["message"]
 
 
 # --- caller structure carryover (load-bearing rules only) -----------------------

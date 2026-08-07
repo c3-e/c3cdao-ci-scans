@@ -21,7 +21,7 @@ compose-healthcheck, dependency-shape, build-input-explicit,
 build-context-excludes, compose-platform, bake-resolve,
 chart-missing, chart-undeclared, chart-resolve, chart-readiness,
 smoke-target, ship-set, smoke-resource-unknown, built-unscheduled,
-gate-job-id.
+suppression-format, gate-job-id.
 
 Caller structure rules carried over from v0.5.x (load-bearing only):
 gate-ref-pin (the reusable-workflow ref is a full 40-hex commit SHA),
@@ -44,6 +44,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import yaml
 from compose_facts import classify_services, load_compose
 from lint_rules import Verdict, load_gha_workflow, verdict
 from lint_rules.chart import (
@@ -138,6 +139,58 @@ def chart_undeclared(repo_root: Path) -> list[Verdict]:
             "declare chart_path",
         )
     ]
+
+
+def suppression_format(repo_root: Path) -> list[Verdict]:
+    """No `.trivyignore` / `.grype.yaml` suppression content — OpenVEX is
+    the only sanctioned way to dispose of a finding (a VEX statement
+    carries `status` + `justification`; a raw ignore entry carries neither).
+
+    Empty/absent files pass (the gate itself defaults empty ones so Trivy/
+    Grype have a config path); any real entry blocks with a remediation
+    pointing at the OpenVEX template.
+    """
+    verdicts: list[Verdict] = []
+    trivyignore = repo_root / ".trivyignore"
+    if trivyignore.is_file():
+        entries = [
+            line.strip()
+            for line in trivyignore.read_text().splitlines()
+            if line.strip() and not line.lstrip().startswith("#")
+        ]
+        if entries:
+            verdicts.append(
+                verdict(
+                    "suppression-format",
+                    f"'.trivyignore' carries {len(entries)} suppression "
+                    "entry/entries; the gate no longer honors raw ignore "
+                    "files (no justification field) — express the "
+                    "exception as an OpenVEX statement in "
+                    ".openvex/templates/main.openvex.json instead",
+                )
+            )
+    grype_config = repo_root / ".grype.yaml"
+    if grype_config.is_file():
+        try:
+            parsed = yaml.safe_load(grype_config.read_text()) or {}
+        except yaml.YAMLError as e:
+            verdicts.append(
+                verdict("suppression-format", f"'.grype.yaml' is not valid YAML: {e}")
+            )
+            parsed = {}
+        ignore = parsed.get("ignore") if isinstance(parsed, dict) else None
+        if ignore:
+            verdicts.append(
+                verdict(
+                    "suppression-format",
+                    f"'.grype.yaml' carries {len(ignore)} 'ignore:' "
+                    "rule(s); the gate no longer honors raw ignore rules "
+                    "(no justification field) — express the exception as "
+                    "an OpenVEX statement in "
+                    ".openvex/templates/main.openvex.json instead",
+                )
+            )
+    return verdicts
 
 
 def chart_resolve(
@@ -285,6 +338,7 @@ def convention_verdicts(
         return presence
     compose = load_compose(compose_path)
     classified = classify_services(compose)
+    repo_root = consumer_root or compose_path.parent
     verdicts = [
         *compose_no_builds(classified),
         *matrix_cap(classified),
@@ -295,11 +349,11 @@ def convention_verdicts(
         *build_input_explicit(compose, classified),
         *build_context_excludes(compose_path, compose, classified),
         *smoke_resource_unknown(smoke_resources),
+        *suppression_format(repo_root),
     ]
     if not verdicts:
         _, resolve = bake_resolve(compose_path, classified["targets"])
         verdicts.extend(resolve)
-    repo_root = consumer_root or compose_path.parent
     if image_only:
         return verdicts + chart_undeclared(repo_root)
     if chart_path is None:
