@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.2](https://github.com/c3-e/c3cdao-ci-scans/compare/v0.7.1...v0.7.2) (2026-08-07)
+
+
+### Documentation
+
+* **runbook:** add worked example for externally-delivered image VEX ([#20](https://github.com/c3-e/c3cdao-ci-scans/issues/20)) ([db225b7](https://github.com/c3-e/c3cdao-ci-scans/commit/db225b72f6460130d5088a39442e22e17ee8d137))
+
 ## [0.7.1](https://github.com/c3-e/c3cdao-ci-scans/compare/v0.7.0...v0.7.1) (2026-08-07)
 
 
