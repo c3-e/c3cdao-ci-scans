@@ -127,3 +127,8 @@ def test_downstream_jobs_reference_plan_not_caller_lint():
     text = WORKFLOW.read_text()
     assert "caller-lint" not in text
     assert "needs.caller-lint" not in text
+
+
+def test_build_scan_image_composite_action_removed():
+    assert "build-scan-image" not in WORKFLOW.read_text()
+    assert not (ROOT / ".github/actions/build-scan-image").exists()
