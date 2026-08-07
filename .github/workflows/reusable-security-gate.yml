@@ -447,6 +447,8 @@ jobs:
           targets: ${{ matrix.target }}
           set: |
             *.platform=linux/amd64
+            *.cache-from=type=gha,scope=security-scan-${{ matrix.target }}
+            *.cache-to=type=gha,mode=max,scope=security-scan-${{ matrix.target }}
           load: true
 
       - name: Verify bake produced the planned tag

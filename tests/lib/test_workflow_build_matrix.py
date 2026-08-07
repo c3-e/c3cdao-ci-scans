@@ -23,7 +23,11 @@ ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW = ROOT / ".github/workflows/reusable-security-gate.yml"
 
 FULL_SHA_USES = re.compile(r"@[0-9a-f]{40}$")
-SET_OVERRIDES = ("*.platform=linux/amd64",)
+SET_OVERRIDES = (
+    "*.platform=linux/amd64",
+    "*.cache-from=type=gha,scope=security-scan-${{ matrix.target }}",
+    "*.cache-to=type=gha,mode=max,scope=security-scan-${{ matrix.target }}",
+)
 REMOVED_ARG_OVERRIDES = ("*.args.BUILDER_IMAGE=", "*.args.RUNTIME_IMAGE=")
 
 
@@ -71,7 +75,7 @@ def test_build_is_matrix_over_plan_output():
     assert include == "${{ fromJSON(needs.plan.outputs.matrix) }}"
 
 
-def test_build_leg_runs_bake_with_platform_pin_only():
+def test_build_leg_runs_bake_with_platform_pin_and_cache():
     build = _jobs()["build"]
     bake_steps = [
         s for s in build["steps"] if "docker/bake-action@" in str(s.get("uses", ""))

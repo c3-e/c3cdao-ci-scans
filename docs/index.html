@@ -303,6 +303,8 @@
                   Build args use literal mapping values. The gate neither supplies nor overrides any build arg;
                   base images are the Dockerfile's own choice, and every build targets
                   <code>linux/amd64</code>. Caller lint rejects host pass-through, build secrets, and SSH in v1.
+                  Each leg's Bake execution also uses a per-target GitHub Actions cache scope for layer reuse
+                  across runs.
                 </p>
               </article>
               <article class="rule">

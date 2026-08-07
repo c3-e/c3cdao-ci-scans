@@ -390,6 +390,12 @@ Reviewers verifying a leg: each build leg re-prints its own target with
 identical overrides and diffs it against the published plan, so plan and
 execution cannot silently diverge.
 
+The build leg's bake execution (not the parity re-print) also sets a
+per-target GitHub Actions cache scope (`security-scan-<target>`) for
+buildx layers, so parallel legs never collide or evict each other's
+cache. On fork PRs, cache writes are read-only-scoped by GitHub Actions
+and simply no-op — this is expected and not a failure.
+
 ### B. Hardened-base registry login matrix
 
 Logins are **independent** (docker stores credentials per registry host).
