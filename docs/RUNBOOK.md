@@ -343,11 +343,11 @@ required — without the file, scans behave exactly as before.
      export bundle's `metadata.json` (`image.scan_ref` + `image.digest`)
      — the committed product stays version-less so the disposition
      survives rebuilds.
-   - Externally-delivered images scanned outside this gate keep their
-     real registry forms — the rule is always "the `repository_url` each
-     scanner computes at scan time". Worked, A/B-tested example:
-     c3cdao-landing's `.openvex/templates/README.md` ("PURL matching
-     footguns").
+   - Externally-delivered images scanned outside this gate (e.g. a
+     production artifact pulled from its real registry, not the gate's
+     job-local one) keep their **real registry forms** — the rule is
+     always "the `repository_url` each scanner computes at scan time".
+     See "Worked example: externally-delivered images" below.
    - **Older gate pins (before the job-local registry): Grype
      suppression is impossible for gate-built images.** Any committed
      product form silently no-ops on the Grype image leg; only Trivy
@@ -364,6 +364,102 @@ image-scan tables on the next run, and the run's
 `security-export-<service>-<short-sha>` artifact carrying your document as
 `vex-applied.openvex.json` with `metadata.json` showing
 `"vex": {"source": "consumer"}`.
+
+### 12a. Worked example: externally-delivered images
+
+Producing a standalone VEX document for an image scanned *outside* this
+gate (e.g. a signed release artifact handed to a downstream receiver
+alongside its SBOM) hits two footguns the in-gate case above doesn't,
+verified end to end (`c3cdao-landing`, PR #4, against the real
+`registry.gamewarden.io/cdao/landing` delivered artifact — vexctl 0.4.4,
+syft 1.50.0, trivy 0.71.2, grype 0.114.0):
+
+1. **Trivy has zero vulnerability data for RHEL10/UBI10-based images**
+   (any Iron Bank base built on `ubi10-minimal`) — a confirmed upstream
+   gap ([trivy discussions #10753](https://github.com/aquasecurity/trivy/discussions/10753),
+   [#10194](https://github.com/aquasecurity/trivy/discussions/10194);
+   [trivy-db#435](https://github.com/aquasecurity/trivy-db/issues/435)).
+   Trivy detects the OS and loads the package list, then silently
+   matches zero CVEs — no warning, indistinguishable from a genuinely
+   clean image. Confirmed live on the delivered `cdao/landing` artifact:
+   Trivy reports 0 findings, grype (whose `rhel` provider sources
+   directly from Red Hat's own CVE feed) reports 277 on the same image.
+   **Always run grype alongside Trivy on any RHEL10/UBI10-based image and
+   union both CVE lists** — a Trivy-only disposition doc silently claims
+   full coverage while missing everything Trivy can't see.
+2. **Trivy and grype compute a *different* `repository_url` PURL
+   qualifier for the same image** — the sharpest footgun here, verified
+   against the delivered artifact:
+
+   ```
+   # Trivy: full repository path, including the image name
+   pkg:oci/landing@sha256:<digest>?arch=amd64&repository_url=registry.example.com%2Fns%2Flanding
+
+   # grype: repository path WITHOUT the image name (registry + namespace only)
+   pkg:oci/landing@sha256:<digest>?repository_url=registry.example.com/ns
+   ```
+
+   A statement written for one scanner's form silently does not match
+   the other. **Give every statement both product forms** (`vexctl add`
+   takes `--product` as a repeatable flag):
+
+   ```bash
+   vexctl add --in-place main.openvex.json \
+     --product "pkg:oci/landing?repository_url=registry.example.com/ns/landing" \
+     --product "pkg:oci/landing?repository_url=registry.example.com/ns" \
+     --vuln CVE-XXXX-NNNNN --status not_affected \
+     --justification vulnerable_code_not_in_execute_path
+   ```
+
+   Confirmed by direct A/B test on the delivered image: a single-product
+   statement using grype's form suppressed all 6 matches for the test
+   CVE (`277 → 271` findings); the same statement using only Trivy's form
+   suppressed 0. The dual-product statement suppressed all 6.
+
+   Also: never add a `tag=` qualifier (a qualifier absent from the
+   scanner's own computed PURL is treated as a mismatch — pin the
+   digest, `@sha256:...`, instead), and never use a bare `pkg:oci/<name>`
+   with no `repository_url` (matches *any* image with that name, on any
+   registry — too broad).
+3. **Digest-pinned vs. tagless product PURLs pick the failure mode for
+   claims after a rebuild** — decide once, per repo, and write it down:
+   - **Tagless** (`repository_url` only, no digest): claims carry over
+     to the new image automatically. Fails *open* — a `not_affected`
+     justification can silently outlive the conditions it was written
+     under; nothing re-checks it. This is what the in-gate
+     `localhost:5000/<name>` form above uses, by necessity (the
+     job-local digest is different every run).
+   - **Digest-pinned** (`@sha256:...` in the product PURL): every
+     rebuild orphans all claims until someone re-adds them. Fails
+     *closed* — safer, more churn. Appropriate for a versioned,
+     externally-delivered artifact where a human already re-triages
+     each release.
+
+**Generating the full deliverable doc** (triaged template statements +
+`under_investigation` for every remaining scanner finding, unioning both
+scanners per point 1 above):
+
+```bash
+PRODUCT_PURL_TRIVY="pkg:oci/<name>?repository_url=<registry>/<namespace>/<name>"
+PRODUCT_PURL_GRYPE="pkg:oci/<name>?repository_url=<registry>/<namespace>"
+OUT=<name>-<version>.vex.json   # ships alongside the SBOM; not committed
+vexctl generate "$PRODUCT_PURL_TRIVY" --templates .openvex/templates \
+  --author "<org> — <repo> maintainers" --file "$OUT"
+{
+  jq -r '[.Results[]?.Vulnerabilities[]?.VulnerabilityID] | unique | .[]' findings-trivy.json
+  jq -r '[.matches[]?.vulnerability.id] | unique | .[]' findings-grype.json
+} | sort -u \
+  | while read cve; do
+      grep -q "\"$cve\"" "$OUT" \
+        || vexctl add --in-place "$OUT" \
+             --product "$PRODUCT_PURL_TRIVY" --product "$PRODUCT_PURL_GRYPE" \
+             --vuln "$cve" --status under_investigation;
+    done
+```
+
+The generated per-image doc is the deliverable (ships next to the SBOM —
+shared drive, PR attachment, release assets); regenerate it, never hand-edit
+it, never commit it. Only the template (`main.openvex.json`) is committed.
 
 ## Appendix (reference)
 
