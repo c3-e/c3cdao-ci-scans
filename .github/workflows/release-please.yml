@@ -12,6 +12,14 @@ jobs:
   release-please:
     runs-on: ubuntu-latest
     steps:
+      # No `release-type:` input here: setting it directly on the action
+      # forces "non-manifest" mode, which ignores both
+      # release-please-config.json (bump-minor-pre-major never applies)
+      # and .release-please-manifest.json (falls back to querying the
+      # GitHub Releases API for the "latest release" instead of trusting
+      # the seeded manifest version) — confirmed by a live run that
+      # skipped both and proposed v1.0.0 instead of v0.7.0. Manifest mode
+      # (config-file/manifest-file at their default paths) is the
+      # default behavior as long as release-type is only declared inside
+      # release-please-config.json, not passed here.
       - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7  # v5.0.0
-        with:
-          release-type: simple
