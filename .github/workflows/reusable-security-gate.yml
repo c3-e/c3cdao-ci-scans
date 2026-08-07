@@ -1155,11 +1155,13 @@ jobs:
   # On pull_request-triggered runs only, this job also posts (or, on a
   # re-run for the same PR, updates in place via a hidden HTML marker) a
   # single PR comment summarizing each built service's Trivy/Grype
-  # High+Critical counts and VEX source, plus a link to the run page and
-  # the consolidated artifact's `gh run download` line (RUNBOOK.md
-  # Appendix I). Both steps are `continue-on-error: true`; a posting
-  # failure can never fail this job, and this job is not in
-  # security-gate's needs: regardless.
+  # High+Critical counts and VEX source, plus a link to the run page,
+  # the consolidated artifact's `gh run download` line, and a read-only
+  # pending-VEX-disposition report (findings not covered by any VEX
+  # statement, split into "remediate" vs "no fix, VEX candidate" by the
+  # scanners' own fix metadata — RUNBOOK.md Appendix I). All these steps
+  # are `continue-on-error: true`; a posting failure can never fail this
+  # job, and this job is not in security-gate's needs: regardless.
   # --------------------------------------------------------------------------
   export-bundle:
     name: Consolidated Security Export Bundle
@@ -1205,6 +1207,55 @@ jobs:
           name: security-export-full-${{ steps.sha.outputs.short }}
           path: ${{ runner.temp }}/security-export-full
           if-no-files-found: warn
+
+      # ------------------------------------------------------------------
+      # Pending-VEX-disposition report (pull_request only): cross-repo
+      # checkout of ci-scans' own tooling, same bootstrap every other job
+      # pays to reach scripts/lib/*.py (plan/helm-check/cluster-smoke/
+      # image-scan). Read-only: pending_disposition_report.py never
+      # writes .openvex/, never authors a statement — it only diffs the
+      # bundle's own trivy-image.json/grype-image.json against
+      # vex-applied.openvex.json and splits what's left by the scanners'
+      # own fix metadata. See docs/RUNBOOK.md Appendix I.
+      # ------------------------------------------------------------------
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+        if: github.event_name == 'pull_request'
+
+      - name: Resolve callee (ci-scans) ref
+        id: calleeref
+        if: github.event_name == 'pull_request'
+        env:
+          WORKFLOW_REF: ${{ github.workflow_ref }}
+          JOB_WF_SHA: ${{ github.job_workflow_sha }}
+        run: |
+          caller="${WORKFLOW_REF#"$GITHUB_REPOSITORY/"}"; caller="${caller%%@*}"
+          ref=""
+          if [ -f "$caller" ]; then
+            ref="$(grep -E '^[[:space:]]*uses:.*reusable-security-gate\.yml@' "$caller" | head -1 | sed -E "s|.*reusable-security-gate\.yml@([^[:space:]#\"']+).*|\1|")"
+          fi
+          ref="${ref:-${JOB_WF_SHA:-main}}"
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+        if: github.event_name == 'pull_request'
+        with:
+          repository: c3-e/c3cdao-ci-scans
+          ref: ${{ steps.calleeref.outputs.ref }}
+          path: .ci-scans
+
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e  # v6
+        if: github.event_name == 'pull_request'
+
+      - name: Build pending-disposition report
+        id: pending-disposition
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        run: |
+          set -uo pipefail
+          out_file="${{ runner.temp }}/pending-disposition.md"
+          uv run .ci-scans/scripts/lib/pending_disposition_report.py \
+            "${{ runner.temp }}/security-export-full" > "$out_file"
+          echo "out_file=$out_file" >> "$GITHUB_OUTPUT"
 
       # ------------------------------------------------------------------
       # PR comment: scan-results summary (RUNBOOK.md Appendix I). Only on
@@ -1266,6 +1317,10 @@ jobs:
             echo '```bash'
             echo "gh run download ${{ github.run_id }} -n security-export-full-${{ steps.sha.outputs.short }}"
             echo '```'
+            echo
+            if [ -n "${{ steps.pending-disposition.outputs.out_file }}" ] && [ -f "${{ steps.pending-disposition.outputs.out_file }}" ]; then
+              cat "${{ steps.pending-disposition.outputs.out_file }}"
+            fi
           } > "$body_file"
           echo "body_file=$body_file" >> "$GITHUB_OUTPUT"
 

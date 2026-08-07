@@ -660,3 +660,18 @@ comment-posting steps are `continue-on-error: true`, gated on
 `export-bundle` job described above — a posting failure (e.g. a
 permissions edge case) can never affect `Security Gate`.
 
+**Pending-VEX-disposition report.** Appended to the same PR comment.
+Read-only enumeration (`scripts/lib/pending_disposition_report.py`):
+diffs each service's `trivy-image.json`/`grype-image.json` against that
+service's own `vex-applied.openvex.json` (any statement covering a CVE
+excludes it, regardless of status) and splits what's left by the
+scanners' own fix metadata (Trivy `FixedVersion`, Grype `fix.state`)
+into two tables — **remediate** (a fix already exists; bump the
+dependency, don't disposition it) and **VEX-disposition candidates**
+(no fix available; the only findings worth a human `vexctl add`). The
+report never writes anything under `.openvex/` and never authors a
+statement — it only reads bundle JSON already produced by the scan and
+renders markdown. Same non-blocking posture as the rest of
+`export-bundle`: `continue-on-error: true`, `pull_request`-gated only,
+outside `security-gate`'s `needs:`.
+
