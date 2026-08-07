@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.3](https://github.com/c3-e/c3cdao-ci-scans/compare/v0.7.2...v0.7.3) (2026-08-07)
+
+
+### Documentation
+
+* document release-please's Conventional Commits requirement ([#24](https://github.com/c3-e/c3cdao-ci-scans/issues/24)) ([5c80396](https://github.com/c3-e/c3cdao-ci-scans/commit/5c803963dadb201eb1afe068c36ec7fc91d1499e))
+
 ## [0.7.2](https://github.com/c3-e/c3cdao-ci-scans/compare/v0.7.1...v0.7.2) (2026-08-07)
 
 
