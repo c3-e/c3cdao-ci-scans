@@ -4,13 +4,13 @@ Static drift guards on .github/workflows/reusable-security-gate.yml: two
 steps in the (existing) export-bundle job build and then post/update a
 single PR comment summarizing per-service Trivy/Grype High+Critical counts
 and VEX source, a link to the run page, and the consolidated artifact's
-name + `gh run download` line (docs/RUNBOOK.md Appendix I). This is
-commentary, not a gate: both steps are pull_request-gated and
-continue-on-error, and (like the rest of export-bundle) the job is not in
-security-gate's needs:, so a comment-posting failure can never affect the
-required check. Static YAML shape only — the actual HTTP find-or-update
-behavior needs a live pull_request-triggered run to fully prove (see the
-PR description).
+name + `gh run download` line (docs/RUNBOOK.md Appendix I), plus a
+read-only pending-VEX-disposition report. This is commentary, not a gate:
+both steps are pull_request-gated and continue-on-error, and (like the
+rest of export-bundle) the job is not in security-gate's needs:, so a
+comment-posting failure can never affect the required check. Static YAML
+shape only — the actual HTTP find-or-update behavior needs a live
+pull_request-triggered run to fully prove (see the PR description).
 """
 
 from __future__ import annotations
@@ -176,3 +176,64 @@ def test_pr_summary_remote_actions_pinned_by_full_sha():
     confirm neither introduces an unpinned `uses:`."""
     for step in (_build_step(), _post_step()):
         assert "uses" not in step
+
+
+# --- pending-VEX-disposition report (read-only enumeration) ----------------
+
+
+def _pending_report_step() -> dict:
+    return _step("Build pending-disposition report")
+
+
+def test_pending_disposition_step_exists_and_is_pull_request_gated():
+    step = _pending_report_step()
+    assert step.get("if") == "github.event_name == 'pull_request'"
+    assert step.get("continue-on-error") is True
+
+
+def test_pending_disposition_step_never_writes_under_openvex():
+    """Structural guard mirroring the module-level invariant: the workflow
+    step must never construct an .openvex/ path itself (enumeration is
+    delegated entirely to pending_disposition_report.py, which is
+    unit-tested separately to never write one either)."""
+    run = _pending_report_step()["run"]
+    assert ".openvex" not in run
+
+
+def test_pending_disposition_step_calls_the_report_script_read_only():
+    run = _pending_report_step()["run"]
+    assert "pending_disposition_report.py" in run
+    assert "security-export-full" in run
+
+
+def test_pending_disposition_report_is_appended_to_comment_body():
+    run = _build_step()["run"]
+    assert "steps.pending-disposition.outputs.out_file" in run
+
+
+def test_pending_disposition_step_runs_after_bundle_download():
+    steps = _export_bundle()["steps"]
+    names = [s.get("name") for s in steps]
+    assert names.index("Build pending-disposition report") > names.index(
+        "Download this run's export-bundle artifacts"
+    )
+    assert names.index("Build pending-disposition report") < names.index(
+        "Build PR scan-summary comment body"
+    )
+
+
+def test_pending_disposition_bootstrap_steps_are_pull_request_gated():
+    """The cross-repo checkout + setup-uv steps this report needs must not
+    run on non-PR triggers (merge_group/schedule/workflow_dispatch/push),
+    matching the report step itself. export-bundle carries no other
+    checkout/setup-uv steps, so every match here belongs to this feature."""
+    steps = _export_bundle()["steps"]
+    bootstrap = [
+        s
+        for s in steps
+        if "actions/checkout@" in str(s.get("uses", ""))
+        or "astral-sh/setup-uv@" in str(s.get("uses", ""))
+    ]
+    assert bootstrap, "expected checkout/setup-uv bootstrap steps for the report"
+    for step in bootstrap:
+        assert step.get("if") == "github.event_name == 'pull_request'"
