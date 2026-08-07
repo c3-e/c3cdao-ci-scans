@@ -9,5 +9,8 @@
     { "type": "docs", "section": "Documentation" },
     { "type": "chore", "section": "Miscellaneous", "hidden": true },
     { "type": "test", "section": "Tests", "hidden": true }
-  ]
+  ],
+  "packages": {
+    ".": {}
+  }
 }
