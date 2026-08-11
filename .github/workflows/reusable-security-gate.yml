@@ -19,9 +19,9 @@
 #                     hardened-registry login/failover resolution (shared
 #                     bit-for-bit with every build leg), then derive_bom.py
 #                     publishes the bake plan + annotated BOM (job summary +
-#                     `plan-bom` artifact) and emits the build matrix
-#                     ([{target, tag, dockerfile, context}], <=10 enforced by
-#                     the matrix-cap lint) as a job output.
+#                     `plan-bom` artifact) and emit_build_matrix.py emits the
+#                     build matrix ([{target, tag, dockerfile, context}],
+#                     <=10 enforced by the matrix-cap lint) as a job output.
 #                     Every scan job needs it.
 #   secrets-scan      TruffleHog (parallel after plan)
 #   sast-semgrep      Semgrep (parallel, warn-only until baseline)
@@ -293,29 +293,12 @@ jobs:
             /tmp/plan/bake-plan.json
           if-no-files-found: error
 
-      # Single-line JSON so it is safe for GITHUB_OUTPUT.
+      # Single-line JSON so it is safe for GITHUB_OUTPUT. Logic lives in
+      # scripts/lib/emit_build_matrix.py (ruff/mypy/pytest-covered), not
+      # inline here, mirroring derive_bom.py above.
       - name: Emit build matrix + designated source-SBOM target
         id: emit
-        run: |
-          python3 - <<'PY'
-          import json, os
-          plan = json.load(open("/tmp/plan/bake-plan.json"))
-          matrix = [
-              {
-                  "target": name,
-                  "tag": tgt["tags"][0],
-                  "dockerfile": tgt.get("dockerfile", "Dockerfile"),
-                  "context": tgt.get("context", "."),
-              }
-              for name, tgt in sorted(plan["target"].items())
-          ]
-          sep = (",", ":")
-          with open(os.environ["GITHUB_OUTPUT"], "a") as out:
-              out.write("matrix=" + json.dumps(matrix, separators=sep) + "\n")
-              out.write("source_sbom_target=" + matrix[0]["target"] + "\n")
-          print("plan: build matrix:", json.dumps(matrix, separators=sep))
-          print("plan: source-SBOM leg:", matrix[0]["target"])
-          PY
+        run: uv run .ci-scans/scripts/lib/emit_build_matrix.py /tmp/plan/bake-plan.json
 
   # --------------------------------------------------------------------------
   # Build: one matrixed job over the plan job's derived matrix
