@@ -21,7 +21,7 @@
         </span>
       </a>
       <div class="topbar-actions">
-        <span class="status"><span></span> Variant B · current</span>
+        <span class="status"><span></span> Bake engine · current</span>
         <button class="icon-button" type="button" data-theme-toggle aria-label="Switch color theme">
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path d="M12 3a9 9 0 1 0 9 9c0-.46-.04-.91-.1-1.35A7 7 0 0 1 12 3Z" />
@@ -59,7 +59,7 @@
 
       <main id="content">
         <section class="hero" id="overview">
-          <div class="eyebrow">Current architecture / Variant B</div>
+          <div class="eyebrow">Current architecture</div>
           <div class="hero-grid">
             <div>
               <h1>Central Security Gate</h1>
@@ -260,6 +260,10 @@
                 <strong>Security Gate</strong>
                 <span>one required verdict</span>
               </div>
+              <div class="job compact">
+                <strong>export-bundle</strong>
+                <span>evidence bundle · PR comment</span>
+              </div>
             </div>
           </div>
 
@@ -395,7 +399,7 @@
           <details class="lint-panel">
             <summary>
               <span>Fail-closed lint catalog</span>
-              <small>14 design rules</small>
+              <small>25 design rules</small>
             </summary>
             <div class="lint-grid">
               <code>compose-missing</code><span>Canonical Compose file is absent.</span>
@@ -408,10 +412,21 @@
               <code>build-context-excludes</code><span>Docker context can include environment or key material.</span>
               <code>compose-platform</code><span>A service pins a platform other than linux/amd64.</span>
               <code>bake-resolve</code><span>Bake cannot print a normalized plan.</span>
+              <code>chart-missing</code><span>No chart exists at chart_path and image_only is false.</span>
+              <code>chart-undeclared</code><span>image_only is true but a Helm chart exists in the repo.</span>
+              <code>chart-resolve</code><span>Helm template cannot render the declared chart.</span>
               <code>chart-readiness</code><span>A rendered workload lacks readiness.</span>
               <code>smoke-target</code><span>The HTTP smoke target is missing or ambiguous.</span>
               <code>ship-set</code><span>A scheduled image is neither built nor a declared dependency.</span>
+              <code>built-unscheduled</code><span>Warn: a built tag is never scheduled by the chart.</span>
               <code>smoke-resource-unknown</code><span>The caller selects an unknown gate resource.</span>
+              <code>suppression-format</code><span>A raw scanner ignore file carries a real entry; OpenVEX is the only sanctioned exception path.</span>
+              <code>gate-ref-pin</code><span>The gate ref is not a full 40-hex commit SHA.</span>
+              <code>gate-job-id</code><span>The calling job id is not security-scan.</span>
+              <code>no-secrets-inherit</code><span>The caller uses secrets: inherit.</span>
+              <code>missing-secret-map</code><span>A registry secret is unmapped on the gate job.</span>
+              <code>unknown-input</code><span>A with: key is not a v0.6 input.</span>
+              <code>unreadable-caller</code><span>The caller workflow cannot be parsed.</span>
             </div>
           </details>
         </section>
@@ -480,6 +495,20 @@
               </p>
             </article>
           </div>
+
+          <div class="callout">
+            <div class="callout-mark">i</div>
+            <div>
+              <strong>OpenVEX is the only sanctioned suppression path</strong>
+              <p>
+                A committed <code>.trivyignore</code> or <code>.grype.yaml</code> with any real entry blocks
+                (<code>suppression-format</code>); disposing a finding requires a statement in
+                <code>.openvex/templates/main.openvex.json</code> carrying a <code>status</code> and
+                <code>justification</code>. The gate publishes each build's image to a job-local registry so
+                Grype resolves a real, digest-backed product identity to match VEX statements against.
+              </p>
+            </div>
+          </div>
         </section>
 
         <section class="section" id="evidence" aria-labelledby="evidence-title">
@@ -488,7 +517,7 @@
               <span class="section-number">05</span>
               <h2 id="evidence-title">Run records</h2>
             </div>
-            <p>Version 0.6 keeps the existing GitHub Actions summary and artifact model.</p>
+            <p>Every run keeps the GitHub Actions summary and artifact model, plus one consolidated bundle.</p>
           </div>
 
           <div class="evidence-flow">
@@ -505,13 +534,30 @@
             <article>
               <span>3</span>
               <h3>Scan</h3>
-              <p>Publish scanner reports and job summaries.</p>
+              <p>
+                Publish scanner reports, the applied OpenVEX document, and a per-service
+                <code>security-export</code> bundle.
+              </p>
             </article>
             <article>
               <span>4</span>
               <h3>Aggregate</h3>
               <p>Evaluate job results through the required Security Gate check.</p>
             </article>
+          </div>
+
+          <div class="callout">
+            <div class="callout-mark">i</div>
+            <div>
+              <strong>One consolidated download, one PR comment</strong>
+              <p>
+                <code>export-bundle</code> re-packages every per-service export, the source SBOM, and the plan
+                BOM into one <code>security-export-full-&lt;short-sha&gt;</code> artifact, then posts (or
+                updates) a PR comment summarizing each service's Trivy/Grype High+Critical counts, VEX source,
+                and any pending disposition. Convenience only: it runs <code>if: always()</code> and never
+                appears in the Security Gate's <code>needs:</code>, so it can never affect the required check.
+              </p>
+            </div>
           </div>
 
           <div class="evidence-record">
@@ -582,7 +628,7 @@
         </section>
 
         <footer>
-          <p>Design source: <code>.plan/redesign-bake.md</code></p>
+          <p>Requirements traceability: <a href="REQUIREMENTS-MAP.md">REQUIREMENTS-MAP.md</a></p>
           <p>Current implementation: <a href="https://github.com/c3-e/c3cdao-ci-scans/blob/main/.github/workflows/reusable-security-gate.yml">reusable-security-gate.yml</a></p>
         </footer>
       </main>
