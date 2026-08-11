@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.7.4](https://github.com/c3-e/c3cdao-ci-scans/compare/v0.7.3...v0.7.4) (2026-08-11)
+
+
+### Bug Fixes
+
+* extract build-matrix emission into scripts/lib ([1f4eb26](https://github.com/c3-e/c3cdao-ci-scans/commit/1f4eb26a713770abaed9484b7ed95be025cf331c))
+
+
+### Documentation
+
+* **site:** sync design site with the shipped gate ([454360c](https://github.com/c3-e/c3cdao-ci-scans/commit/454360c47fe67e695319680364d862d4a7142003))
+
 ## [0.7.3](https://github.com/c3-e/c3cdao-ci-scans/compare/v0.7.2...v0.7.3) (2026-08-07)
 
 
