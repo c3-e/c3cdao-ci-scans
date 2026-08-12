@@ -30,9 +30,12 @@ name: Selftest — Publish Images (dry-run)
 # any real pilot caller depends on them (IG-3, a real pass/fail gate, not a
 # smoke test of syntax alone). The destination tag is deliberately a
 # throwaway, unmistakably-selftest path
-# (images-staging/_selftest/hello-image:workflow-dispatch-<run-id>) so it
-# can never be confused with, or collide with, a real pilot's staging
-# artifact.
+# (images-staging/selftest/hello-image:workflow-dispatch-<run-id> — no
+# leading underscore: the OCI/Docker distribution spec's path-component
+# grammar disallows a leading `_`, confirmed live via this workflow's own
+# first dry-run attempt failing "invalid reference format" on an earlier
+# `_selftest/...` path) so it can never be confused with, or collide with,
+# a real pilot's staging artifact.
 #
 # Note: the real job's optional "Log in to Chainguard" escape hatch
 # (cgr_pull_required) is intentionally NOT exercised here — the fixture
@@ -44,17 +47,6 @@ name: Selftest — Publish Images (dry-run)
 
 on:
   workflow_dispatch:
-  # TEMPORARY registration trigger — GitHub Actions will not offer
-  # workflow_dispatch for a manual `gh workflow run`/API dispatch on a
-  # workflow file until that file has run at least once via SOME trigger
-  # (confirmed live this session: `gh workflow run` returned "workflow ...
-  # not found on the default branch" for this brand-new file on a feature
-  # branch, even after waiting). This `push` trigger exists only to
-  # register the workflow with GitHub once; it is removed in this same PR
-  # before merge (see the commit that removes it) — the registration,
-  # once it happens, persists even after the trigger is removed.
-  push:
-    branches: [feat/image-publish-composed-smoke]
 
 permissions:
   contents: read
@@ -107,7 +99,7 @@ jobs:
         id: coords
         run: |
           set -euo pipefail
-          DEST="ghcr.io/c3-e/images-staging/_selftest/hello-image:workflow-dispatch-${{ github.run_id }}"
+          DEST="ghcr.io/c3-e/images-staging/selftest/hello-image:workflow-dispatch-${{ github.run_id }}"
           echo "dest=${DEST}" >> "$GITHUB_OUTPUT"
           echo "Publishing selftest fixture -> ${DEST}"
 
