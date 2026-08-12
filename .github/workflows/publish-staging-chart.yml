@@ -43,6 +43,13 @@ jobs:
       # naming convention (see hack/test-pilot-pin.sh) or downstream
       # composability-test consumption of this workflow's output silently
       # breaks.
+      #
+      # DEST deliberately omits the trailing pilot segment: `helm push`
+      # always appends the chart's own name as an extra path component
+      # (confirmed live -- pushing to oci://.../charts-staging/<pilot>
+      # actually lands at charts-staging/<pilot>/<pilot>). Omitting it here
+      # is what makes the real landing path match the locked
+      # charts-staging/<pilot> shape exactly.
       - name: Derive pilot, tag, and destination
         id: coords
         run: |
@@ -53,13 +60,13 @@ jobs:
           SHA="${{ github.event.pull_request.merge_commit_sha }}"
           SHORT_SHA="${SHA:0:7}"
           TAG="0.0.0-mech.${PR_NUMBER}.${SHORT_SHA}"
-          DEST="oci://ghcr.io/c3-e/charts-staging/${PILOT}"
+          DEST="oci://ghcr.io/c3-e/charts-staging"
           {
             echo "pilot=${PILOT}"
             echo "tag=${TAG}"
             echo "dest=${DEST}"
           } >> "$GITHUB_OUTPUT"
-          echo "Publishing ${PILOT} @ ${TAG} -> ${DEST}"
+          echo "Publishing ${PILOT} @ ${TAG} -> ${DEST}/${PILOT}"
 
       - name: Log in to GHCR (Actions-native GITHUB_TOKEN, not a personal PAT)
         run: |
@@ -93,7 +100,7 @@ jobs:
             echo "## Publish staging chart"
             echo
             echo "- pilot: \`${{ steps.coords.outputs.pilot }}\`"
-            echo "- destination: \`${{ steps.coords.outputs.dest }}:${{ steps.coords.outputs.tag }}\`"
+            echo "- destination: \`${{ steps.coords.outputs.dest }}/${{ steps.coords.outputs.pilot }}:${{ steps.coords.outputs.tag }}\`"
             echo "- this is a pre-merge test artifact, not a release (non-SemVer tag by design)"
           } >> "$GITHUB_STEP_SUMMARY"
 
