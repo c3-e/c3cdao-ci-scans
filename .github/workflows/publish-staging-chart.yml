@@ -25,16 +25,30 @@ on:
           Ignored when publish_images is false (default).
         type: string
         default: "[]"
-      cgr_pull_required:
-        description: "Set true if any declared image's Dockerfile FROMs a Chainguard (cgr.dev) base and needs CGR_PULL_TOKEN/CGR_PULL_USERNAME to build."
+      require_hardened_bases:
+        description: >-
+          Set true if any declared image's Dockerfile FROMs a hardened base
+          (Chainguard cgr.dev and/or Iron Bank registry1.dso.mil) and needs
+          the corresponding credential secret pair to build. Passed straight
+          through to this repo's own hardened-registry-login composite
+          action's require-hardened-bases input — fails closed (job errors)
+          when true and neither credential pair is configured; when false
+          (default), builds proceed on the Dockerfile's own declared bases
+          without any hardened-registry login attempt.
         type: boolean
         default: false
     secrets:
       CGR_PULL_TOKEN:
-        description: "Chainguard registry pull token. Only required when cgr_pull_required is true."
+        description: "Chainguard (cgr.dev) pull token. Only required when require_hardened_bases is true and the declared image(s) need Chainguard."
         required: false
       CGR_PULL_USERNAME:
-        description: "Chainguard registry pull username. Only required when cgr_pull_required is true."
+        description: "Chainguard (cgr.dev) pull username. Only required when require_hardened_bases is true and the declared image(s) need Chainguard."
+        required: false
+      IRONBANK_TOKEN:
+        description: "Iron Bank (registry1.dso.mil) pull token. Only required when require_hardened_bases is true and the declared image(s) need Iron Bank (e.g. geoint's backend/frontend, pipeassist's backend, dtic's fallback path)."
+        required: false
+      IRONBANK_USERNAME:
+        description: "Iron Bank (registry1.dso.mil) pull username. Only required when require_hardened_bases is true and the declared image(s) need Iron Bank."
         required: false
 
 permissions:
@@ -169,18 +183,73 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       # Escape hatch for a pilot needing a hardened-base pull credential
-      # (e.g. cra's Chainguard CGR_PULL_TOKEN) — same secrets already
-      # threaded through reusable-security-gate.yml's build leg, passed
-      # through unchanged rather than re-invented. Only runs when the
-      # caller has explicitly declared it needs this.
-      - name: Log in to Chainguard (optional, escape hatch)
-        if: ${{ inputs.cgr_pull_required == true }}
-        continue-on-error: false  # fail closed if the pilot declared it needs this and secrets are missing
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9  # v3
+      # (e.g. cra/dsa's Chainguard CGR_PULL_TOKEN, or geoint/pipeassist/
+      # dtic's Iron Bank IRONBANK_TOKEN — confirmed per-repo posture in
+      # the umbrella's image-publish-composed-smoke-plan.md §6.1 survey).
+      # Reuses this repo's OWN existing hardened-registry-login composite
+      # action (already proven in reusable-security-gate.yml's plan/build
+      # jobs) rather than a second, narrower Chainguard-only login step —
+      # one shared credential-resolution mechanism, not two. That action
+      # accepts both credential pairs as optional and fails over/closed
+      # per require-hardened-bases when neither is configured.
+      #
+      # This reusable workflow runs cross-repo: the checkout above resolves
+      # the CALLER's tree (chart_path/Dockerfiles are caller-repo-relative),
+      # so a local `uses: ./.github/actions/...` here would resolve against
+      # the CALLER's tree too, which does not have this action — only
+      # ci-scans does. Fetch ci-scans's own tooling into a subdirectory
+      # instead, same pattern reusable-security-gate.yml's own plan/build
+      # jobs already use for the identical problem: resolve the ref the
+      # CALLER actually pinned this workflow to (parsed from the caller's
+      # own workflow file, found via github.workflow_ref), falling back to
+      # job_workflow_sha then main if that parse comes up empty.
+      - name: Resolve callee (ci-scans) ref
+        id: calleeref
+        env:
+          WORKFLOW_REF: ${{ github.workflow_ref }}
+          JOB_WF_SHA: ${{ github.job_workflow_sha }}
+        run: |
+          caller="${WORKFLOW_REF#"$GITHUB_REPOSITORY/"}"; caller="${caller%%@*}"
+          ref=""
+          if [ -f "$caller" ]; then
+            ref="$(grep -E '^[[:space:]]*uses:.*publish-staging-chart\.yml@' "$caller" | head -1 | sed -E "s|.*publish-staging-chart\.yml@([^[:space:]#\"']+).*|\1|")"
+          fi
+          ref="${ref:-${JOB_WF_SHA:-main}}"
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+          echo "::notice::publish-images-deferred: resolving hardened-registry-login from ci-scans ref '$ref'"
+
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
         with:
-          registry: cgr.dev
-          username: ${{ secrets.CGR_PULL_USERNAME }}
-          password: ${{ secrets.CGR_PULL_TOKEN }}
+          repository: c3-e/c3cdao-ci-scans
+          ref: ${{ steps.calleeref.outputs.ref }}
+          path: .ci-scans
+
+      # builder-image/runtime-image/ironbank-{builder,runtime}-image feed
+      # ONLY that action's own base-image-failover-resolution outputs
+      # (for a caller with a single builder/runtime base pair per repo,
+      # e.g. reusable-security-gate.yml's gate-owned GATE_BUILDER_IMAGE/
+      # GATE_RUNTIME_IMAGE). This job has no such single-pair model — each
+      # matrix leg's own Dockerfile already declares its own base(s)
+      # directly, unrelated to any other leg's — so, exactly like
+      # reusable-security-gate.yml itself ("resolved builder/runtime
+      # outputs are not consumed downstream; the gate injects nothing into
+      # any build"), this call only wants the action's LOGIN + fail-closed
+      # credential check side effect, not its resolved outputs. Passing
+      # empty strings for the base-image inputs is safe: they are required
+      # only by the action's schema, never read by anything after this
+      # step in this job.
+      - name: Login to hardened base registries (Chainguard + Iron Bank)
+        id: base-registry
+        uses: ./.ci-scans/.github/actions/hardened-registry-login
+        with:
+          cgr-pull-token: ${{ secrets.CGR_PULL_TOKEN }}
+          cgr-pull-username: ${{ secrets.CGR_PULL_USERNAME }}
+          ironbank-token: ${{ secrets.IRONBANK_TOKEN }}
+          ironbank-username: ${{ secrets.IRONBANK_USERNAME }}
+          ironbank-registry: registry1.dso.mil
+          builder-image: ""
+          runtime-image: ""
+          require-hardened-bases: ${{ inputs.require_hardened_bases }}
 
       # Pilot name is the chart_path basename, same derivation as the
       # chart-publish job above — unlike `helm push`, `docker buildx build

@@ -37,13 +37,18 @@ name: Selftest — Publish Images (dry-run)
 # `_selftest/...` path) so it can never be confused with, or collide with,
 # a real pilot's staging artifact.
 #
-# Note: the real job's optional "Log in to Chainguard" escape hatch
-# (cgr_pull_required) is intentionally NOT exercised here — the fixture
-# Dockerfile is FROM scratch (no hardened base to pull), so there is
-# nothing for that step to prove that isn't already proven by the identical
-# docker/login-action mechanics already exercised for the GHCR login below
-# (same action, same credential-pair pattern, just a different registry
-# endpoint).
+# Note: the real job's hardened-registry-login step (require_hardened_bases,
+# calling this repo's own shared .github/actions/hardened-registry-login
+# composite action for both Chainguard and Iron Bank credentials) is
+# intentionally NOT exercised here — the fixture Dockerfile is FROM scratch
+# (no hardened base to pull), so there is nothing for that step to prove
+# that isn't already proven by the identical docker/login-action-style
+# mechanics already exercised for the GHCR login below (same credential-pair
+# pattern, just a different registry endpoint). This selftest exists to
+# prove the build+login+push mechanics on the common, no-hardened-base-
+# needed path; it deliberately does not need ci-scans's own composite
+# action tooling checked out, unlike the real job (see that job's own
+# "Resolve callee (ci-scans) ref" step for why it needs a second checkout).
 
 on:
   workflow_dispatch:
