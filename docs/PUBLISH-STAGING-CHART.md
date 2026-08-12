@@ -52,8 +52,45 @@ jobs:
     uses: c3-e/c3cdao-ci-scans/.github/workflows/publish-staging-chart.yml@<40-hex sha>  # v0.1.0
     with:
       chart_path: helm/rms-copilot
-    permissions:
+```
+
+**Caller gotcha (confirmed live, not theoretical):** declare `permissions:`
+at the **workflow level only** on the calling file. A job that `uses:` a
+reusable workflow must not carry its *own* `permissions:` block in addition
+to a workflow-level one — that combination silently produces
+`conclusion: startup_failure` with **zero jobs allocated** and no error
+message anywhere in the API or the Actions UI (confirmed via isolation
+testing against `c3cdao-geoint`: the identical reusable-workflow reference
+resolved fine with either workflow-level-only or job-level-only
+permissions, but failed every time both were present together on the same
+job). If the calling job needs a permission the workflow-level block
+doesn't grant, add it to the workflow-level block instead of overriding at
+the job level.
+
+```yaml
+# WRONG — startup_failure, zero jobs, no error message
+permissions:
+  contents: read
+  packages: write
+jobs:
+  publish-staging-chart:
+    permissions:      # <-- do not also set permissions here
       packages: write
+    uses: c3-e/c3cdao-ci-scans/.github/workflows/publish-staging-chart.yml@<sha>
+    with:
+      chart_path: helm/rms-copilot
+```
+
+```yaml
+# RIGHT — workflow-level only
+permissions:
+  contents: read
+  packages: write
+jobs:
+  publish-staging-chart:
+    uses: c3-e/c3cdao-ci-scans/.github/workflows/publish-staging-chart.yml@<sha>
+    with:
+      chart_path: helm/rms-copilot
 ```
 
 ## Failure behavior
