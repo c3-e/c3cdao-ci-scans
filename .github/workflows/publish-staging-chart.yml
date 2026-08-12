@@ -11,6 +11,45 @@ on:
         description: "Deferred slot: when true (and base_ref is ci-scans or main), reserved for a future image-publish job. Default false keeps this input inert — no image-publish logic executes yet."
         type: boolean
         default: false
+      images:
+        description: >-
+          JSON array of image build tuples to publish when publish_images is
+          true. Each tuple is {"name","dockerfile","context","build_args"?} —
+          build_args is OPTIONAL, a flat JSON object of {"KEY":"value"}
+          string pairs passed through as docker build-time variables
+          (--build-arg); tuples that need no build args can omit the field
+          entirely (defaults to none). e.g., one tuple with build_args and
+          one without: '[{"name":"frontend","dockerfile":"Dockerfile.frontend",
+          "context":".","build_args":{"VITE_API_URL":"http://localhost"}},
+          {"name":"backend","dockerfile":"Dockerfile.backend","context":"."}]'.
+          Ignored when publish_images is false (default).
+        type: string
+        default: "[]"
+      require_hardened_bases:
+        description: >-
+          Set true if any declared image's Dockerfile FROMs a hardened base
+          (Chainguard cgr.dev and/or Iron Bank registry1.dso.mil) and needs
+          the corresponding credential secret pair to build. Passed straight
+          through to this repo's own hardened-registry-login composite
+          action's require-hardened-bases input — fails closed (job errors)
+          when true and neither credential pair is configured; when false
+          (default), builds proceed on the Dockerfile's own declared bases
+          without any hardened-registry login attempt.
+        type: boolean
+        default: false
+    secrets:
+      CGR_PULL_TOKEN:
+        description: "Chainguard (cgr.dev) pull token. Only required when require_hardened_bases is true and the declared image(s) need Chainguard."
+        required: false
+      CGR_PULL_USERNAME:
+        description: "Chainguard (cgr.dev) pull username. Only required when require_hardened_bases is true and the declared image(s) need Chainguard."
+        required: false
+      IRONBANK_TOKEN:
+        description: "Iron Bank (registry1.dso.mil) pull token. Only required when require_hardened_bases is true and the declared image(s) need Iron Bank (e.g. geoint's backend/frontend, pipeassist's backend, dtic's fallback path)."
+        required: false
+      IRONBANK_USERNAME:
+        description: "Iron Bank (registry1.dso.mil) pull username. Only required when require_hardened_bases is true and the declared image(s) need Iron Bank."
+        required: false
 
 permissions:
   contents: read
@@ -115,17 +154,166 @@ jobs:
             echo "- this is a pre-merge test artifact, not a release (non-SemVer tag by design)"
           } >> "$GITHUB_STEP_SUMMARY"
 
-  # Deferred slot (PRD §10 item 1). Intentionally a no-op placeholder — no
-  # image-publish logic ships here. Narrower than the chart trigger by
-  # design (AD-3): only fires when publish_images is explicitly turned on
-  # by a future caller AND the merge base branch is ci-scans or main.
+  # Narrower than the chart trigger by design (AD-3): only fires when
+  # publish_images is explicitly turned on by a caller AND the merge base
+  # branch is ci-scans or main.
   publish-images-deferred:
-    name: publish images (deferred slot, inert)
+    name: publish images (deferred slot)
     if: >-
       github.event.pull_request.merged == true &&
       inputs.publish_images == true &&
       contains(fromJSON('["ci-scans","main"]'), github.event.pull_request.base.ref)
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ${{ fromJSON(inputs.images) }}
     steps:
-      - name: No-op placeholder
-        run: echo "image publish is not implemented by this workflow yet"
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4, matches every other job in this file
+        with:
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
+
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f  # v3, same pinned action reusable-security-gate.yml already uses
+
+      - name: Log in to GHCR (Actions-native GITHUB_TOKEN, not a personal PAT)
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9  # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Escape hatch for a pilot needing a hardened-base pull credential
+      # (e.g. cra/dsa's Chainguard CGR_PULL_TOKEN, or geoint/pipeassist/
+      # dtic's Iron Bank IRONBANK_TOKEN — confirmed per-repo posture in
+      # the umbrella's image-publish-composed-smoke-plan.md §6.1 survey).
+      # Reuses this repo's OWN existing hardened-registry-login composite
+      # action (already proven in reusable-security-gate.yml's plan/build
+      # jobs) rather than a second, narrower Chainguard-only login step —
+      # one shared credential-resolution mechanism, not two. That action
+      # accepts both credential pairs as optional and fails over/closed
+      # per require-hardened-bases when neither is configured.
+      #
+      # This reusable workflow runs cross-repo: the checkout above resolves
+      # the CALLER's tree (chart_path/Dockerfiles are caller-repo-relative),
+      # so a local `uses: ./.github/actions/...` here would resolve against
+      # the CALLER's tree too, which does not have this action — only
+      # ci-scans does. Fetch ci-scans's own tooling into a subdirectory
+      # instead, same pattern reusable-security-gate.yml's own plan/build
+      # jobs already use for the identical problem: resolve the ref the
+      # CALLER actually pinned this workflow to (parsed from the caller's
+      # own workflow file, found via github.workflow_ref), falling back to
+      # job_workflow_sha then main if that parse comes up empty.
+      - name: Resolve callee (ci-scans) ref
+        id: calleeref
+        env:
+          WORKFLOW_REF: ${{ github.workflow_ref }}
+          JOB_WF_SHA: ${{ github.job_workflow_sha }}
+        run: |
+          caller="${WORKFLOW_REF#"$GITHUB_REPOSITORY/"}"; caller="${caller%%@*}"
+          ref=""
+          if [ -f "$caller" ]; then
+            ref="$(grep -E '^[[:space:]]*uses:.*publish-staging-chart\.yml@' "$caller" | head -1 | sed -E "s|.*publish-staging-chart\.yml@([^[:space:]#\"']+).*|\1|")"
+          fi
+          ref="${ref:-${JOB_WF_SHA:-main}}"
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+          echo "::notice::publish-images-deferred: resolving hardened-registry-login from ci-scans ref '$ref'"
+
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+        with:
+          repository: c3-e/c3cdao-ci-scans
+          ref: ${{ steps.calleeref.outputs.ref }}
+          path: .ci-scans
+
+      # builder-image/runtime-image/ironbank-{builder,runtime}-image feed
+      # ONLY that action's own base-image-failover-resolution outputs
+      # (for a caller with a single builder/runtime base pair per repo,
+      # e.g. reusable-security-gate.yml's gate-owned GATE_BUILDER_IMAGE/
+      # GATE_RUNTIME_IMAGE). This job has no such single-pair model — each
+      # matrix leg's own Dockerfile already declares its own base(s)
+      # directly, unrelated to any other leg's — so, exactly like
+      # reusable-security-gate.yml itself ("resolved builder/runtime
+      # outputs are not consumed downstream; the gate injects nothing into
+      # any build"), this call only wants the action's LOGIN + fail-closed
+      # credential check side effect, not its resolved outputs. Passing
+      # empty strings for the base-image inputs is safe: they are required
+      # only by the action's schema, never read by anything after this
+      # step in this job.
+      - name: Login to hardened base registries (Chainguard + Iron Bank)
+        id: base-registry
+        uses: ./.ci-scans/.github/actions/hardened-registry-login
+        with:
+          cgr-pull-token: ${{ secrets.CGR_PULL_TOKEN }}
+          cgr-pull-username: ${{ secrets.CGR_PULL_USERNAME }}
+          ironbank-token: ${{ secrets.IRONBANK_TOKEN }}
+          ironbank-username: ${{ secrets.IRONBANK_USERNAME }}
+          ironbank-registry: registry1.dso.mil
+          builder-image: ""
+          runtime-image: ""
+          require-hardened-bases: ${{ inputs.require_hardened_bases }}
+
+      # Pilot name is the chart_path basename, same derivation as the
+      # chart-publish job above — unlike `helm push`, `docker buildx build
+      # --push` does NOT auto-append any path component, so the destination
+      # tag here must be the full, exact path including both <pilot> and
+      # <image-name> (see docs/PUBLISH-STAGING-CHART.md).
+      - name: Derive destination tag
+        id: coords
+        run: |
+          set -euo pipefail
+          PILOT="$(basename "${{ inputs.chart_path }}")"
+          PR_NUMBER="${{ github.event.pull_request.number }}"
+          SHA="${{ github.event.pull_request.merge_commit_sha }}"
+          SHORT_SHA="${SHA:0:7}"
+          TAG="0.0.0-mech.${PR_NUMBER}.${SHORT_SHA}"
+          DEST="ghcr.io/c3-e/images-staging/${PILOT}/${{ matrix.image.name }}:${TAG}"
+          echo "dest=${DEST}" >> "$GITHUB_OUTPUT"
+          echo "Publishing ${{ matrix.image.name }} -> ${DEST}"
+
+      # build_args is OPTIONAL per-tuple (see the `images` input's own
+      # description above) — a caller that omits it entirely for a given
+      # image means `matrix.image.build_args` is a missing key, not an
+      # explicit {}. GHA's expression language has no `??`/`|| {}` for
+      # object literals, so the "default to empty when absent" logic is
+      # done here in jq instead (`.build_args // {}`), which handles both
+      # a missing key AND an explicit `null` the same way. docker/build-push-
+      # action's `build-args:` input is documented as a newline-delimited
+      # `KEY=value` string, NOT a YAML list (confirmed from that action's
+      # own README/inputs table + linked issues — passing a YAML sequence
+      # produces "a sequence was not expected" or silently mis-joins args),
+      # so this step's real job is JSON-object -> newline-delimited-string.
+      - name: Derive build args
+        id: buildargs
+        env:
+          IMAGE_JSON: ${{ toJSON(matrix.image) }}
+        run: |
+          set -euo pipefail
+          ARGS="$(jq -r '(.build_args // {}) | to_entries[] | "\(.key)=\(.value)"' <<< "$IMAGE_JSON")"
+          {
+            echo "args<<BUILD_ARGS_EOF"
+            echo "$ARGS"
+            echo "BUILD_ARGS_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      # Fail-closed: no continue-on-error, no `|| true` — same discipline as
+      # the chart-publish job's own "Package chart" step (AP-10 prevention:
+      # a broken build must show red, never a green run with a missing
+      # artifact).
+      - name: Build and push
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8  # v6
+        with:
+          context: ${{ matrix.image.context }}
+          file: ${{ matrix.image.dockerfile }}
+          push: true
+          tags: ${{ steps.coords.outputs.dest }}
+          build-args: ${{ steps.buildargs.outputs.args }}
+          platforms: linux/amd64  # matches reusable-security-gate.yml's own platform pin (CI-CONTRACT.md: "v0.6 builds ... linux/amd64 only")
+
+      - name: Job summary
+        if: always()
+        run: |
+          {
+            echo "## Publish staging image: ${{ matrix.image.name }}"
+            echo
+            echo "- destination: \`${{ steps.coords.outputs.dest }}\`"
+            echo "- this is a pre-merge test artifact, not a release"
+          } >> "$GITHUB_STEP_SUMMARY"

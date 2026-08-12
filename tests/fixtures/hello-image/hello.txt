@@ -1,0 +1,1 @@
+hello from the c3cdao-ci-scans image-publish selftest fixture
