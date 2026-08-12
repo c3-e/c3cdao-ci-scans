@@ -1,0 +1,127 @@
+name: Selftest — Publish Images (dry-run)
+
+# WHY THIS FILE EXISTS (IG-3 dry-run prerequisite, plan §4.2's IG-3 row):
+#
+# publish-staging-chart.yml's publish-images-deferred job (PR-1) only has a
+# workflow_call trigger, and its own `if:` condition hard-requires
+# `github.event.pull_request.merged == true` (plus `inputs.publish_images ==
+# true` and a base-branch check). A workflow_dispatch event can NEVER
+# satisfy that condition — `github.event.pull_request` simply does not
+# exist under workflow_dispatch, there is no pull_request event context to
+# read `.merged` off of. There is no supported way to fake or force that
+# condition from a manual dispatch without either:
+#
+#   (a) editing the real job's own `if:` to special-case a dry-run mode —
+#       rejected: that would permanently weaken the real job's fail-closed
+#       trigger guard just to make manual testing more convenient, exactly
+#       backwards from this repo's own AP-10 posture ("never a green run
+#       with a missing artifact," extended here to "never a loosened gate
+#       for convenience"); or
+#   (b) synthesizing a fake merged-PR event context — GitHub Actions does
+#       not support this for workflow_dispatch, and it would be fragile/
+#       unsupported even if some hack could approximate it.
+#
+# So this is a SEPARATE, workflow_dispatch-only workflow that exercises the
+# exact same build+login+push mechanics publish-images-deferred uses (same
+# pinned actions, same GHCR auth pattern, same jq-based build_args
+# passthrough logic) directly against a fixed, trivial, harmless fixture
+# Dockerfile (tests/fixtures/hello-image/Dockerfile) — proving the mechanics
+# work in isolation from any specific pilot's real Dockerfile quirks, before
+# any real pilot caller depends on them (IG-3, a real pass/fail gate, not a
+# smoke test of syntax alone). The destination tag is deliberately a
+# throwaway, unmistakably-selftest path
+# (images-staging/_selftest/hello-image:workflow-dispatch-<run-id>) so it
+# can never be confused with, or collide with, a real pilot's staging
+# artifact.
+#
+# Note: the real job's optional "Log in to Chainguard" escape hatch
+# (cgr_pull_required) is intentionally NOT exercised here — the fixture
+# Dockerfile is FROM scratch (no hardened base to pull), so there is
+# nothing for that step to prove that isn't already proven by the identical
+# docker/login-action mechanics already exercised for the GHCR login below
+# (same action, same credential-pair pattern, just a different registry
+# endpoint).
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  selftest-publish-image:
+    name: selftest publish image (workflow_dispatch dry-run, IG-3)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4, same pin publish-staging-chart.yml uses everywhere in that file
+        with:
+          ref: ${{ github.sha }}
+
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f  # v3, same pin publish-images-deferred uses
+
+      - name: Log in to GHCR (Actions-native GITHUB_TOKEN, not a personal PAT)
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9  # v3, same pin publish-images-deferred uses
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Same jq-based JSON-object -> newline-delimited-string derivation
+      # publish-images-deferred's own "Derive build args" step uses,
+      # exercised here against a hardcoded fixture tuple (this workflow has
+      # no inputs.images to parse a matrix from) — GREETING is deliberately
+      # a NON-default value so the built image's LABEL is verifiably
+      # different from the Dockerfile's own ARG default, proving the value
+      # actually flowed through docker/build-push-action's build-args:
+      # input rather than silently falling back to the Dockerfile default.
+      # This proves the build_args passthrough code path end-to-end, not
+      # just the no-build-args path.
+      - name: Derive build args (mirrors publish-images-deferred's own step)
+        id: buildargs
+        env:
+          IMAGE_JSON: '{"name":"hello-image","dockerfile":"tests/fixtures/hello-image/Dockerfile","context":"tests/fixtures/hello-image","build_args":{"GREETING":"hello-from-selftest-workflow-dispatch"}}'
+        run: |
+          set -euo pipefail
+          ARGS="$(jq -r '(.build_args // {}) | to_entries[] | "\(.key)=\(.value)"' <<< "$IMAGE_JSON")"
+          {
+            echo "args<<BUILD_ARGS_EOF"
+            echo "$ARGS"
+            echo "BUILD_ARGS_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      # Distinctive, unmistakably-throwaway destination — never confusable
+      # with a real pilot's images-staging/<pilot>/<image> artifact.
+      - name: Derive selftest destination tag
+        id: coords
+        run: |
+          set -euo pipefail
+          DEST="ghcr.io/c3-e/images-staging/_selftest/hello-image:workflow-dispatch-${{ github.run_id }}"
+          echo "dest=${DEST}" >> "$GITHUB_OUTPUT"
+          echo "Publishing selftest fixture -> ${DEST}"
+
+      # Fail-closed: no continue-on-error, no `|| true` — same discipline as
+      # publish-images-deferred's own "Build and push" step. If this step is
+      # red, the mechanics are broken and no real pilot caller should be
+      # trusted to depend on them yet — that is the entire point of this
+      # gate.
+      - name: Build and push (selftest fixture)
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8  # v6, same pin publish-images-deferred uses
+        with:
+          context: tests/fixtures/hello-image
+          file: tests/fixtures/hello-image/Dockerfile
+          push: true
+          tags: ${{ steps.coords.outputs.dest }}
+          build-args: ${{ steps.buildargs.outputs.args }}
+          platforms: linux/amd64
+
+      - name: Job summary
+        if: always()
+        run: |
+          {
+            echo "## Selftest: publish images (IG-3 dry-run)"
+            echo
+            echo "- destination: \`${{ steps.coords.outputs.dest }}\`"
+            echo "- build_args exercised: \`GREETING=hello-from-selftest-workflow-dispatch\`"
+            echo "- this is a throwaway selftest artifact, never a real pilot image"
+          } >> "$GITHUB_STEP_SUMMARY"
