@@ -1,5 +1,16 @@
 # Consumer contract (derived, v0.6)
 
+This document describes the **Reusable Security Gate** — a read-only,
+scan-only workflow that runs on every push to an open PR, with no
+side-effecting registry writes. A separate, structurally distinct
+workflow, [`publish-staging-chart.yml`](PUBLISH-STAGING-CHART.md), covers
+a different concern: packaging and pushing a pre-merge chart artifact to a
+staging OCI registry, triggered only on PR merge (never on an ordinary
+push). The two are intentionally not folded together — different trigger
+model (every-push vs. merge-only) and different side-effect profile
+(read-only scans vs. registry writes) — see
+[PUBLISH-STAGING-CHART.md](PUBLISH-STAGING-CHART.md) for its own contract.
+
 The gate derives everything it builds, scans, and smokes from files your
 repository already maintains for local development: the canonical Compose
 file, its Dockerfiles, and the Helm chart. You hand-author no manifest, no
