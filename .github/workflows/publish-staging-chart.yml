@@ -84,9 +84,63 @@ jobs:
       - name: Resolve chart dependencies
         run: helm dependency build "${{ inputs.chart_path }}"
 
-      # Fail-closed: no continue-on-error, no `|| true`. A broken chart
-      # dependency or a failed push must show as a red step in the Actions
-      # UI, never a green run with a missing artifact (AP-10 prevention).
+      # Fail-closed: no continue-on-error, no `|| true`. A chart-shape defect
+      # must show as a red step in the Actions UI, never a green run with a
+      # broken staging artifact (AP-10 prevention) — same style as every
+      # other step below.
+      #
+      # Two checks:
+      #   1. `helm lint` — catches structurally broken charts before they're
+      #      packaged and pushed.
+      #   2. Non-empty `routes:` contract (D-2) — every pilot must own its
+      #      own routes. The key may live top-level (`routes:`) or nested one
+      #      level under an engine-dependency key (e.g.
+      #      `fullstack-template.routes:`), depending on the pilot's own
+      #      chart structure, so the search walks the whole values.yaml tree
+      #      for any key named `routes` with a non-empty list value rather
+      #      than assuming one shape. Grounded against all 6 already-published
+      #      engine pilots (rms-copilot, contract-automation, data-science,
+      #      copa, osc-pipeline, dtic-rag) before landing: all 6 pass both
+      #      checks unchanged.
+      - name: Validate chart shape (lint + routes contract)
+        run: |
+          set -euo pipefail
+          CHART_PATH="${{ inputs.chart_path }}"
+          VALUES_FILE="${CHART_PATH}/values.yaml"
+
+          echo "::group::helm lint ${CHART_PATH}"
+          if ! helm lint "$CHART_PATH"; then
+            echo "::error::chart-shape validation failed: 'helm lint ${CHART_PATH}' reported errors (see the log above for specifics). Fix the chart per helm's own output, then re-push."
+            exit 1
+          fi
+          echo "::endgroup::"
+
+          if [ ! -f "$VALUES_FILE" ]; then
+            echo "::error::chart-shape validation failed: '${VALUES_FILE}' does not exist. Every pilot chart must ship a values.yaml declaring its own non-empty 'routes:' key (D-2 contract)."
+            exit 1
+          fi
+
+          ROUTES_COUNT="$(
+            yq -o=json '.' "$VALUES_FILE" | jq '
+              def find_routes:
+                if type == "object" then
+                  (to_entries[] | if .key == "routes" then .value else empty end),
+                  (to_entries[] | .value | find_routes)
+                elif type == "array" then
+                  .[] | find_routes
+                else
+                  empty
+                end;
+              [find_routes | select(type == "array" and length > 0)] | length
+            '
+          )"
+
+          if [ "$ROUTES_COUNT" -eq 0 ]; then
+            echo "::error::chart-shape validation failed: no non-empty 'routes:' key found anywhere in ${VALUES_FILE}. D-2 contract: every pilot must declare its own routes (top-level 'routes:' or nested under an engine-dependency key, e.g. 'fullstack-template.routes:'). Fix: add a non-empty 'routes:' list to the chart's values.yaml before merging."
+            exit 1
+          fi
+          echo "OK: found ${ROUTES_COUNT} non-empty 'routes:' key(s) in ${VALUES_FILE}"
+
       - name: Package chart
         id: package
         run: |
