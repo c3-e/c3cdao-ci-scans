@@ -73,6 +73,17 @@ jobs:
           echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io \
             -u "${{ github.actor }}" --password-stdin
 
+      # Resolve any file://-referenced local dependency (e.g. a sibling
+      # fullstack-template engine chart) before packaging. Some pilots
+      # pre-vendor the dependency tgz under charts/ already; this step is
+      # a correctness no-op for those (helm validates the existing tgz
+      # against Chart.lock's digest) and a real fix for pilots that don't
+      # (confirmed live: c3cdao-cra's contract-automation chart has no
+      # charts/ subdir, causing `helm package` to fail with "found in
+      # Chart.yaml, but missing in charts/ directory" without this step).
+      - name: Resolve chart dependencies
+        run: helm dependency build "${{ inputs.chart_path }}"
+
       # Fail-closed: no continue-on-error, no `|| true`. A broken chart
       # dependency or a failed push must show as a red step in the Actions
       # UI, never a green run with a missing artifact (AP-10 prevention).
