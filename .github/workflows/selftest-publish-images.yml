@@ -44,6 +44,17 @@ name: Selftest — Publish Images (dry-run)
 
 on:
   workflow_dispatch:
+  # TEMPORARY registration trigger — GitHub Actions will not offer
+  # workflow_dispatch for a manual `gh workflow run`/API dispatch on a
+  # workflow file until that file has run at least once via SOME trigger
+  # (confirmed live this session: `gh workflow run` returned "workflow ...
+  # not found on the default branch" for this brand-new file on a feature
+  # branch, even after waiting). This `push` trigger exists only to
+  # register the workflow with GitHub once; it is removed in this same PR
+  # before merge (see the commit that removes it) — the registration,
+  # once it happens, persists even after the trigger is removed.
+  push:
+    branches: [feat/image-publish-composed-smoke]
 
 permissions:
   contents: read
