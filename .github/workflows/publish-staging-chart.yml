@@ -1,0 +1,113 @@
+name: Publish Staging Chart
+
+on:
+  workflow_call:
+    inputs:
+      chart_path:
+        description: "Path (relative to the calling repo root) of the Helm chart to package and push to the staging OCI registry on merge."
+        type: string
+        required: true
+      publish_images:
+        description: "Deferred slot: when true (and base_ref is ci-scans or main), reserved for a future image-publish job. Default false keeps this input inert — no image-publish logic executes yet."
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: publish-staging-chart-${{ github.event.pull_request.number }}-${{ github.workflow_ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish-staging-chart:
+    name: publish staging chart (pre-merge composability artifact)
+    # Only a real merge produces a staging artifact — an ordinary push to an
+    # open PR (or a close-without-merge) must never publish anything. This is
+    # the AD-2 "any base branch" trigger: fork PRs merge into intermediate
+    # branches (e.g. ci-scans) before main, so base branch is deliberately
+    # unrestricted here (the image-publish slot below is narrower).
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+        with:
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
+
+      - name: Set up Helm
+        uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4  # v4
+
+      # Pilot name is the chart_path basename (e.g. helm/rms-copilot ->
+      # rms-copilot). Must match the umbrella's charts/<pilot>-*.tgz pin
+      # naming convention (see hack/test-pilot-pin.sh) or downstream
+      # composability-test consumption of this workflow's output silently
+      # breaks.
+      - name: Derive pilot, tag, and destination
+        id: coords
+        run: |
+          set -euo pipefail
+          CHART_PATH="${{ inputs.chart_path }}"
+          PILOT="$(basename "$CHART_PATH")"
+          PR_NUMBER="${{ github.event.pull_request.number }}"
+          SHA="${{ github.event.pull_request.merge_commit_sha }}"
+          SHORT_SHA="${SHA:0:7}"
+          TAG="0.0.0-mech.${PR_NUMBER}.${SHORT_SHA}"
+          DEST="oci://ghcr.io/c3-e/charts-staging/${PILOT}"
+          {
+            echo "pilot=${PILOT}"
+            echo "tag=${TAG}"
+            echo "dest=${DEST}"
+          } >> "$GITHUB_OUTPUT"
+          echo "Publishing ${PILOT} @ ${TAG} -> ${DEST}"
+
+      - name: Log in to GHCR (Actions-native GITHUB_TOKEN, not a personal PAT)
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io \
+            -u "${{ github.actor }}" --password-stdin
+
+      # Fail-closed: no continue-on-error, no `|| true`. A broken chart
+      # dependency or a failed push must show as a red step in the Actions
+      # UI, never a green run with a missing artifact (AP-10 prevention).
+      - name: Package chart
+        id: package
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/pkg"
+          helm package "${{ inputs.chart_path }}" \
+            --version "${{ steps.coords.outputs.tag }}" \
+            --app-version "${{ steps.coords.outputs.tag }}" \
+            -d "$RUNNER_TEMP/pkg"
+          TGZ="$(find "$RUNNER_TEMP/pkg" -maxdepth 1 -name '*.tgz' -print -quit)"
+          echo "tgz=${TGZ}" >> "$GITHUB_OUTPUT"
+
+      - name: Push to staging OCI registry
+        run: |
+          set -euo pipefail
+          helm push "${{ steps.package.outputs.tgz }}" "${{ steps.coords.outputs.dest }}"
+
+      - name: Job summary
+        if: always()
+        run: |
+          {
+            echo "## Publish staging chart"
+            echo
+            echo "- pilot: \`${{ steps.coords.outputs.pilot }}\`"
+            echo "- destination: \`${{ steps.coords.outputs.dest }}:${{ steps.coords.outputs.tag }}\`"
+            echo "- this is a pre-merge test artifact, not a release (non-SemVer tag by design)"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # Deferred slot (PRD §10 item 1). Intentionally a no-op placeholder — no
+  # image-publish logic ships here. Narrower than the chart trigger by
+  # design (AD-3): only fires when publish_images is explicitly turned on
+  # by a future caller AND the merge base branch is ci-scans or main.
+  publish-images-deferred:
+    name: publish images (deferred slot, inert)
+    if: >-
+      github.event.pull_request.merged == true &&
+      inputs.publish_images == true &&
+      contains(fromJSON('["ci-scans","main"]'), github.event.pull_request.base.ref)
+    runs-on: ubuntu-latest
+    steps:
+      - name: No-op placeholder
+        run: echo "image publish is not implemented by this workflow yet"
