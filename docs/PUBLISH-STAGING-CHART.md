@@ -6,6 +6,10 @@ side-effecting) and different side-effect profile (registry writes vs.
 read-only scans). See [CI-CONTRACT.md](CI-CONTRACT.md) for why the two are
 not folded together.
 
+For the umbrella (`c3-e/c3cdao-apps`) consumer-side chart-shape contract and
+the full pilot onboarding sequence (including wiring this workflow into a
+new pilot's own fork repo), see `PILOT-ONBOARDING-RUNBOOK.md` in that repo.
+
 ## Trigger
 
 `pull_request`, `types: [closed]`, gated on
@@ -93,10 +97,39 @@ jobs:
       chart_path: helm/rms-copilot
 ```
 
+## Chart-shape validation
+
+Before packaging, the workflow runs a fail-closed "Validate chart shape"
+step (no `continue-on-error`, no `|| true` — same style as every other step
+in this workflow) that checks two things:
+
+1. **`helm lint <chart_path>`** must pass. Any lint error fails the job.
+2. **Non-empty `routes:` contract (D-2).** Every pilot chart must declare
+   its own routes somewhere in `values.yaml` — either top-level (`routes:`)
+   or nested one level under an engine-dependency key (e.g.
+   `fullstack-template.routes:`), depending on the pilot's own chart
+   structure. The check walks the whole `values.yaml` tree for any key
+   named `routes` holding a non-empty list, so it tolerates either shape.
+   It is intentionally a simple presence check, not a full schema
+   validator — it exists to catch "totally forgot routes," not to enforce
+   route syntax.
+
+Grounded against all 6 already-published engine pilots (`rms-copilot`,
+`contract-automation`, `data-science`, `copa`, `osc-pipeline`, `dtic-rag`)
+before landing: all 6 pass both checks unchanged, so this does not change
+behavior for any chart that was already publishing successfully.
+
+On failure, the step prints an `::error::` annotation naming which check
+failed, why, and what to fix, e.g.:
+
+```
+::error::chart-shape validation failed: no non-empty 'routes:' key found anywhere in helm/<pilot>/values.yaml. D-2 contract: every pilot must declare its own routes (top-level 'routes:' or nested under an engine-dependency key, e.g. 'fullstack-template.routes:'). Fix: add a non-empty 'routes:' list to the chart's values.yaml before merging.
+```
+
 ## Failure behavior
 
-A chart-package failure (e.g. a broken chart dependency) or a registry-push
-failure fails the calling job closed — visible as a red step on the PR's
-Checks tab, never a green run with a missing artifact. This is not
-(currently) a required check; it reports independently of the repo's own
-existing gate.
+A chart-shape validation failure, a chart-package failure (e.g. a broken
+chart dependency), or a registry-push failure fails the calling job closed —
+visible as a red step on the PR's Checks tab, never a green run with a
+missing or malformed artifact. This is not (currently) a required check; it
+reports independently of the repo's own existing gate.
