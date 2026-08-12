@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.8.0](https://github.com/c3-e/c3cdao-ci-scans/compare/v0.7.4...v0.8.0) (2026-08-12)
+
+
+### Features
+
+* add publish-staging-chart.yml reusable workflow ([1e8d877](https://github.com/c3-e/c3cdao-ci-scans/commit/1e8d877bac3c19172009345d9e9f4664fd1f1f68))
+* add publish-staging-chart.yml reusable workflow ([376dcaf](https://github.com/c3-e/c3cdao-ci-scans/commit/376dcaf2387fca6bbbaac6d9750c5b631465f139))
+
+
+### Bug Fixes
+
+* omit trailing pilot segment from OCI dest to match locked path shape ([#33](https://github.com/c3-e/c3cdao-ci-scans/issues/33)) ([44c8ed6](https://github.com/c3-e/c3cdao-ci-scans/commit/44c8ed67d84dd13f7265ef7df95d9f240cc7533c))
+* run helm dependency build before packaging ([#34](https://github.com/c3-e/c3cdao-ci-scans/issues/34)) ([8613d62](https://github.com/c3-e/c3cdao-ci-scans/commit/8613d62c5bd3e25c0caf0504b1db488cdc8d8cd6))
+
+
+### Documentation
+
+* document caller permissions gotcha (workflow-level XOR job-level) ([#32](https://github.com/c3-e/c3cdao-ci-scans/issues/32)) ([eae5d22](https://github.com/c3-e/c3cdao-ci-scans/commit/eae5d22a87d83cc01fe864814dbd26a83f3eefa5))
+
 ## [0.7.4](https://github.com/c3-e/c3cdao-ci-scans/compare/v0.7.3...v0.7.4) (2026-08-11)
 
 
