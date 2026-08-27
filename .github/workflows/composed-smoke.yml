@@ -120,16 +120,44 @@ jobs:
           jq -r '.name' /tmp/pilots.jsonl > /tmp/pilot-names.txt
           echo "pilot count: $(wc -l < /tmp/pilots.jsonl | tr -d ' ')"
 
-      # Resolve every OTHER dependency Chart.yaml declares (its own committed
-      # pin, e.g. petegpt/resume-screener/landing's vendored source, and any
-      # OCI engine pilot NOT under test in this run) BEFORE the pilots[]-
-      # specific pulls below overwrite the ones actually under test. Without
-      # this, `helm install` would error loading a dependency whose
-      # charts/<name> is entirely absent, regardless of its own
-      # `condition:` — Helm's chart loader resolves dependencies at LOAD
-      # time, before any condition is evaluated.
-      - name: helm dependency build (resolve every OTHER declared dependency)
-        run: helm dependency build .
+      # Resolve every OTHER OCI-repository dependency Chart.yaml declares
+      # (any engine pilot NOT under test in this run) BEFORE the
+      # pilots[]-specific pulls below overwrite the ones actually under
+      # test. Without this, `helm install` would error loading a
+      # dependency whose charts/<name> is entirely absent, regardless of
+      # its own `condition:` — Helm's chart loader resolves dependencies at
+      # LOAD time, before any condition is evaluated.
+      #
+      # Deliberately NOT `helm dependency build .` — that command fails
+      # closed on this repo's own local/packaged dependencies (petegpt has
+      # no `repository:` in Chart.yaml at all, by design: "consumed as a
+      # packaged chart... not a vendored source dir" per Chart.yaml's own
+      # comment), which `dependency build` cannot resolve without a source
+      # directory (confirmed live: `Error: directory charts/petegpt not
+      # found`). Local/packaged dependencies are already present in the
+      # checked-out tree (committed charts/*.tgz or vendored charts/<name>/
+      # directories) and need no fetch at all — this mirrors EXACTLY what
+      # the umbrella's own Makefile `deps-pull` target already does, and
+      # for the identical reason (its own comment: "helm dependency build
+      # can't be used umbrella-wide yet").
+      - name: Pull every OTHER OCI-pinned dependency
+        run: |
+          set -euo pipefail
+          mkdir -p charts
+          yq -o=json '.dependencies' Chart.yaml | jq -c '.[]' | while IFS= read -r dep; do
+            name="$(jq -r '.name' <<<"$dep")"
+            version="$(jq -r '.version' <<<"$dep")"
+            repository="$(jq -r '.repository // ""' <<<"$dep")"
+            if grep -qxF "$name" /tmp/pilot-names.txt; then
+              continue  # this run's own pilots[] pull (below) wins instead
+            fi
+            if [ -z "$repository" ] || [ "$repository" = "null" ]; then
+              echo "skipping ${name}: local/packaged dependency, already in the checked-out tree"
+              continue
+            fi
+            echo "pulling ${name} @ ${version} <- ${repository}"
+            helm pull "${repository}/${name}" --version "${version}" -d charts/
+          done
 
       # Every dependency name Chart.yaml declares that is NOT one of THIS
       # run's pilots[] must be disabled — otherwise `helm install --wait`
