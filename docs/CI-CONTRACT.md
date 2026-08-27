@@ -10,6 +10,10 @@ push). The two are intentionally not folded together — different trigger
 model (every-push vs. merge-only) and different side-effect profile
 (read-only scans vs. registry writes) — see
 [PUBLISH-STAGING-CHART.md](PUBLISH-STAGING-CHART.md) for its own contract.
+A third, [`composed-smoke.yml`](COMPOSED-SMOKE.md), installs N pilot
+subcharts an umbrella repo already published via the second workflow,
+together, in one `kind` cluster — see
+[COMPOSED-SMOKE.md](COMPOSED-SMOKE.md) for its own contract.
 
 The gate derives everything it builds, scans, and smokes from files your
 repository already maintains for local development: the canonical Compose

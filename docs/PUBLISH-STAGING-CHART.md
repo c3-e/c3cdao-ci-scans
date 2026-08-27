@@ -10,6 +10,12 @@ For the umbrella (`c3-e/c3cdao-apps`) consumer-side chart-shape contract and
 the full pilot onboarding sequence (including wiring this workflow into a
 new pilot's own fork repo), see `PILOT-ONBOARDING-RUNBOOK.md` in that repo.
 
+A downstream consumer of this workflow's own output is
+[`composed-smoke.yml`](COMPOSED-SMOKE.md) — the umbrella's own reusable
+workflow that installs every pilot's published `charts-staging`/
+`images-staging` artifacts together in one `kind` cluster. See
+[COMPOSED-SMOKE.md](COMPOSED-SMOKE.md) for its contract.
+
 ## Trigger
 
 `pull_request`, `types: [closed]`, gated on
