@@ -180,7 +180,7 @@ jobs:
           caller="${WORKFLOW_REF#"$GITHUB_REPOSITORY/"}"; caller="${caller%%@*}"
           ref=""
           if [ -f "$caller" ]; then
-            ref="$(grep -E '^[[:space:]]*uses:.*reusable-security-gate\.yml@' "$caller" | head -1 | sed -E "s|.*reusable-security-gate\.yml@([^[:space:]#\"']+).*|\1|")"
+            ref="$(yq '[.. | select(has("uses")) | .uses | select(test("reusable-security-gate\.yml@"))] | .[0] // "" | split("reusable-security-gate.yml@")[1] // ""' "$caller")"
           fi
           ref="${ref:-${JOB_WF_SHA:-main}}"
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
@@ -342,7 +342,7 @@ jobs:
           caller="${WORKFLOW_REF#"$GITHUB_REPOSITORY/"}"; caller="${caller%%@*}"
           ref=""
           if [ -f "$caller" ]; then
-            ref="$(grep -E '^[[:space:]]*uses:.*reusable-security-gate\.yml@' "$caller" | head -1 | sed -E "s|.*reusable-security-gate\.yml@([^[:space:]#\"']+).*|\1|")"
+            ref="$(yq '[.. | select(has("uses")) | .uses | select(test("reusable-security-gate\.yml@"))] | .[0] // "" | split("reusable-security-gate.yml@")[1] // ""' "$caller")"
           fi
           ref="${ref:-${JOB_WF_SHA:-main}}"
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
@@ -780,7 +780,7 @@ jobs:
           caller="${WORKFLOW_REF#"$GITHUB_REPOSITORY/"}"; caller="${caller%%@*}"
           ref=""
           if [ -f "$caller" ]; then
-            ref="$(grep -E '^[[:space:]]*uses:.*reusable-security-gate\.yml@' "$caller" | head -1 | sed -E "s|.*reusable-security-gate\.yml@([^[:space:]#\"']+).*|\1|")"
+            ref="$(yq '[.. | select(has("uses")) | .uses | select(test("reusable-security-gate\.yml@"))] | .[0] // "" | split("reusable-security-gate.yml@")[1] // ""' "$caller")"
           fi
           ref="${ref:-${JOB_WF_SHA:-main}}"
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
@@ -859,7 +859,7 @@ jobs:
           caller="${WORKFLOW_REF#"$GITHUB_REPOSITORY/"}"; caller="${caller%%@*}"
           ref=""
           if [ -f "$caller" ]; then
-            ref="$(grep -E '^[[:space:]]*uses:.*reusable-security-gate\.yml@' "$caller" | head -1 | sed -E "s|.*reusable-security-gate\.yml@([^[:space:]#\"']+).*|\1|")"
+            ref="$(yq '[.. | select(has("uses")) | .uses | select(test("reusable-security-gate\.yml@"))] | .[0] // "" | split("reusable-security-gate.yml@")[1] // ""' "$caller")"
           fi
           ref="${ref:-${JOB_WF_SHA:-main}}"
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
@@ -1068,7 +1068,7 @@ jobs:
           caller="${WORKFLOW_REF#"$GITHUB_REPOSITORY/"}"; caller="${caller%%@*}"
           ref=""
           if [ -f "$caller" ]; then
-            ref="$(grep -E '^[[:space:]]*uses:.*reusable-security-gate\.yml@' "$caller" | head -1 | sed -E "s|.*reusable-security-gate\.yml@([^[:space:]#\"']+).*|\1|")"
+            ref="$(yq '[.. | select(has("uses")) | .uses | select(test("reusable-security-gate\.yml@"))] | .[0] // "" | split("reusable-security-gate.yml@")[1] // ""' "$caller")"
           fi
           ref="${ref:-${JOB_WF_SHA:-main}}"
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
@@ -1214,7 +1214,7 @@ jobs:
           caller="${WORKFLOW_REF#"$GITHUB_REPOSITORY/"}"; caller="${caller%%@*}"
           ref=""
           if [ -f "$caller" ]; then
-            ref="$(grep -E '^[[:space:]]*uses:.*reusable-security-gate\.yml@' "$caller" | head -1 | sed -E "s|.*reusable-security-gate\.yml@([^[:space:]#\"']+).*|\1|")"
+            ref="$(yq '[.. | select(has("uses")) | .uses | select(test("reusable-security-gate\.yml@"))] | .[0] // "" | split("reusable-security-gate.yml@")[1] // ""' "$caller")"
           fi
           ref="${ref:-${JOB_WF_SHA:-main}}"
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
@@ -1388,7 +1388,7 @@ jobs:
           caller="${WORKFLOW_REF#"$GITHUB_REPOSITORY/"}"; caller="${caller%%@*}"
           ref=""
           if [ -f "$caller" ]; then
-            ref="$(grep -E '^[[:space:]]*uses:.*reusable-security-gate\.yml@' "$caller" | head -1 | sed -E "s|.*reusable-security-gate\.yml@([^[:space:]#\"']+).*|\1|")"
+            ref="$(yq '[.. | select(has("uses")) | .uses | select(test("reusable-security-gate\.yml@"))] | .[0] // "" | split("reusable-security-gate.yml@")[1] // ""' "$caller")"
           fi
           ref="${ref:-${JOB_WF_SHA:-main}}"
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
