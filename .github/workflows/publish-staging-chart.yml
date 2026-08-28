@@ -275,7 +275,7 @@ jobs:
           caller="${WORKFLOW_REF#"$GITHUB_REPOSITORY/"}"; caller="${caller%%@*}"
           ref=""
           if [ -f "$caller" ]; then
-            ref="$(grep -E '^[[:space:]]*uses:.*publish-staging-chart\.yml@' "$caller" | head -1 | sed -E "s|.*publish-staging-chart\.yml@([^[:space:]#\"']+).*|\1|")"
+            ref="$(yq '[.. | select(has("uses")) | .uses | select(test("publish-staging-chart\.yml@"))] | .[0] // "" | split("publish-staging-chart.yml@")[1] // ""' "$caller")"
           fi
           ref="${ref:-${JOB_WF_SHA:-main}}"
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
