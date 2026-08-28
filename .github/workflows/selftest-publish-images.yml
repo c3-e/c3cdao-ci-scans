@@ -1,8 +1,8 @@
 name: Selftest — Publish Images (dry-run)
 
-# WHY THIS FILE EXISTS (IG-3 dry-run prerequisite, plan §4.2's IG-3 row):
+# WHY THIS FILE EXISTS (dry-run prerequisite for the real publish job):
 #
-# publish-staging-chart.yml's publish-images-deferred job (PR-1) only has a
+# publish-staging-chart.yml's publish-images-deferred job only has a
 # workflow_call trigger, and its own `if:` condition hard-requires
 # `github.event.pull_request.merged == true` (plus `inputs.publish_images ==
 # true` and a base-branch check). A workflow_dispatch event can NEVER
@@ -14,9 +14,9 @@ name: Selftest — Publish Images (dry-run)
 #   (a) editing the real job's own `if:` to special-case a dry-run mode —
 #       rejected: that would permanently weaken the real job's fail-closed
 #       trigger guard just to make manual testing more convenient, exactly
-#       backwards from this repo's own AP-10 posture ("never a green run
-#       with a missing artifact," extended here to "never a loosened gate
-#       for convenience"); or
+#       backwards from this repo's own fail-closed posture ("never a green
+#       run with a missing artifact," extended here to "never a loosened
+#       gate for convenience"); or
 #   (b) synthesizing a fake merged-PR event context — GitHub Actions does
 #       not support this for workflow_dispatch, and it would be fragile/
 #       unsupported even if some hack could approximate it.
@@ -27,7 +27,7 @@ name: Selftest — Publish Images (dry-run)
 # passthrough logic) directly against a fixed, trivial, harmless fixture
 # Dockerfile (tests/fixtures/hello-image/Dockerfile) — proving the mechanics
 # work in isolation from any specific pilot's real Dockerfile quirks, before
-# any real pilot caller depends on them (IG-3, a real pass/fail gate, not a
+# any real pilot caller depends on them (a real pass/fail gate, not a
 # smoke test of syntax alone). The destination tag is deliberately a
 # throwaway, unmistakably-selftest path
 # (images-staging/selftest/hello-image:workflow-dispatch-<run-id> — no
@@ -59,7 +59,7 @@ permissions:
 
 jobs:
   selftest-publish-image:
-    name: selftest publish image (workflow_dispatch dry-run, IG-3)
+    name: selftest publish image (workflow_dispatch dry-run)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4, same pin publish-staging-chart.yml uses everywhere in that file
@@ -127,7 +127,7 @@ jobs:
         if: always()
         run: |
           {
-            echo "## Selftest: publish images (IG-3 dry-run)"
+            echo "## Selftest: publish images (dry-run)"
             echo
             echo "- destination: \`${{ steps.coords.outputs.dest }}\`"
             echo "- build_args exercised: \`GREETING=hello-from-selftest-workflow-dispatch\`"

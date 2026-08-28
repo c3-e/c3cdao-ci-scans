@@ -110,9 +110,8 @@ jobs:
 Produces a `kind` cluster with `rms-copilot`'s own frontend + backend
 Deployments running the exact images
 `c3cdao-geoint#94`'s merge published, health-checked through the umbrella
-release's own rendered Service — the same run artifact IG-5 (see the
-umbrella's `.plan/image-publish-composed-smoke-plan.md`) captures as
-evidence, replacing a laptop screenshot with a shareable GHA run URL.
+release's own rendered Service — the run itself is the evidence, a
+shareable GHA run URL in place of a laptop screenshot.
 
 ## Failure behavior
 

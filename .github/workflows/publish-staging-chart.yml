@@ -358,9 +358,8 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       # Fail-closed: no continue-on-error, no `|| true` — same discipline as
-      # the chart-publish job's own "Package chart" step (AP-10 prevention:
-      # a broken build must show red, never a green run with a missing
-      # artifact).
+      # the chart-publish job's own "Package chart" step: a broken build
+      # must show red, never a green run with a missing artifact.
       - name: Build and push
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8  # v6
         with:

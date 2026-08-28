@@ -65,10 +65,10 @@ jobs:
       - name: Checkout caller (the umbrella)
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff # v6
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
 
       - name: Set up Helm
-        uses: azure/setup-helm@bf6a7d304bc2fdb57e0331155b7ebf2c504acf0a # v4
+        uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4
 
       # Callee (ci-scans) checkout: the smoke-catalog manifests live in the
       # gate repo, not the caller's tree (same cross-repo pattern
@@ -94,7 +94,7 @@ jobs:
           path: .ci-scans
 
       # Both charts-staging and images-staging are private GHCR namespaces
-      # (confirmed live, IG-1) — login BEFORE any OCI pull touches either
+      # (confirmed live) — login BEFORE any OCI pull touches either
       # one. Helm's own OCI client reads the SAME docker credential store
       # `docker/login-action` writes (Helm 3.8+ compatibility with `docker
       # login`), so one login covers both `helm pull oci://ghcr.io/...` and
