@@ -281,3 +281,36 @@ def test_warn_posture_still_no_false_authenticated_claim(tmp_path):
     assert result.returncode == 0, result.stdout + result.stderr
     assert "authenticated" not in result.stdout
     assert "::warning::" in result.stdout
+
+
+def test_invalid_hardened_base_registry_value_fails_closed_with_error(tmp_path):
+    """The case statement's `*)` arm (unrecognized hardened-base-registry
+    value) had zero coverage. It must fail closed with a specific
+    ::error:: message before any login is even attempted, regardless of
+    require_hardened_bases -- the case statement's own `exit 1` fires
+    ahead of the later require-hardened-bases branch, so this is
+    exercised with require_hardened_bases=false to make sure the failure
+    comes from the `*)` arm itself and not from that later fail-closed
+    check (which would also exit non-zero under require_hardened_bases=true
+    even if the `*)` arm's own exit were missing).
+
+    Note: unlike the script's other ::error:: lines (which print to
+    stdout), this arm's echo is explicitly redirected to stderr
+    (`>&2`) in the action -- confirmed by running the real script.
+    """
+    result, invocations, _ = run_login_script(
+        tmp_path,
+        hardened_base_registry="garbage",
+        cgr_token="cgr-tok",
+        ib_token="ib-tok",
+        require_hardened_bases="false",
+    )
+    assert invocations == [], (
+        f"no login should be attempted for an invalid tier: {invocations}"
+    )
+    assert result.returncode != 0, "an invalid hardened-base-registry value must fail closed"
+    assert (
+        "::error::hardened-base-registry must be 'chainguard', 'ironbank', or 'both'"
+        in result.stderr
+    ), result.stdout + result.stderr
+    assert "garbage" in result.stderr
