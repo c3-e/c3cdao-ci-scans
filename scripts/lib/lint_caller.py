@@ -26,8 +26,11 @@ suppression-format, gate-job-id.
 Caller structure rules carried over from v0.5.x (load-bearing only):
 gate-ref-pin (the reusable-workflow ref is a full 40-hex commit SHA),
 gate-job-id (the calling job id is exactly 'security-scan', half of the
-required check context), no-secrets-inherit + missing-secret-map (all four
-registry secrets mapped explicitly), unknown-input (the with: surface is
+required check context), decoy-gate-job (exactly one job may call
+the gate workflow, run or not — a second is a decoy vector against the
+callee-ref resolver's first-match parse), no-secrets-inherit +
+missing-secret-map (all four registry secrets mapped explicitly),
+unknown-input (the with: surface is
 exactly the v0.6 inputs; removed v0.5.x inputs are rejected by name), and
 unreadable-caller (fail closed on an unparseable caller).
 
@@ -211,13 +214,17 @@ def chart_resolve(
         return None, [verdict("chart-resolve", str(e.code))]
 
 
+def _find_gate_jobs(jobs: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
+    return [
+        (job_id, job)
+        for job_id, job in jobs.items()
+        if isinstance(job, dict) and GATE_WORKFLOW_BASENAME in str(job.get("uses") or "")
+    ]
+
+
 def _find_gate_job(jobs: dict[str, Any]) -> tuple[str, dict[str, Any]] | None:
-    for job_id, job in jobs.items():
-        if isinstance(job, dict) and GATE_WORKFLOW_BASENAME in str(
-            job.get("uses") or ""
-        ):
-            return job_id, job
-    return None
+    matches = _find_gate_jobs(jobs)
+    return matches[0] if matches else None
 
 
 def lint_caller_workflow(caller_path: Path) -> list[Verdict]:
@@ -246,6 +253,27 @@ def lint_caller_workflow(caller_path: Path) -> list[Verdict]:
     gate_id, gate_job = gate
 
     verdicts = []
+    gate_jobs = _find_gate_jobs(jobs)
+    if len(gate_jobs) > 1:
+        # A second gate-calling job — even one gated behind
+        # `if: false` and never actually run — is a decoy vector. The
+        # callee-ref resolver (reusable-security-gate.yml) takes the FIRST
+        # uses: match in the caller file; without this rule, a decoy job
+        # pinned to an older, weaker gate SHA ahead of the real one would
+        # make the real run check out lint rules, the restricted-PSS
+        # assertion, and the blocking-set evaluator from the decoy's ref
+        # while `_find_gate_job` above (first-match, same as the resolver)
+        # lints only the decoy's own, validly-pinned surface.
+        verdicts.append(
+            verdict(
+                "decoy-gate-job",
+                f"{len(gate_jobs)} jobs call {GATE_WORKFLOW_BASENAME} "
+                f"({', '.join(j for j, _ in gate_jobs)}); exactly one is "
+                "allowed per caller, run or not — a second, differently-"
+                "pinned job can hijack which ci-scans ref the real gate "
+                "run resolves its own tooling from",
+            )
+        )
     if gate_id != "security-scan":
         verdicts.append(
             verdict(

@@ -713,6 +713,70 @@ def test_gate_ref_pin_accepts_full_sha(tmp_path):
     assert lint_caller_file(tmp_path, caller_yaml()) == []
 
 
+def test_decoy_gate_job_blocks_even_when_never_run(tmp_path):
+    """A second gate-calling job — gated behind if: false, never actually
+    executed — must still block. It's a decoy vector against the
+    callee-ref resolver's first-match parse, not a job that needs to run
+    to be dangerous."""
+    import yaml
+
+    decoy_ref = "1" * 40
+    real_ref = "2" * 40
+    text = yaml.safe_dump(
+        {
+            "name": "Security Scan",
+            "on": ["pull_request"],
+            "jobs": {
+                # Decoy listed FIRST — the exact shape that made the decoy
+                # job dangerous: the old resolver's head -1 / first-match
+                # parse would have picked this one's ref. secrets mapped on
+                # both jobs so the only verdict distinguishing this fixture
+                # from a clean single-job caller is decoy-gate-job itself.
+                "decoy": {
+                    "if": "false",
+                    "uses": (
+                        "c3-e/c3cdao-ci-scans/.github/workflows/"
+                        f"reusable-security-gate.yml@{decoy_ref}"
+                    ),
+                    "secrets": {
+                        name: f"${{{{ secrets.{name} }}}}"
+                        for name in (
+                            "CGR_PULL_TOKEN",
+                            "CGR_PULL_USERNAME",
+                            "IRONBANK_TOKEN",
+                            "IRONBANK_USERNAME",
+                        )
+                    },
+                },
+                "security-scan": {
+                    "uses": (
+                        "c3-e/c3cdao-ci-scans/.github/workflows/"
+                        f"reusable-security-gate.yml@{real_ref}"
+                    ),
+                    "secrets": {
+                        name: f"${{{{ secrets.{name} }}}}"
+                        for name in (
+                            "CGR_PULL_TOKEN",
+                            "CGR_PULL_USERNAME",
+                            "IRONBANK_TOKEN",
+                            "IRONBANK_USERNAME",
+                        )
+                    },
+                },
+            },
+        }
+    )
+    verdicts = lint_caller_file(tmp_path, text)
+    decoy_verdicts = [v for v in verdicts if v["rule_id"] == "decoy-gate-job"]
+    assert len(decoy_verdicts) == 1, verdicts
+    v = decoy_verdicts[0]
+    assert v["level"] == "block"
+    assert "decoy" in v["message"]
+    assert "security-scan" in v["message"]
+    # gate-job-id also fires (first-match here is "decoy", whose id isn't
+    # "security-scan") — a correct secondary finding, not asserted away.
+
+
 def test_no_secrets_inherit(tmp_path):
     verdicts = lint_caller_file(tmp_path, caller_yaml(secrets="inherit"))
     assert [v["rule_id"] for v in verdicts] == ["no-secrets-inherit"]

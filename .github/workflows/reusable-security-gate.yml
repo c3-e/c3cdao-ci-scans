@@ -161,28 +161,65 @@ jobs:
       # first target in sorted order (deterministic, never empty). Exactly
       # one image-scan leg matches it.
       source_sbom_target: ${{ steps.emit.outputs.source_sbom_target }}
+      # Resolved ONCE here, consumed by every other job via
+      # needs.plan.outputs.callee_ref — a single resolver site instead of
+      # one duplicated copy per job.
+      callee_ref: ${{ steps.calleeref.outputs.ref }}
     steps:
       # Consumer repo (github.repository = the caller's repo).
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
 
-      # Resolve which ci-scans ref to lint against. github.job_workflow_sha is
-      # empty on pull_request-triggered reusable calls, so prefer the ref the
-      # caller pins in its `uses:` (parsed from the caller file), then
-      # job_workflow_sha, then main. Without this the lint validates against
-      # main's contract regardless of the pinned ref, the wrong contract the
-      # moment they diverge (e.g. piloting an as-yet-unmerged input).
+      # Resolve which ci-scans ref to lint against: github.job_workflow_sha
+      # first (trusted, resolved by GitHub itself), falling back to parsing
+      # the caller's own `uses:` pin only when that's empty — the case for
+      # every pull_request-triggered call today. Without this the lint
+      # validates against main's contract regardless of the pinned ref, the
+      # wrong contract the moment they diverge (e.g. piloting an
+      # as-yet-unmerged input).
+      #
+      # Decoy-job hardening: the yq query below takes the FIRST uses: match
+      # in the caller file, same as the job_workflow_sha fallback did
+      # before it. That is only safe because the new decoy-gate-job lint
+      # rule (lint_caller.py) fails the run closed if a caller ever has
+      # more than one job whose uses: matches this workflow's filename —
+      # eliminating the ambiguity a decoy job would otherwise exploit,
+      # rather than trying to guess "the executing job" at runtime
+      # (github.job here is THIS reusable workflow's own job id, not the
+      # caller's — there is no direct signal for that).
+      #
+      # Fail-closed: a caller outside this repo that yields no parseable
+      # ref AND has no job_workflow_sha fails the run with a named error
+      # instead of silently defaulting to main. ci-scans' own fixture
+      # callers (this repo's selftest workflows) keep an explicit main
+      # fallback, gated on GITHUB_REPOSITORY, since they intentionally
+      # exercise this workflow against itself.
       - name: Resolve callee (ci-scans) ref
         id: calleeref
         env:
           WORKFLOW_REF: ${{ github.workflow_ref }}
           JOB_WF_SHA: ${{ github.job_workflow_sha }}
         run: |
+          set -euo pipefail
           caller="${WORKFLOW_REF#"$GITHUB_REPOSITORY/"}"; caller="${caller%%@*}"
-          ref=""
-          if [ -f "$caller" ]; then
-            ref="$(grep -E '^[[:space:]]*uses:.*reusable-security-gate\.yml@' "$caller" | head -1 | sed -E "s|.*reusable-security-gate\.yml@([^[:space:]#\"']+).*|\1|")"
+          # Trusted context first. job_workflow_sha is resolved by GitHub
+          # itself from the actually-executing job's own pin — immune to a
+          # decoy job elsewhere in the caller file. Only fall back to
+          # parsing the caller's own text (first uses: match; safe only
+          # because decoy-gate-job lint now blocks any caller with more
+          # than one candidate) when job_workflow_sha is empty, which is
+          # the case for every pull_request-triggered call today.
+          ref="$JOB_WF_SHA"
+          if [ -z "$ref" ] && [ -f "$caller" ]; then
+            ref="$(yq '[.. | select(has("uses")) | .uses | select(test("reusable-security-gate\.yml@"))] | .[0] // "" | split("reusable-security-gate.yml@")[1] // ""' "$caller")"
           fi
-          ref="${ref:-${JOB_WF_SHA:-main}}"
+          if [ -z "$ref" ]; then
+            if [ "$GITHUB_REPOSITORY" = "c3-e/c3cdao-ci-scans" ]; then
+              ref="main"
+            else
+              echo "::error::plan: could not resolve the ci-scans ref this workflow was called at — no parseable 'uses:' pin found in '${caller}', and github.job_workflow_sha is empty. Refusing to silently fall back to main; pin the caller's uses: line to a real ref."
+              exit 1
+            fi
+          fi
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
           echo "::notice::plan: linting against ci-scans ref '$ref'"
 
@@ -333,24 +370,15 @@ jobs:
       # workflow runs cross-repo, so `uses: ./.github/actions/...` would
       # resolve against the CALLER's tree. Local composite actions are
       # referenced from this .ci-scans checkout instead.
-      - name: Resolve callee (ci-scans) ref
-        id: calleeref
-        env:
-          WORKFLOW_REF: ${{ github.workflow_ref }}
-          JOB_WF_SHA: ${{ github.job_workflow_sha }}
-        run: |
-          caller="${WORKFLOW_REF#"$GITHUB_REPOSITORY/"}"; caller="${caller%%@*}"
-          ref=""
-          if [ -f "$caller" ]; then
-            ref="$(grep -E '^[[:space:]]*uses:.*reusable-security-gate\.yml@' "$caller" | head -1 | sed -E "s|.*reusable-security-gate\.yml@([^[:space:]#\"']+).*|\1|")"
-          fi
-          ref="${ref:-${JOB_WF_SHA:-main}}"
-          echo "ref=$ref" >> "$GITHUB_OUTPUT"
-
+      # Consumes plan's single resolved ref instead of its own resolver
+      # copy. No fallback needed here (unlike security-gate / export-bundle)
+      # — this job's plain `needs: [plan, ...]` means GitHub never runs it
+      # at all unless plan succeeded, so the output is always set by the
+      # time this checkout runs.
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
         with:
           repository: c3-e/c3cdao-ci-scans
-          ref: ${{ steps.calleeref.outputs.ref }}
+          ref: ${{ needs.plan.outputs.callee_ref }}
           path: .ci-scans
 
       # Consumer images can be large (WeasyPrint + psql deps). Building one,
@@ -771,24 +799,15 @@ jobs:
       # re-scan of the templated securityContext rows. Ported from the modular
       # helm-validate.yml (which this workflow replaces) so that pod-security
       # enforcement isn't lost.
-      - name: Resolve callee (ci-scans) ref
-        id: calleeref
-        env:
-          WORKFLOW_REF: ${{ github.workflow_ref }}
-          JOB_WF_SHA: ${{ github.job_workflow_sha }}
-        run: |
-          caller="${WORKFLOW_REF#"$GITHUB_REPOSITORY/"}"; caller="${caller%%@*}"
-          ref=""
-          if [ -f "$caller" ]; then
-            ref="$(grep -E '^[[:space:]]*uses:.*reusable-security-gate\.yml@' "$caller" | head -1 | sed -E "s|.*reusable-security-gate\.yml@([^[:space:]#\"']+).*|\1|")"
-          fi
-          ref="${ref:-${JOB_WF_SHA:-main}}"
-          echo "ref=$ref" >> "$GITHUB_OUTPUT"
-
+      # Consumes plan's single resolved ref instead of its own resolver
+      # copy. No fallback needed here (unlike security-gate / export-bundle)
+      # — this job's plain `needs: [plan, ...]` means GitHub never runs it
+      # at all unless plan succeeded, so the output is always set by the
+      # time this checkout runs.
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
         with:
           repository: c3-e/c3cdao-ci-scans
-          ref: ${{ steps.calleeref.outputs.ref }}
+          ref: ${{ needs.plan.outputs.callee_ref }}
           path: .ci-scans
 
       - name: Set up uv
@@ -822,7 +841,10 @@ jobs:
     name: Cluster Smoke (kind + helm + health)
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    needs: [build, helm-check]
+    # plan added directly: needs.plan.outputs.callee_ref below requires
+    # plan in this job's OWN needs: list, even though it was already an
+    # implicit, transitive dependency via build/helm-check.
+    needs: [plan, build, helm-check]
     if: |
       always() &&
       inputs.image_only != true &&
@@ -850,24 +872,15 @@ jobs:
       # Callee (ci-scans) checkout: catalog module manifests + the
       # smoke-target derivation script live in the gate repo, not the
       # consumer's tree (same cross-repo pattern as plan/build/helm-check).
-      - name: Resolve callee (ci-scans) ref
-        id: calleeref
-        env:
-          WORKFLOW_REF: ${{ github.workflow_ref }}
-          JOB_WF_SHA: ${{ github.job_workflow_sha }}
-        run: |
-          caller="${WORKFLOW_REF#"$GITHUB_REPOSITORY/"}"; caller="${caller%%@*}"
-          ref=""
-          if [ -f "$caller" ]; then
-            ref="$(grep -E '^[[:space:]]*uses:.*reusable-security-gate\.yml@' "$caller" | head -1 | sed -E "s|.*reusable-security-gate\.yml@([^[:space:]#\"']+).*|\1|")"
-          fi
-          ref="${ref:-${JOB_WF_SHA:-main}}"
-          echo "ref=$ref" >> "$GITHUB_OUTPUT"
-
+      # Consumes plan's single resolved ref instead of its own resolver
+      # copy. No fallback needed here (unlike security-gate / export-bundle)
+      # — this job's plain `needs: [plan, ...]` means GitHub never runs it
+      # at all unless plan succeeded, so the output is always set by the
+      # time this checkout runs.
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
         with:
           repository: c3-e/c3cdao-ci-scans
-          ref: ${{ steps.calleeref.outputs.ref }}
+          ref: ${{ needs.plan.outputs.callee_ref }}
           path: .ci-scans
 
       - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e  # v6
@@ -1059,24 +1072,15 @@ jobs:
       # workflow runs cross-repo, so `uses: ./.github/actions/...` would
       # resolve against the CALLER's tree. Local composite actions are
       # referenced from this .ci-scans checkout instead.
-      - name: Resolve callee (ci-scans) ref
-        id: calleeref
-        env:
-          WORKFLOW_REF: ${{ github.workflow_ref }}
-          JOB_WF_SHA: ${{ github.job_workflow_sha }}
-        run: |
-          caller="${WORKFLOW_REF#"$GITHUB_REPOSITORY/"}"; caller="${caller%%@*}"
-          ref=""
-          if [ -f "$caller" ]; then
-            ref="$(grep -E '^[[:space:]]*uses:.*reusable-security-gate\.yml@' "$caller" | head -1 | sed -E "s|.*reusable-security-gate\.yml@([^[:space:]#\"']+).*|\1|")"
-          fi
-          ref="${ref:-${JOB_WF_SHA:-main}}"
-          echo "ref=$ref" >> "$GITHUB_OUTPUT"
-
+      # Consumes plan's single resolved ref instead of its own resolver
+      # copy. No fallback needed here (unlike security-gate / export-bundle)
+      # — this job's plain `needs: [plan, ...]` means GitHub never runs it
+      # at all unless plan succeeded, so the output is always set by the
+      # time this checkout runs.
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
         with:
           repository: c3-e/c3cdao-ci-scans
-          ref: ${{ steps.calleeref.outputs.ref }}
+          ref: ${{ needs.plan.outputs.callee_ref }}
           path: .ci-scans
 
       # Default scanner configs + image load + Trivy image + Grype image +
@@ -1201,29 +1205,16 @@ jobs:
       # vex-applied.openvex.json and splits what's left by the scanners'
       # own fix metadata. See docs/RUNBOOK.md Appendix I.
       # ------------------------------------------------------------------
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
-        if: github.event_name == 'pull_request'
-
-      - name: Resolve callee (ci-scans) ref
-        id: calleeref
-        if: github.event_name == 'pull_request'
-        env:
-          WORKFLOW_REF: ${{ github.workflow_ref }}
-          JOB_WF_SHA: ${{ github.job_workflow_sha }}
-        run: |
-          caller="${WORKFLOW_REF#"$GITHUB_REPOSITORY/"}"; caller="${caller%%@*}"
-          ref=""
-          if [ -f "$caller" ]; then
-            ref="$(grep -E '^[[:space:]]*uses:.*reusable-security-gate\.yml@' "$caller" | head -1 | sed -E "s|.*reusable-security-gate\.yml@([^[:space:]#\"']+).*|\1|")"
-          fi
-          ref="${ref:-${JOB_WF_SHA:-main}}"
-          echo "ref=$ref" >> "$GITHUB_OUTPUT"
-
+      # Consumes plan's single resolved ref. Same explicit fallback chain
+      # as security-gate below (this job is also if: always(), so plan may
+      # have failed before setting its output) — low-risk here too: this
+      # checkout only feeds a read-only, continue-on-error VEX report,
+      # never security-gate's pass/fail.
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
         if: github.event_name == 'pull_request'
         with:
           repository: c3-e/c3cdao-ci-scans
-          ref: ${{ steps.calleeref.outputs.ref }}
+          ref: ${{ needs.plan.outputs.callee_ref || github.job_workflow_sha || 'main' }}
           path: .ci-scans
 
       - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e  # v6
@@ -1375,29 +1366,19 @@ jobs:
     needs: [plan, build, secrets-scan, sast-semgrep, sast-sonarqube, helm-check, cluster-smoke, image-scan]
     if: always()
     steps:
-      # Consumer checkout so we can parse the caller's uses: pin. job_workflow_sha
-      # is empty on pull_request-triggered reusable calls (same as plan).
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
-
-      - name: Resolve callee (ci-scans) ref
-        id: calleeref
-        env:
-          WORKFLOW_REF: ${{ github.workflow_ref }}
-          JOB_WF_SHA: ${{ github.job_workflow_sha }}
-        run: |
-          caller="${WORKFLOW_REF#"$GITHUB_REPOSITORY/"}"; caller="${caller%%@*}"
-          ref=""
-          if [ -f "$caller" ]; then
-            ref="$(grep -E '^[[:space:]]*uses:.*reusable-security-gate\.yml@' "$caller" | head -1 | sed -E "s|.*reusable-security-gate\.yml@([^[:space:]#\"']+).*|\1|")"
-          fi
-          ref="${ref:-${JOB_WF_SHA:-main}}"
-          echo "ref=$ref" >> "$GITHUB_OUTPUT"
-          echo "::notice::security-gate: evaluating with ci-scans ref '$ref'"
-
+      # Consumes plan's single resolved ref instead of its own resolver
+      # copy. Explicit fallback chain since this job runs if: always() —
+      # plan may have failed before setting its output.
+      # github.job_workflow_sha is empty on pull_request-triggered calls
+      # (the same gap fixed in plan), so main is the last resort; safe
+      # specifically here because this job only aggregates needs.*.result
+      # (never processes untrusted build artifacts), and a failed plan
+      # already makes the overall gate fail regardless of which evaluator
+      # ref runs.
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
         with:
           repository: c3-e/c3cdao-ci-scans
-          ref: ${{ steps.calleeref.outputs.ref }}
+          ref: ${{ needs.plan.outputs.callee_ref || github.job_workflow_sha || 'main' }}
           path: .ci-scans
 
       - name: Evaluate scan results

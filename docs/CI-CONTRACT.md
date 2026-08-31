@@ -188,6 +188,7 @@ else blocks the run before any build starts.
 | [`suppression-format`](#rule-suppression-format) | block | `.trivyignore` / `.grype.yaml` carries a real suppression entry |
 | [`gate-ref-pin`](#rule-gate-ref-pin) | block | gate ref is not a full 40-hex commit SHA |
 | [`gate-job-id`](#rule-gate-job-id) | block | the calling job id is not `security-scan` |
+| [`decoy-gate-job`](#rule-decoy-gate-job) | block | more than one job in the caller calls the gate workflow |
 | [`no-secrets-inherit`](#rule-no-secrets-inherit) | block | caller uses `secrets: inherit` |
 | [`missing-secret-map`](#rule-missing-secret-map) | block | one of the four registry secrets is unmapped |
 | [`unknown-input`](#rule-unknown-input) | block | a `with:` key is not a v0.6 input (removed v0.5 inputs rejected by name) |
@@ -356,6 +357,19 @@ it is half of the required check context `security-scan / Security Gate`.
 A renamed id reports under a different context and the branch-protection
 ruleset silently no longer matches. Remediation: rename the job id back
 to `security-scan`.
+
+### Rule: decoy-gate-job
+
+Exactly one job in the caller may call `reusable-security-gate.yml` —
+whether that job actually runs or not (a job gated behind `if: false` is
+still a decoy). The callee-ref resolver (`plan` job) takes the first
+`uses:` match it finds in the caller file when trusted context
+(`github.job_workflow_sha`) isn't available, which is every
+`pull_request`-triggered call today; a second gate-calling job pinned to
+a different ref can make the real run resolve its own lint rules,
+restricted-PSS assertion, and blocking-set evaluator from the wrong
+commit. Remediation: delete the extra job, or delete the `uses:` line
+that isn't the real one.
 
 ### Rule: no-secrets-inherit
 
