@@ -19,6 +19,7 @@ header-less library `compose_facts` (shared with the lint rules); this
 file is the PEP 723 entry point over it.
 """
 
+import argparse
 import hashlib
 import json
 import sys
@@ -116,33 +117,27 @@ def derive_bom(compose_path: Path, plan: dict[str, Any]) -> dict[str, Any]:
 
 def main(argv: list[str]) -> int:
     """Derive and write the sibling documents: bake plan + annotated BOM."""
-    usage = "usage: derive_bom.py <compose-file> [--out-dir DIR] [--set KEY=VAL ...]"
-    args = list(argv)
-    out_dir = Path(".")
-    if "--out-dir" in args:
-        i = args.index("--out-dir")
-        try:
-            out_dir = Path(args[i + 1])
-        except IndexError:
-            raise SystemExit(usage)
-        del args[i : i + 2]
-    overrides: list[str] = []
-    while "--set" in args:
-        i = args.index("--set")
-        try:
-            overrides.append(args[i + 1])
-        except IndexError:
-            raise SystemExit(usage)
-        del args[i : i + 2]
-    if len(args) != 1:
-        raise SystemExit(usage)
-    compose_path = Path(args[0])
-    roles = classify_services(load_compose(compose_path))
-    plan = run_bake_print(compose_path, roles["targets"], overrides)
-    bom = derive_bom(compose_path, plan)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    (out_dir / "bake-plan.json").write_text(canonical_json(plan))
-    (out_dir / "bom.json").write_text(canonical_json(bom))
+    parser = argparse.ArgumentParser(
+        description="Derive the bake plan + annotated Image BOM from a Compose file."
+    )
+    parser.add_argument("compose_file", type=Path)
+    parser.add_argument("--out-dir", type=Path, default=Path("."))
+    parser.add_argument(
+        "--set",
+        dest="overrides",
+        action="append",
+        default=[],
+        metavar="KEY=VAL",
+        help="bake --set override, e.g. *.args.BUILDER_IMAGE=... (repeatable)",
+    )
+    args = parser.parse_args(argv)
+
+    roles = classify_services(load_compose(args.compose_file))
+    plan = run_bake_print(args.compose_file, roles["targets"], args.overrides)
+    bom = derive_bom(args.compose_file, plan)
+    args.out_dir.mkdir(parents=True, exist_ok=True)
+    (args.out_dir / "bake-plan.json").write_text(canonical_json(plan))
+    (args.out_dir / "bom.json").write_text(canonical_json(bom))
     print(f"bom sha256: {bom_sha256(bom)}")
     return 0
 
