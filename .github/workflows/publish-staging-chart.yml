@@ -38,6 +38,10 @@ jobs:
       - name: Set up Helm
         uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4  # v4
 
+      # For check-jsonschema (routes-contract validation below) — same
+      # pin composed-smoke.yml already uses for the same purpose.
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e  # v6
+
       # Pilot name is the chart_path basename (e.g. helm/rms-copilot ->
       # rms-copilot). Must match the umbrella's charts/<pilot>-*.tgz pin
       # naming convention (see hack/test-pilot-pin.sh) or downstream
@@ -93,15 +97,18 @@ jobs:
       #   1. `helm lint` — catches structurally broken charts before they're
       #      packaged and pushed.
       #   2. Non-empty `routes:` contract — every pilot must own its
-      #      own routes. The key may live top-level (`routes:`) or nested one
-      #      level under an engine-dependency key (e.g.
-      #      `fullstack-template.routes:`), depending on the pilot's own
-      #      chart structure, so the search walks the whole values.yaml tree
-      #      for any key named `routes` with a non-empty list value rather
-      #      than assuming one shape. Grounded against all 6 already-published
-      #      engine pilots (rms-copilot, contract-automation, data-science,
-      #      copa, osc-pipeline, dtic-rag) before landing: all 6 pass both
-      #      checks unchanged.
+      #      own routes. Enforced as a JSON Schema (below) rather than
+      #      hand-rolled tree-walking logic, validated by check-jsonschema
+      #      (github.com/python-jsonschema/check-jsonschema) rather than a
+      #      bespoke jq recursion — the contract is exactly two accepted
+      #      shapes (real fleet shapes only, not a hypothetical "any depth,
+      #      any key" search): top-level `routes:`, or nested one level
+      #      under the shared `fullstack-template` engine-dependency key.
+      #      Confirmed against every one of the 6 already-published engine
+      #      pilots' actual chart source (rms-copilot, contract-automation,
+      #      data-science, copa, osc-pipeline, dtic-rag) — all 6 use one of
+      #      these exact two shapes, none uses a different nested key or a
+      #      deeper path, so the schema is not narrower than real usage.
       - name: Validate chart shape (lint + routes contract)
         run: |
           set -euo pipefail
@@ -120,26 +127,28 @@ jobs:
             exit 1
           fi
 
-          ROUTES_COUNT="$(
-            yq -o=json '.' "$VALUES_FILE" | jq '
-              def find_routes:
-                if type == "object" then
-                  (to_entries[] | if .key == "routes" then .value else empty end),
-                  (to_entries[] | .value | find_routes)
-                elif type == "array" then
-                  .[] | find_routes
-                else
-                  empty
-                end;
-              [find_routes | select(type == "array" and length > 0)] | length
-            '
-          )"
+          # Built via single-quoted concatenation, not a heredoc: a heredoc's
+          # closing delimiter can't be indented to match this YAML block
+          # scalar's own required indentation, and dedenting it to column 0
+          # breaks the YAML parse instead.
+          SCHEMA="$RUNNER_TEMP/chart-shape.schema.json"
+          # Literal JSON keys/text inside single quotes, not shell expansions.
+          # shellcheck disable=SC2016
+          SCHEMA_JSON='{"$schema":"https://json-schema.org/draft/2020-12/schema",'
+          SCHEMA_JSON+='"title":"Pilot chart values.yaml routes contract",'
+          SCHEMA_JSON+='"description":"Every pilot chart must declare a non-empty routes list, either at the top level or nested one level under the shared fullstack-template engine-dependency key.",'
+          SCHEMA_JSON+='"type":"object",'
+          SCHEMA_JSON+='"anyOf":[{"required":["routes"],"properties":{"routes":{"type":"array","minItems":1}}},'
+          SCHEMA_JSON+='{"required":["fullstack-template"],"properties":{"fullstack-template":{"type":"object","required":["routes"],"properties":{"routes":{"type":"array","minItems":1}}}}}]}'
+          printf '%s' "$SCHEMA_JSON" > "$SCHEMA"
 
-          if [ "$ROUTES_COUNT" -eq 0 ]; then
-            echo "::error::chart-shape validation failed: no non-empty 'routes:' key found anywhere in ${VALUES_FILE}. Every pilot must declare its own routes (top-level 'routes:' or nested under an engine-dependency key, e.g. 'fullstack-template.routes:'). Fix: add a non-empty 'routes:' list to the chart's values.yaml before merging."
+          echo "::group::routes contract"
+          if ! uvx check-jsonschema --schemafile "$SCHEMA" "$VALUES_FILE"; then
+            echo "::error::chart-shape validation failed: '${VALUES_FILE}' does not declare a non-empty 'routes:' key (either top-level or nested under 'fullstack-template.routes:'). See the check-jsonschema output above for the exact violation. Fix: add a non-empty 'routes:' list to the chart's values.yaml before merging."
             exit 1
           fi
-          echo "OK: found ${ROUTES_COUNT} non-empty 'routes:' key(s) in ${VALUES_FILE}"
+          echo "::endgroup::"
+          echo "OK: ${VALUES_FILE} satisfies the routes contract"
 
       - name: Package chart
         id: package

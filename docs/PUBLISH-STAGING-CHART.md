@@ -106,24 +106,27 @@ in this workflow) that checks two things:
 1. **`helm lint <chart_path>`** must pass. Any lint error fails the job.
 2. **Non-empty `routes:` contract.** Every pilot chart must declare
    its own routes somewhere in `values.yaml` — either top-level (`routes:`)
-   or nested one level under an engine-dependency key (e.g.
-   `fullstack-template.routes:`), depending on the pilot's own chart
-   structure. The check walks the whole `values.yaml` tree for any key
-   named `routes` holding a non-empty list, so it tolerates either shape.
-   It is intentionally a simple presence check, not a full schema
-   validator — it exists to catch "totally forgot routes," not to enforce
-   route syntax.
+   or nested one level under the shared `fullstack-template`
+   engine-dependency key (`fullstack-template.routes:`). Enforced as a
+   JSON Schema (built inline in the step, `anyOf` the two shapes above),
+   validated by [`check-jsonschema`](https://github.com/python-jsonschema/check-jsonschema)
+   via `uvx` — not a hand-rolled recursive search. Confirmed against every
+   one of the 6 already-published engine pilots' actual chart source
+   (`rms-copilot`, `contract-automation`, `data-science`, `copa`,
+   `osc-pipeline`, `dtic-rag`): all 6 use one of these exact two shapes,
+   so the schema is exactly as permissive as real usage requires — not
+   narrower, and not a generic "any key named `routes` at any depth"
+   search either.
 
-Grounded against all 6 already-published engine pilots (`rms-copilot`,
-`contract-automation`, `data-science`, `copa`, `osc-pipeline`, `dtic-rag`)
-before landing: all 6 pass both checks unchanged, so this does not change
-behavior for any chart that was already publishing successfully.
+Grounded against all 6 already-published engine pilots before landing:
+all 6 pass both checks unchanged, so this does not change behavior for any
+chart that was already publishing successfully.
 
 On failure, the step prints an `::error::` annotation naming which check
 failed, why, and what to fix, e.g.:
 
 ```
-::error::chart-shape validation failed: no non-empty 'routes:' key found anywhere in helm/<pilot>/values.yaml. Every pilot must declare its own routes (top-level 'routes:' or nested under an engine-dependency key, e.g. 'fullstack-template.routes:'). Fix: add a non-empty 'routes:' list to the chart's values.yaml before merging.
+::error::chart-shape validation failed: 'helm/<pilot>/values.yaml' does not declare a non-empty 'routes:' key (either top-level or nested under 'fullstack-template.routes:'). See the check-jsonschema output above for the exact violation. Fix: add a non-empty 'routes:' list to the chart's values.yaml before merging.
 ```
 
 ## Failure behavior
