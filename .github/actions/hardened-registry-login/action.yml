@@ -1,11 +1,17 @@
-# Hardened-base login: authenticate to Chainguard (cgr.dev) when CGR_PULL_*
-# is set AND to Iron Bank (registry1.dso.mil) when IRONBANK_* is set — both
+# Hardened-base login: authenticate to Chainguard (cgr.dev) when
+# hardened-base-registry allows it (chainguard|both) AND CGR_PULL_* is set,
+# AND to Iron Bank (registry1.dso.mil) when hardened-base-registry allows it
+# (ironbank|both) AND IRONBANK_* is set — with the default "both", the two
 # sessions can be active at once, so a repo whose images span both registries
 # (e.g. a Chainguard primary with Iron Bank extras in the manifest) builds in
-# a single run. If only Iron Bank is configured, the primary's builder/runtime
-# optionally swap to the ironbank_* image inputs. With neither,
-# require_hardened_bases decides: fail (default) or warn and build on the
-# consumer-specified bases.
+# a single run. A caller that declares a single tier (chainguard or ironbank)
+# skips the other registry's login attempt entirely — no credential check, no
+# docker login call — so a pilot pinned to exactly one hardened registry never
+# burns retry/backoff time against one it doesn't use. If only Iron Bank is
+# configured (or the tier is ironbank-only), the primary's builder/runtime
+# optionally swap to the ironbank_* image inputs. With no attempted registry
+# authenticated, require_hardened_bases decides: fail (default) or warn and
+# build on the consumer-specified bases.
 #
 # FAILOVER SEMANTICS (must stay identical across every build matrix leg):
 # extras legs intentionally inherit the primary's failover behavior
@@ -15,10 +21,12 @@
 # specialize this action per leg.
 name: Login to hardened base registries
 description: >-
-  Docker-login to Chainguard (cgr.dev) and/or Iron Bank when their credential
-  pairs are present (with retry), resolve the effective builder/runtime base
-  images (Iron Bank failover only when CGR is absent and Iron Bank present),
-  and fail or warn per require-hardened-bases when neither credential exists.
+  Docker-login to Chainguard (cgr.dev) and/or Iron Bank, scoped to the
+  hardened-base-registry tier (chainguard | ironbank | both), when their
+  credential pairs are present (with retry; a failed login is never reported
+  as authenticated), resolve the effective builder/runtime base images (Iron
+  Bank failover only when CGR is absent and Iron Bank present), and fail or
+  warn per require-hardened-bases when no attempted registry authenticated.
   The primary-base failover behavior is shared verbatim by every build matrix
   leg (extras inherit the primary failover) — preserve bit-for-bit.
 inputs:
@@ -41,6 +49,10 @@ inputs:
   ironbank-registry:
     description: "Iron Bank registry host (inputs.ironbank_registry)."
     required: true
+  hardened-base-registry:
+    description: "Caller-declared hardened-base tier (inputs.hardened_base_registry): 'chainguard' attempts only the Chainguard login, 'ironbank' attempts only Iron Bank, 'both' (default) attempts both, matching prior behavior."
+    required: false
+    default: "both"
   builder-image:
     description: "Consumer-specified builder base image (inputs.builder_image)."
     required: true
@@ -82,6 +94,7 @@ runs:
         IB_BUILDER_IMAGE: ${{ inputs.ironbank-builder-image }}
         IB_RUNTIME_IMAGE: ${{ inputs.ironbank-runtime-image }}
         REQUIRE_HARDENED_BASES: ${{ inputs.require-hardened-bases }}
+        HARDENED_BASE_REGISTRY: ${{ inputs.hardened-base-registry }}
       run: |
         set -uo pipefail
         login_retry() { # <registry> <username> <token>
@@ -95,15 +108,31 @@ runs:
         builder="$BUILDER_IMAGE_IN"
         runtime="$RUNTIME_IMAGE_IN"
         cgr_ok=0; ib_ok=0
-        if [ -n "${CGR_PULL_TOKEN:-}" ]; then
-          login_retry cgr.dev "$CGR_PULL_USERNAME" "$CGR_PULL_TOKEN"
-          echo "Hardened bases: Chainguard (cgr.dev) authenticated"
-          cgr_ok=1
+        # Caller-declared tier gates which registry login(s) are even
+        # attempted — an unattempted registry never runs login_retry (no
+        # point risking rate-limit/lockout on one the pilot doesn't use).
+        attempt_cgr=0; attempt_ib=0
+        case "$HARDENED_BASE_REGISTRY" in
+          chainguard) attempt_cgr=1 ;;
+          ironbank) attempt_ib=1 ;;
+          both) attempt_cgr=1; attempt_ib=1 ;;
+          *) echo "::error::hardened-base-registry must be 'chainguard', 'ironbank', or 'both' (got '${HARDENED_BASE_REGISTRY}')" >&2; exit 1 ;;
+        esac
+        if [ "$attempt_cgr" = 1 ] && [ -n "${CGR_PULL_TOKEN:-}" ]; then
+          if login_retry cgr.dev "$CGR_PULL_USERNAME" "$CGR_PULL_TOKEN"; then
+            echo "Hardened bases: Chainguard (cgr.dev) authenticated"
+            cgr_ok=1
+          else
+            echo "::error::Chainguard (cgr.dev) login failed"
+          fi
         fi
-        if [ -n "${IRONBANK_TOKEN:-}" ]; then
-          login_retry "$IRONBANK_REGISTRY" "$IRONBANK_USERNAME" "$IRONBANK_TOKEN"
-          echo "Hardened bases: Iron Bank (${IRONBANK_REGISTRY}) authenticated"
-          ib_ok=1
+        if [ "$attempt_ib" = 1 ] && [ -n "${IRONBANK_TOKEN:-}" ]; then
+          if login_retry "$IRONBANK_REGISTRY" "$IRONBANK_USERNAME" "$IRONBANK_TOKEN"; then
+            echo "Hardened bases: Iron Bank (${IRONBANK_REGISTRY}) authenticated"
+            ib_ok=1
+          else
+            echo "::error::Iron Bank (${IRONBANK_REGISTRY}) login failed"
+          fi
         fi
         # Primary base failover: only swap the primary's builder/runtime to the
         # ironbank_* images when Chainguard is absent but Iron Bank is present
@@ -116,11 +145,16 @@ runs:
           echo "::notice::CGR_PULL_TOKEN not configured — using Iron Bank (${IRONBANK_REGISTRY}) for primary bases"
         fi
         if [ "$cgr_ok" = 0 ] && [ "$ib_ok" = 0 ]; then
+          case "$HARDENED_BASE_REGISTRY" in
+            chainguard) hint="add CGR_PULL_TOKEN/CGR_PULL_USERNAME (Chainguard)" ;;
+            ironbank) hint="add IRONBANK_TOKEN/IRONBANK_USERNAME (Iron Bank)" ;;
+            *) hint="add CGR_PULL_TOKEN/CGR_PULL_USERNAME (Chainguard) and/or IRONBANK_TOKEN/IRONBANK_USERNAME (Iron Bank)" ;;
+          esac
           if [ "$REQUIRE_HARDENED_BASES" = 'true' ]; then
-            echo "::error::No hardened-registry credentials — add CGR_PULL_TOKEN/CGR_PULL_USERNAME (Chainguard) and/or IRONBANK_TOKEN/IRONBANK_USERNAME (Iron Bank), or set require_hardened_bases: false to accept consumer-specified bases."
+            echo "::error::No successful hardened-registry login (hardened-base-registry=${HARDENED_BASE_REGISTRY}) — ${hint}, or set require_hardened_bases: false to accept consumer-specified bases."
             exit 1
           fi
-          echo "::warning::Proxy-scan posture: no hardened-registry credentials and require_hardened_bases=false — building on consumer-specified bases without a registry login. Vulnerability Scan will cover this gate-reachable image only; a green result is not proof the approved production image is clean."
+          echo "::warning::Proxy-scan posture: no successful hardened-registry login (hardened-base-registry=${HARDENED_BASE_REGISTRY}) and require_hardened_bases=false — building on consumer-specified bases without a registry login. Vulnerability Scan will cover this gate-reachable image only; a green result is not proof the approved production image is clean."
         fi
         echo "builder_image=$builder" >> "$GITHUB_OUTPUT"
         echo "runtime_image=$runtime" >> "$GITHUB_OUTPUT"

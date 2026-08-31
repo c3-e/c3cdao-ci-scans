@@ -7,11 +7,14 @@
 # surface + fan-in, and the smoke catalog + chart-derived probe): the
 # gate derives build facts from the consumer's canonical Compose file via
 # `docker buildx bake --print` (the published build plan / BOM) and executes
-# each build and scan itself. workflow_call inputs are the 7 v0.6 names
+# each build and scan itself. workflow_call inputs are the 8 v0.6 names
 # (compose_file, chart_path, values_local, release, namespace,
-# smoke_resources, image_only) + the 4 registry secrets; the v0.5
-# scan_image/contract_file/require_hardened_bases and base-image override
-# inputs are gone (base images + posture are gate config; see env below).
+# smoke_resources, image_only, hardened_base_registry) + the 4 registry
+# secrets; the v0.5 scan_image/contract_file/require_hardened_bases and
+# base-image override inputs are gone (base images + posture are gate
+# config; see env below). hardened_base_registry only scopes WHICH
+# hardened registry(s) the login step attempts — the fail-closed posture
+# itself is unconditional gate config, not a caller choice.
 #
 # Structure:
 #   plan              configuration pre-flight: v0.6 fail-closed convention
@@ -102,6 +105,10 @@ on:
         description: "When true, skip helm-check and cluster-smoke (and omit them from the Security Gate blocking set), for infra/image-only repos that build and vuln-scan images without a deployable app chart. Default false keeps app callers unchanged (helm + smoke still blocking)."
         type: boolean
         default: false
+      hardened_base_registry:
+        description: "Which hardened-base registry(s) the login step attempts: 'chainguard' (cgr.dev only), 'ironbank' (registry1.dso.mil only), or 'both' (default, attempts both — unchanged behavior for every existing caller). Declare the single tier your Dockerfile actually pins to, so the login step never retries/backs off against a registry you don't use. Does not change the fail-closed require_hardened_bases posture, only which registry(s) it checks."
+        type: string
+        default: both
     secrets:
       CGR_PULL_TOKEN:
         required: false
@@ -252,6 +259,7 @@ jobs:
           builder-image: ${{ env.GATE_BUILDER_IMAGE }}
           runtime-image: ${{ env.GATE_RUNTIME_IMAGE }}
           require-hardened-bases: ${{ env.GATE_REQUIRE_HARDENED_BASES }}
+          hardened-base-registry: ${{ inputs.hardened_base_registry }}
 
       # helm-check and cluster-smoke both run `helm dependency build` before
       # rendering the chart; plan's chart lint (lint_caller.py -> helm
@@ -405,6 +413,7 @@ jobs:
           builder-image: ${{ env.GATE_BUILDER_IMAGE }}
           runtime-image: ${{ env.GATE_RUNTIME_IMAGE }}
           require-hardened-bases: ${{ env.GATE_REQUIRE_HARDENED_BASES }}
+          hardened-base-registry: ${{ inputs.hardened_base_registry }}
 
       # bake resolves compose `context:` against the process cwd (spike
       # Finding A), so both the parity re-print and the execution below run

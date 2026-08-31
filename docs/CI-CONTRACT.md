@@ -101,10 +101,13 @@ Compose declaration is updated.
   override, or require any base-image build arg. Pin bases to a registry
   the gate can authenticate to per
   [appendix B](RUNBOOK.md#b-hardened-base-registry-login-matrix) if you
-  want hardened bases; the gate scans whatever the Dockerfile builds. The
-  Dockerfile is resolved from `build.context`/`build.dockerfile` against
-  the Compose file's directory; `dockerfile_inline` is unsupported and
-  fails closed.
+  want hardened bases; the gate scans whatever the Dockerfile builds.
+  Declare which registry(s) your Dockerfile actually pins to via
+  `hardened_base_registry` (`chainguard` | `ironbank` | `both`, default
+  `both`) so the login step doesn't retry/back off against a registry you
+  don't use. The Dockerfile is resolved from `build.context`/
+  `build.dockerfile` against the Compose file's directory;
+  `dockerfile_inline` is unsupported and fails closed.
 - **Committed literal args.** `build.args` must be a mapping of committed
   literal values. List syntax, null pass-through values, any environment
   interpolation in a build-affecting field, `build.secrets`, and
@@ -148,7 +151,7 @@ failure fails closed before any chart rule runs.
 ## Caller conventions
 
 The caller workflow is a thin pointer: data, never behavior. See
-[INPUTS.md](INPUTS.md) for the seven-input surface and
+[INPUTS.md](INPUTS.md) for the eight-input surface and
 [RUNBOOK.md](RUNBOOK.md) for onboarding steps.
 
 - The gate ref in `uses:` is pinned by a full 40-hex commit SHA; record
@@ -388,7 +391,7 @@ missing mapping.
 
 ### Rule: unknown-input
 
-The `with:` surface is exactly the seven v0.6 inputs; inputs removed at
+The `with:` surface is exactly the eight v0.6 inputs; inputs removed at
 this major version are rejected by name with migration guidance.
 Remediation: delete the key; see the removed-inputs table in
 [INPUTS.md](INPUTS.md).
