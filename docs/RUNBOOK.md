@@ -527,7 +527,7 @@ Every verdict names its rule and links a remediation anchor in the
 `smoke-target`, `ship-set`, `smoke-resource-unknown`,
 `suppression-format`, plus the warn-only
 `built-unscheduled`. Caller-structure rules: `gate-ref-pin`,
-`gate-job-id`, `no-secrets-inherit`, `missing-secret-map`,
+`gate-job-id`, `decoy-gate-job`, `no-secrets-inherit`, `missing-secret-map`,
 `unknown-input`, `unreadable-caller`.
 
 Remediation flow: read the verdict message (it names the offending

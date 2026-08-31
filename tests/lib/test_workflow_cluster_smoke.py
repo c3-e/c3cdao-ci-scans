@@ -52,7 +52,10 @@ def test_v05_image_artifact_retired():
 
 def test_cluster_smoke_needs_build_and_helm_check():
     smoke = _smoke()
-    assert set(smoke["needs"]) == {"build", "helm-check"}
+    # plan added directly so needs.plan.outputs.callee_ref is
+    # accessible (it was already an implicit, transitive dependency via
+    # build/helm-check — this doesn't change scheduling).
+    assert set(smoke["needs"]) == {"plan", "build", "helm-check"}
     condition = str(smoke["if"])
     assert "always()" in condition
     assert "inputs.image_only != true" in condition
