@@ -119,6 +119,7 @@ on:
 permissions:
   contents: read
   pull-requests: write
+  packages: write
 
 concurrency:
   group: security-scan-${{ github.ref }}
@@ -361,21 +362,17 @@ jobs:
     name: build (${{ matrix.target }})
     runs-on: ubuntu-latest
     needs: [plan]
-    # Job-level override: this is the ONLY job in this workflow that needs
-    # packages: write (to push the quarantine image when publish_images is
-    # true); every other job relies solely on the workflow-level permissions:
-    # block above. Per this repo's own documented convention (see
-    # docs/PUBLISH-STAGING-CHART.md's "caller gotcha"), job-level and
-    # workflow-level permissions: must never both be set for the SAME job —
-    # that combination silently produces startup_failure with zero jobs
-    # allocated. That convention is about a caller job that also `uses:` a
-    # reusable workflow; this job does not `uses:` anything (it's a plain
-    # job with steps), so a job-level permissions: block here is safe and
-    # simply narrows/extends this job's own token beyond the workflow-level
-    # contents: read / pull-requests: write grant.
-    permissions:
-      contents: read
-      packages: write
+    # packages: write lives in the workflow-level permissions: block above,
+    # not here. A live regression proved the documented "job-level and
+    # workflow-level permissions: must never both be set" convention is not
+    # scoped to caller jobs that `uses:` a reusable workflow, as a prior
+    # version of this comment assumed — ANY job-level permissions: block
+    # coexisting with the workflow-level block in this file produces
+    # startup_failure with zero jobs allocated and no error message,
+    # confirmed via bisection against a real dispatch run. build is the only
+    # job that needs packages: write (to push the quarantine image when
+    # publish_images is true); every job in this workflow, including this
+    # one, relies solely on the single workflow-level grant.
     strategy:
       fail-fast: false
       matrix:
