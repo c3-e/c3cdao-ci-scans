@@ -134,3 +134,54 @@ def test_smoke_step_keeps_advisory_gating_and_outcome_output():
         step["continue-on-error"]
         == "${{ vars.SECURITY_SCAN_BLOCKING != 'true' }}"
     )
+
+
+# --- helm test hook detection (temporary migration scaffolding) ----------------
+
+
+def _step(step_id: str) -> dict:
+    return next(s for s in _smoke()["steps"] if s.get("id") == step_id)
+
+
+def test_hook_detect_step_checks_the_already_rendered_file_not_a_rerender():
+    step = _step("hook-detect")
+    assert step["if"] == "steps.smoke.outcome == 'success'"
+    text = str(step.get("run", ""))
+    assert "/tmp/rendered-chart.yaml" in text
+    assert "helm template" not in text  # static check only, no re-render
+    assert "helm.sh/hook" in text
+
+
+def test_helm_test_and_probe_fallback_are_mutually_exclusive():
+    helm_test = _step("helm-test")
+    fallback = _step("probe-fallback")
+    assert helm_test["if"] == (
+        "steps.smoke.outcome == 'success' && steps.hook-detect.outputs.found == 'true'"
+    )
+    assert fallback["if"] == (
+        "steps.smoke.outcome == 'success' && steps.hook-detect.outputs.found == 'false'"
+    )
+
+
+def test_helm_test_step_runs_helm_test_with_logs():
+    text = str(_step("helm-test").get("run", ""))
+    assert "helm test" in text
+    assert "--logs" in text
+
+
+def test_probe_fallback_keeps_the_pre_migration_derive_and_probe_logic():
+    text = str(_step("probe-fallback").get("run", ""))
+    assert "derive_smoke_target.py" in text
+    assert "port-forward" in text or "kubectl -n" in text
+    assert "probe 200" in text
+
+
+def test_fallback_branches_carry_a_temporary_scaffolding_comment():
+    text = WORKFLOW.read_text()
+    assert "TEMPORARY migration scaffolding" in text
+
+
+def test_smoke_outcome_accounts_for_both_hook_and_fallback_branches():
+    text = str(_step("smoke_outcome"))
+    assert "steps.helm-test.outcome" in text
+    assert "steps.probe-fallback.outcome" in text

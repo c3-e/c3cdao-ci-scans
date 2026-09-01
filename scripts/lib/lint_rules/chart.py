@@ -144,13 +144,47 @@ def smoke_candidates(
     return backed, unbacked
 
 
-def smoke_target(rendered: list[dict[str, Any]]) -> list[Verdict]:
-    """Exactly one Service-backed HTTP readiness target must exist.
+def _has_test_hook(rendered: list[dict[str, Any]]) -> bool:
+    """True if any rendered resource declares a `helm.sh/hook` annotation
+    whose value contains "test" (e.g. `helm.sh/hook: test`).
 
-    Candidates are containers with an httpGet readinessProbe whose probe
-    port is routed by a Service selecting the workload's pods; the
-    post-deploy curl check needs one unambiguous target.
+    A chart carrying its own helm test hook is health-checked via
+    `helm test` instead of the derived-target port-forward+curl probe
+    (see reusable-security-gate.yml's cluster-smoke job and
+    composed-smoke.yml) — the backed-candidate count is irrelevant to
+    that path.
     """
+    for doc in rendered:
+        if not isinstance(doc, dict):
+            continue
+        annotations = (doc.get("metadata") or {}).get("annotations") or {}
+        if "test" in str(annotations.get("helm.sh/hook", "")):
+            return True
+    return False
+
+
+def smoke_target(rendered: list[dict[str, Any]]) -> list[Verdict]:
+    """Exactly one Service-backed HTTP readiness target must exist —
+    UNLESS the chart carries its own `helm.sh/hook: test` resource, in
+    which case this rule passes regardless of the backed-candidate count
+    (0, 1, or many).
+
+    TEMPORARY migration scaffolding: the hook-annotation exemption above
+    is temporary dual-path scaffolding for the fleet-wide migration to
+    `helm test` hooks, not a permanent design — see docs/CI-CONTRACT.md's
+    own note on this migration (tracked for deletion, alongside the
+    fallback branches in cluster-smoke and composed-smoke, once every
+    onboarded pilot has adopted a hook). `smoke_candidates()` and
+    derive_smoke_target.py are left untouched by this exemption: they
+    remain the enforcement/derivation mechanism for hook-less charts.
+
+    Candidates (for hook-less charts) are containers with an httpGet
+    readinessProbe whose probe port is routed by a Service selecting the
+    workload's pods; the post-deploy curl check needs one unambiguous
+    target.
+    """
+    if _has_test_hook(rendered):
+        return []
     candidates, unbacked = smoke_candidates(rendered)
     backed = [c["description"] for c in candidates]
     if len(backed) == 1:

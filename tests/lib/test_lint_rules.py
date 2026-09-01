@@ -536,6 +536,73 @@ def test_smoke_target_passes_on_exactly_one_service_backed_http_target():
     assert smoke_target(rendered) == []
 
 
+# --- smoke-target: temporary helm.sh/hook: test exemption -----------------------
+
+
+def hook_manifest(hook_value: str = "test") -> dict:
+    return {
+        "apiVersion": "v1",
+        "kind": "Pod",
+        "metadata": {
+            "name": "hook-test",
+            "annotations": {"helm.sh/hook": hook_value},
+        },
+    }
+
+
+def test_smoke_target_hook_present_zero_backed_candidates_passes():
+    # No workload/Service at all — a pure hook-only chart.
+    rendered = [hook_manifest()]
+    assert smoke_target(rendered) == []
+
+
+def test_smoke_target_hook_present_multiple_backed_candidates_passes():
+    rendered = [
+        deployment("web", [http_container("web")]),
+        deployment("api", [http_container("api")], labels={"app": "api"}),
+        service("web", {"app": "web"}, 80, 8080),
+        service("api", {"app": "api"}, 80, 8080),
+        hook_manifest(),
+    ]
+    assert smoke_target(rendered) == []
+
+
+def test_smoke_target_no_hook_multiple_candidates_still_blocks():
+    # No regression: a hook-less chart with multiple backed candidates
+    # still fails exactly as before.
+    rendered = [
+        deployment("web", [http_container("web")]),
+        deployment("api", [http_container("api")], labels={"app": "api"}),
+        service("web", {"app": "web"}, 80, 8080),
+        service("api", {"app": "api"}, 80, 8080),
+    ]
+    v = only_rule(smoke_target(rendered), "smoke-target")
+    assert "web" in v["message"] and "api" in v["message"]
+
+
+def test_smoke_target_no_hook_exactly_one_still_passes():
+    # No regression: a hook-less chart with exactly one backed candidate
+    # still passes exactly as before.
+    rendered = [
+        deployment("web", [http_container("web"), exec_container("worker")]),
+        service("web", {"app": "web"}, 80, 8080),
+    ]
+    assert smoke_target(rendered) == []
+
+
+def test_smoke_target_hook_annotation_without_test_substring_does_not_exempt():
+    # A non-test hook (e.g. pre-install) must not exempt a chart from the
+    # backed-candidate check.
+    rendered = [
+        deployment("web", [http_container("web")]),
+        deployment("api", [http_container("api")], labels={"app": "api"}),
+        service("web", {"app": "web"}, 80, 8080),
+        service("api", {"app": "api"}, 80, 8080),
+        hook_manifest("pre-install"),
+    ]
+    only_rule(smoke_target(rendered), "smoke-target")
+
+
 # --- ship-set invariant (S \ D must be a subset of B) ---------------------------
 
 

@@ -351,6 +351,53 @@ jobs:
               exit 1
             }
 
+      # TEMPORARY migration scaffolding: partitions this run's pilots by
+      # whether their OWN rendered subchart carries a helm.sh/hook: test
+      # resource — hook-bearing pilots are covered by ONE release-wide
+      # `helm test` below instead of the derived-target port-forward+curl
+      # loop (Helm runs every hook-annotated resource across the release
+      # in a single invocation — documented Helm behavior, not reinvented
+      # here); hook-less pilots keep the existing per-target loop,
+      # byte-for-byte unchanged, in the health-check step below. This is
+      # in-progress fleet migration scaffolding, not the intended
+      # permanent design — tracked for deletion, together with
+      # reusable-security-gate.yml's own hook-detect step and the
+      # matching exemption in scripts/lib/lint_rules/chart.py's
+      # smoke_target rule, once every onboarded pilot has adopted a hook.
+      # See docs/CI-CONTRACT.md and docs/COMPOSED-SMOKE.md.
+      - name: Partition composed pilots by helm.sh/hook test resources
+        id: partition
+        env:
+          NAMESPACE: ${{ inputs.namespace }}
+        run: |
+          set -euo pipefail
+          : > /tmp/hook-pilots.txt
+          : > /tmp/nohook-pilots.txt
+          while IFS= read -r pilot; do
+            name="$(jq -r '.name' <<<"$pilot")"
+            helm template umbrella-ci "charts/${name}" -n "${NAMESPACE}" > "/tmp/rendered-${name}.yaml"
+            if grep -qE 'helm\.sh/hook:.*test' "/tmp/rendered-${name}.yaml"; then
+              echo "${name}" >> /tmp/hook-pilots.txt
+            else
+              echo "${name}" >> /tmp/nohook-pilots.txt
+            fi
+          done < /tmp/pilots.jsonl
+          echo "hook-bearing pilot(s): $(wc -l < /tmp/hook-pilots.txt | tr -d ' ')"
+          echo "hook-less pilot(s): $(wc -l < /tmp/nohook-pilots.txt | tr -d ' ')"
+
+      - name: helm test hook-bearing pilots (single release-wide run)
+        id: helm-test
+        env:
+          NAMESPACE: ${{ inputs.namespace }}
+        run: |
+          set -uo pipefail
+          if [ ! -s /tmp/hook-pilots.txt ]; then
+            echo "no hook-bearing pilots this run; skipping helm test"
+            exit 0
+          fi
+          echo "hook-bearing pilots covered by this run: $(paste -sd, /tmp/hook-pilots.txt)"
+          helm test umbrella-ci -n "${NAMESPACE}" --logs
+
       # Small companion probe script: every fullstack-template pilot exposes
       # BOTH a frontend and a backend Service-backed HTTP readiness
       # target — reusable-security-gate.yml's own smoke-target lint rule
@@ -391,8 +438,29 @@ jobs:
           set -uo pipefail
           fail_any=0
           : > /tmp/pilot-results.tsv
+
+          # Hook-bearing pilots were already covered by the single
+          # release-wide `helm test` run above (partition step); record
+          # their result here without re-probing — TEMPORARY migration
+          # scaffolding, see the partition step's own comment.
+          if [ -s /tmp/hook-pilots.txt ]; then
+            while IFS= read -r name; do
+              chart_ref="$(jq -r --arg n "$name" 'select(.name == $n) | .chart_ref' /tmp/pilots.jsonl)"
+              if [ "${{ steps.helm-test.outcome }}" = "success" ]; then
+                printf '%s\t%s\tOK (helm test)\tn/a\n' "$name" "$chart_ref" >> /tmp/pilot-results.tsv
+              else
+                echo "::error::${name}: covered by helm test, which failed"
+                printf '%s\t%s\tFAIL (helm test)\tn/a\n' "$name" "$chart_ref" >> /tmp/pilot-results.tsv
+                fail_any=1
+              fi
+            done < /tmp/hook-pilots.txt
+          fi
+
           while IFS= read -r pilot; do
             name="$(jq -r '.name' <<<"$pilot")"
+            if grep -qxF "$name" /tmp/hook-pilots.txt; then
+              continue  # covered above by the release-wide helm test
+            fi
             chart_ref="$(jq -r '.chart_ref' <<<"$pilot")"
             echo "=== health-checking pilot: ${name} ==="
             if ! helm template umbrella-ci "charts/${name}" \

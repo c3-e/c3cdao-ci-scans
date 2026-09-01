@@ -66,15 +66,43 @@ a personal PAT.
 6. `helm install`s the caller's own umbrella chart with one
    `--set-string {repository,tag,pullPolicy}` triple per declared image,
    derived from each `pilots[].images[].values_path`.
-7. Health-checks EVERY composed pilot, not just one: for each pilot,
-   renders that pilot's own vendored subchart alone and reuses
-   `derive_smoke_target.py` to find its one Service-backed HTTP readiness
-   target, then `kubectl port-forward` + `curl`s it — the same probe
-   `cluster-smoke` runs once per caller, just once PER PILOT here.
-8. Emits a per-pilot job-summary table (pilot, chart ref, result, probe)
+7. Partitions the composed pilots by whether each one's own rendered
+   subchart carries a `helm.sh/hook: test` resource (see [Helm test hook
+   migration](#helm-test-hook-migration-temporary) below).
+8. Health-checks EVERY composed pilot, not just one:
+   - Hook-bearing pilots are covered by ONE release-wide `helm test
+     umbrella-ci -n <namespace> --logs` run — Helm runs every
+     hook-annotated resource across the release in a single invocation,
+     regardless of which pilot(s) declared them, so this happens once per
+     run rather than once per hook-bearing pilot.
+   - Hook-less pilots keep the pre-migration path: renders that pilot's
+     own vendored subchart alone and reuses `smoke_candidates()` (the
+     same underlying function `derive_smoke_target.py` wraps, called
+     directly here since a multi-component pilot commonly yields more
+     than the CLI's "exactly one" constraint) to find EVERY
+     Service-backed HTTP readiness target it exposes, then `kubectl
+     port-forward` + `curl`s each one — the same probe mechanic
+     `cluster-smoke` runs, just per pilot here instead of once per
+     caller.
+9. Emits a per-pilot job-summary table (pilot, chart ref, result, probe)
    — matching this repo's established job-summary convention
    (`publish-staging-chart.yml`'s own summary block), not a single
-   aggregate pass/fail line.
+   aggregate pass/fail line. Hook-bearing pilots are recorded as
+   `OK (helm test)` / `FAIL (helm test)`, not re-probed.
+
+## Helm test hook migration (temporary)
+
+**This is in-progress fleet migration scaffolding, not the intended
+permanent design.** The hook-bearing/hook-less partition above exists only
+because not every onboarded pilot has adopted a `helm.sh/hook: test`
+resource yet. It is the exact same migration `reusable-security-gate.yml`'s
+own `cluster-smoke` job is going through (see that workflow's own
+`hook-detect` step) and the same exemption
+`scripts/lib/lint_rules/chart.py`'s `smoke_target` rule carries (see
+[CI-CONTRACT.md](CI-CONTRACT.md#rule-smoke-target)). Once every pilot this
+workflow composes has a hook, the hook-less per-target loop, the partition
+step, and the corresponding lint exemption will all be deleted — this is
+not a feature to build further on, it is scaffolding to remove.
 
 ## Worked example
 
@@ -116,7 +144,8 @@ shareable GHA run URL in place of a laptop screenshot.
 ## Failure behavior
 
 Any pulled chart/image that fails to resolve, any smoke-catalog module
-that fails readiness, a failed `helm install --wait`, or any pilot's
+that fails readiness, a failed `helm install --wait`, a failed
+`helm test` run (for hook-bearing pilots), or any hook-less pilot's
 health-check returning a non-200 fails the job closed — visible as a red
 step on the run's Checks tab. `job summary` still renders a per-pilot
 table on `if: always()` so a partial failure (e.g. pilot 3 of 5 failing

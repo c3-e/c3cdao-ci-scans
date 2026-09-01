@@ -185,7 +185,7 @@ else blocks the run before any build starts.
 | [`chart-undeclared`](#rule-chart-undeclared) | block | `image_only` is true but a Helm chart exists anywhere in the repo |
 | [`chart-resolve`](#rule-chart-resolve) | block | `helm template` fails on the declared chart (e.g. unresolved dependency) |
 | [`chart-readiness`](#rule-chart-readiness) | block | a rendered workload container lacks readiness |
-| [`smoke-target`](#rule-smoke-target) | block | no single Service-backed HTTP readiness target |
+| [`smoke-target`](#rule-smoke-target) | block | no single Service-backed HTTP readiness target (exempt if the chart carries a `helm.sh/hook: test` resource — see the rule's own note) |
 | [`ship-set`](#rule-ship-set) | block | a rendered image is neither built nor a declared dependency |
 | [`built-unscheduled`](#rule-built-unscheduled) | warn | a built tag is never scheduled by the chart |
 | [`smoke-resource-unknown`](#rule-smoke-resource-unknown) | block | `smoke_resources` names a module outside the catalog |
@@ -316,6 +316,20 @@ of the pod labels; probe port equals the Service `targetPort`, falling
 back to `port`; named ports must match spelling). Zero or multiple
 targets block, naming the candidates. Remediation: expose exactly one
 HTTP readiness target through a matching Service.
+
+**Hook exemption (temporary, in-progress fleet migration — not the
+intended permanent design):** if any rendered resource carries a
+`helm.sh/hook` annotation whose value contains `test`, this rule passes
+regardless of the backed-candidate count (0, 1, or many). A chart in this
+state is health-checked via `helm test` instead of the derived-target
+port-forward+curl probe — see `reusable-security-gate.yml`'s
+`cluster-smoke` job and `composed-smoke.yml`'s own equivalent hook
+partition, both documented below. `smoke_candidates()` and
+`derive_smoke_target.py` are unchanged by this exemption and remain the
+enforcement/derivation mechanism for hook-less charts. This dual-path
+state is fleet migration scaffolding: it will be deleted, and this rule
+will go back to unconditionally requiring exactly one backed candidate,
+once every onboarded pilot has adopted a `helm test` hook.
 
 ### Rule: ship-set
 

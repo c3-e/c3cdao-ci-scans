@@ -985,7 +985,7 @@ jobs:
       - name: Set up Helm
         uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4  # v4
 
-      - name: provision catalog + helm deploy + derived health smoke
+      - name: provision catalog + helm deploy
         id: smoke
         # Warn-only: advisory unless SECURITY_SCAN_BLOCKING=true. Step outcome is
         # recorded below so security-gate can fail closed even when this step
@@ -1056,19 +1056,12 @@ jobs:
 
           helm dependency build "./${HELM_CHART_PATH}" || fail "helm dependency build failed"
 
-          # Chart-derived probe target: derive from the local-values
-          # render, the same Service-backed HTTP readiness semantics the
-          # smoke-target lint rule enforced in plan, so a lint-clean chart
-          # always derives exactly one target.
+          # Rendered once here (local-values render); consumed both by the
+          # helm.sh/hook: test detection step below and, for hook-less
+          # charts, by the fallback smoke-target derivation step.
           helm template "${HELM_RELEASE_NAME}" "./${HELM_CHART_PATH}" \
             -f "${HELM_VALUES_LOCAL_FILE}" > /tmp/rendered-chart.yaml \
-            || fail "helm template failed for smoke-target derivation"
-          target_json=$(uv run .ci-scans/scripts/lib/derive_smoke_target.py \
-            /tmp/rendered-chart.yaml) || fail "smoke-target derivation failed"
-          echo "derived smoke target: ${target_json}"
-          PROBE_SVC=$(echo "$target_json" | jq -re .service) || fail "derived target missing service"
-          PROBE_PORT=$(echo "$target_json" | jq -re .port) || fail "derived target missing port"
-          PROBE_PATH=$(echo "$target_json" | jq -re .path) || fail "derived target missing path"
+            || fail "helm template failed for hook detection / smoke-target derivation"
 
           helm install "${HELM_RELEASE_NAME}" "./${HELM_CHART_PATH}" \
             -n "${NAMESPACE}" \
@@ -1084,6 +1077,65 @@ jobs:
               done
               fail "helm install failed"
             }
+          echo "helm install OK"
+
+      # Static check on the render `smoke` already produced above (NOT a
+      # re-render) — TEMPORARY migration scaffolding: this is the fleet
+      # migration to `helm test` hooks in progress, not a permanent
+      # dual-path design. Tracked for deletion, together with the two
+      # branches below and their sibling in composed-smoke.yml and the
+      # matching exemption in scripts/lib/lint_rules/chart.py's
+      # smoke_target rule, once every onboarded pilot has adopted a hook.
+      - name: "Detect helm.sh/hook: test resources"
+        id: hook-detect
+        if: steps.smoke.outcome == 'success'
+        run: |
+          set -uo pipefail
+          if grep -qE 'helm\.sh/hook:.*test' /tmp/rendered-chart.yaml; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+            echo "helm.sh/hook: test resource(s) detected in rendered chart"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            echo "no helm.sh/hook: test resource detected; falling back to the derived-target probe"
+          fi
+
+      - name: helm test (hook-based health check)
+        id: helm-test
+        if: steps.smoke.outcome == 'success' && steps.hook-detect.outputs.found == 'true'
+        continue-on-error: ${{ vars.SECURITY_SCAN_BLOCKING != 'true' }}
+        env:
+          HELM_RELEASE_NAME: ${{ inputs.release }}
+        run: |
+          set -uo pipefail
+          helm test "${HELM_RELEASE_NAME}" -n "${NAMESPACE}" --logs
+
+      # TEMPORARY migration scaffolding: this derived-target port-forward
+      # + curl fallback exists only for charts that have not yet adopted
+      # a helm.sh/hook: test resource. It is tracked for deletion, along
+      # with the hook-detect step above, composed-smoke.yml's own
+      # equivalent branch, and the matching exemption in
+      # scripts/lib/lint_rules/chart.py's smoke_target rule, once every
+      # onboarded pilot has migrated to a hook — see docs/CI-CONTRACT.md.
+      # Code below this comment is byte-for-byte the pre-migration logic,
+      # just moved into its own conditional step.
+      - name: Chart-derived HTTP probe (no-hook fallback)
+        id: probe-fallback
+        if: steps.smoke.outcome == 'success' && steps.hook-detect.outputs.found == 'false'
+        continue-on-error: ${{ vars.SECURITY_SCAN_BLOCKING != 'true' }}
+        run: |
+          set -uo pipefail
+          fail() { echo "::warning::cluster-smoke: $1"; exit 1; }
+
+          # Chart-derived probe target: derive from the local-values
+          # render, the same Service-backed HTTP readiness semantics the
+          # smoke-target lint rule enforced in plan, so a lint-clean chart
+          # always derives exactly one target.
+          target_json=$(uv run .ci-scans/scripts/lib/derive_smoke_target.py \
+            /tmp/rendered-chart.yaml) || fail "smoke-target derivation failed"
+          echo "derived smoke target: ${target_json}"
+          PROBE_SVC=$(echo "$target_json" | jq -re .service) || fail "derived target missing service"
+          PROBE_PORT=$(echo "$target_json" | jq -re .port) || fail "derived target missing port"
+          PROBE_PATH=$(echo "$target_json" | jq -re .path) || fail "derived target missing path"
 
           # Fixed high local port: the derived Service port may be <1024
           # (e.g. 80), which the unprivileged runner user cannot bind.
@@ -1103,9 +1155,15 @@ jobs:
         if: always()
         run: |
           ok=false
-          if [ "${{ steps.smoke.outcome }}" = "success" ]; then ok=true; fi
+          if [ "${{ steps.smoke.outcome }}" = "success" ]; then
+            if [ "${{ steps.hook-detect.outputs.found }}" = "true" ]; then
+              [ "${{ steps.helm-test.outcome }}" = "success" ] && ok=true
+            else
+              [ "${{ steps.probe-fallback.outcome }}" = "success" ] && ok=true
+            fi
+          fi
           echo "ok=$ok" >> "$GITHUB_OUTPUT"
-          echo "cluster-smoke step outcome=${{ steps.smoke.outcome }} smoke_ok=$ok"
+          echo "cluster-smoke step outcome=${{ steps.smoke.outcome }} hook_found=${{ steps.hook-detect.outputs.found }} helm_test=${{ steps.helm-test.outcome }} probe_fallback=${{ steps.probe-fallback.outcome }} smoke_ok=$ok"
 
   # --------------------------------------------------------------------------
   # Image scan: one matrixed job over the plan job's derived matrix, the
