@@ -31,19 +31,24 @@ close.
 | Input | Type | Default | Where the value comes from |
 | --- | --- | --- | --- |
 | `chart_path` | string | *(required)* | Path (relative to the calling repo root) of the Helm chart to package and push on merge. The pilot name (used in the staging path and pin naming convention) is derived as this path's basename. |
-| `publish_images` | boolean | `false` | When `true` (and the merge's base branch is `ci-scans` or `main`, narrower than the chart trigger since image publishes are a heavier, more security-sensitive write), the `publish-images-deferred` job retags each declared `images[]` tuple's **already-built, already-scanned** quarantine image into `images-staging` by digest. It does **not** build anything; see [Digest-verified quarantine publish](#digest-verified-quarantine-publish) below for the full mechanism and its same-repo-PR requirement. Default `false` keeps this input inert. |
-| `images` | string (JSON) | `"[]"` | JSON array of image build tuples to publish when `publish_images` is `true`: `{"name","target","dockerfile","context","build_args"?}`. `name` becomes the `<image-name>` path segment (see [Output](#output) below). `target` is **required**: the exact bake target name the same PR's `reusable-security-gate.yml` `build` job used for this image (the name its matrix fans out over), used to reconstruct the quarantine ref this job retags from; a mismatch here 404s the quarantine lookup and fails the job closed. `dockerfile`/`context`/`build_args` are retained in the tuple shape for documentation/audit purposes only; this job no longer builds, so it does not read them (a future cleanup may drop them once the migration is complete; see [Digest-verified quarantine publish](#digest-verified-quarantine-publish)). Ignored when `publish_images` is `false`. |
+| `publish_images` | boolean | `false` | When `true` (and the merge's base branch is `ci-scans` or `main`, narrower than the chart trigger since image publishes are a heavier, more security-sensitive write), the `derive-publish-targets` job derives the publish target list from `compose_file` and `publish-images-deferred` retags each target's **already-built, already-scanned** quarantine image into `images-staging` by digest. It does **not** build anything; see [Single source of truth for publish targets](#single-source-of-truth-for-publish-targets) and [Digest-verified quarantine publish](#digest-verified-quarantine-publish) below. Default `false` keeps this input inert. |
+| `compose_file` | string | `docker-compose.yml` | Path (relative to the calling repo root) of the canonical Compose file `publish_images` derives the publish target list from — the same file (and the same derivation) `reusable-security-gate.yml`'s own `plan` job uses. Only read when `publish_images` is `true`. Keep in sync with the gate caller's own `compose_file` when a repo's Compose file lives at a non-default path. |
+| `publish_targets` | string (CSV) | `""` | Optional allow-list of compose build target names to publish, e.g. `"backend,frontend"`. Default `""` publishes every non-local build target `compose_file` declares — the common case. Set this only to exclude a built target from `images-staging` (e.g. a build-only/test target the chart never ships). Naming a target `compose_file` doesn't declare fails the job closed, listing the real target set. |
 | `require_hardened_bases` | boolean | `false` | Set `true` if any declared image's Dockerfile `FROM`s a hardened base (Chainguard's `cgr.dev` and/or Iron Bank's `registry1.dso.mil`) and needs the corresponding credential secret pair to pull it during build. Passed straight through to this repo's [`hardened-registry-login`](../.github/actions/hardened-registry-login/action.yml) composite action's `require-hardened-bases` input, the same mechanism `reusable-security-gate.yml`'s `plan`/`build` jobs already use, reused here instead of a second, narrower login step. Fails closed (job errors) when `true` and neither credential pair is configured; when `false` (default), builds proceed on the Dockerfile's declared bases with no hardened-registry login attempt. (Renamed from this input's earlier, Chainguard-only `cgr_pull_required` name once the per-repo survey found several pilots (`geoint`, `pipeassist`, `dtic`'s fallback path) needing Iron Bank instead of or in addition to Chainguard.) |
 
-**Cross-repo gotcha (worth checking before filling in `images:` for any pilot):**
-some pilots maintain multiple wrapper-chart copies (e.g. `c3cdao-cra` has both
+**Retired:** the earlier `images` input (a hand-typed JSON array of
+`{"name","target","dockerfile","context","build_args"?}` tuples) is gone.
+See [Single source of truth for publish targets](#single-source-of-truth-for-publish-targets)
+below for why, and update any existing caller still declaring `images:` to
+the `compose_file`/`publish_targets` shape above.
+
+**Cross-repo gotcha (worth checking before onboarding any pilot):** some
+pilots maintain multiple wrapper-chart copies (e.g. `c3cdao-cra` has both
 an older `helm/aca` and the actually-consumed `helm/contract-automation`).
-Always source image build coordinates (Dockerfile paths, build contexts,
-build args) from the chart the umbrella's `Chart.yaml` actually depends
-on. Confirm which one that is via that pilot repo's
-`publish-staging-chart-caller.yml`'s `chart_path` input, not by guessing from
-directory names. A wrong guess here silently builds/publishes images for a
-chart nobody consumes.
+Always point `chart_path` at the chart the umbrella's `Chart.yaml` actually
+depends on, not the one that merely looks canonical by directory name — a
+wrong guess here silently publishes a chart (and, when `publish_images` is
+set, images) nobody consumes.
 
 ## Secrets
 
@@ -80,7 +85,7 @@ Chart artifact:
 oci://ghcr.io/c3-e/charts-staging/<pilot>:0.0.0-mech.<pr-number>.<short-sha>
 ```
 
-Image artifacts (one per `images[]` tuple, only when `publish_images: true`):
+Image artifacts (one per derived publish target, only when `publish_images: true`):
 
 ```
 ghcr.io/c3-e/images-staging/<pilot>/<image-name>:0.0.0-mech.<pr-number>.<short-sha>
@@ -97,6 +102,48 @@ release: `0.0.0-mech.*` cannot be mistaken for, or collide with, a real
 release tag, and `charts-staging/`/`images-staging/` are distinct registry
 namespaces from any future real publish target. These are pre-merge test
 artifacts, not releases.
+
+## Single source of truth for publish targets
+
+Before this, `images[]` had to be hand-declared in the caller, matched by
+its `target` field to whichever compose-target name `reusable-security-gate.yml`'s
+own build matrix (derived from the SAME repo's compose file) used — the
+same image list declared twice, once implicitly via the compose file and
+once explicitly in the caller's JSON, with no check that the two agreed.
+A typo or a forgotten update to either side either 404s the quarantine
+lookup at merge time or silently omits an image, discovered late.
+
+`publish_images: true` now runs a `derive-publish-targets` job first: it
+checks out the merge commit, then runs the exact same derivation
+`reusable-security-gate.yml`'s own `plan` job runs (`derive_bom.py` over
+`compose_file`, i.e. `docker buildx bake --print` plus the non-local
+`build:` service classification) to get the authoritative list of build
+target names. `publish-images-deferred`'s matrix is populated directly
+from that list (optionally narrowed by `publish_targets`) — never
+hand-typed, so it cannot drift from the gate's own build matrix by
+construction (a real config file drift, e.g. a compose service added on
+one side but not reflected on the other, is a separate, already-tracked
+concern — see Issue H, chart/build-identity verification — not something
+this reintroduces).
+
+This is a **local re-derivation from the checked-out compose file**, not
+a fetch of `reusable-security-gate.yml`'s own `plan-bom` artifact:
+that artifact is produced in a *different* GitHub Actions workflow run
+(the gate fires on `pull_request`; this workflow fires on
+`pull_request`/`closed`), so consuming it here would need
+`actions/download-artifact`'s cross-run mode (`github-token` + `run-id`,
+and a new `actions: read` grant on every caller — the same "missing
+grant" bug class the caller lint hardens against elsewhere) plus a
+run lookup by head SHA that has no unambiguous answer when a PR's gate
+ran more than once. Re-deriving locally needs neither: `derive_bom.py`
+is a pure function of the checked-out compose file, so there's nothing
+to look up.
+
+The `name` used for the `images-staging/<pilot>/<image-name>` path
+segment (see [Output](#output) above) is now always the target name
+itself — every documented and live caller already set them identically
+before this change, so this is not an observed behavior change for any
+onboarded pilot, only a removed opportunity for the two to diverge.
 
 ## Digest-verified quarantine publish
 
@@ -126,7 +173,10 @@ rebuild fallback exists.
    (`github.repository`, the PR number, and
    `github.event.pull_request.head.sha`, deliberately the PR's head SHA
    rather than the merge commit SHA, since the quarantine push happened
-   before any merge existed) plus the `images[]` tuple's `target` field.
+   before any merge existed) plus one target name from
+   `derive-publish-targets`' compose-derived list (see
+   [Single source of truth for publish targets](#single-source-of-truth-for-publish-targets)
+   above).
 3. It runs `docker buildx imagetools inspect` against that ref. If the
    image is missing or has expired out of the quarantine namespace's own
    GHCR retention, the job fails closed:
@@ -181,17 +231,14 @@ jobs:
     with:
       chart_path: helm/rms-copilot
       publish_images: true
-      images: |
-        [
-          {"name": "frontend", "target": "frontend", "dockerfile": "Dockerfile.frontend", "context": "."},
-          {"name": "backend", "target": "backend", "dockerfile": "Dockerfile.backend", "context": "."}
-        ]
+      compose_file: docker-compose.yml  # same file reusable-security-gate.yml's own compose_file input points at
 ```
 
-`target` must equal the bake target name the same PR's
-`reusable-security-gate.yml` `build` job matrixed over for this image (see
-[Digest-verified quarantine publish](#digest-verified-quarantine-publish));
-it usually, but not necessarily, matches `name`.
+No `images:` array to hand-maintain: `derive-publish-targets` derives the
+target list (here, `frontend` and `backend`) directly from `compose_file`'s
+own non-local `build:` services — the same names
+`reusable-security-gate.yml`'s `build` job matrixed over for this PR, by
+construction (see [Single source of truth for publish targets](#single-source-of-truth-for-publish-targets)).
 
 Produces, from one merge (PR `#94`, merge commit `c6a53e6...`):
 
@@ -201,61 +248,30 @@ ghcr.io/c3-e/images-staging/rms-copilot/frontend:0.0.0-mech.94.c6a53e6
 ghcr.io/c3-e/images-staging/rms-copilot/backend:0.0.0-mech.94.c6a53e6
 ```
 
-## Worked example: images with `build_args` (shared/generic Dockerfile)
+## Worked example: publishing only a subset of built targets
 
-For a pilot whose Dockerfile is a shared, generic per-app template, not
-baked with the app's identity (e.g. `cra`'s `aca-backend`/
-`aca-frontend`, built from the shared `containers/fullstack-backend`/
-`containers/fullstack-frontend` engine Dockerfiles), supply the per-app
-values as `build_args`. Any tuple that needs no build args (like
-`backend` below) can simply omit the field:
+For a repository whose Compose file builds a target the chart never
+ships (e.g. a build-only/test image — see the `built-unscheduled` lint
+warning on `reusable-security-gate.yml`), narrow `publish_targets` to
+just the targets that should actually land in `images-staging`:
 
 ```yaml
-      images: |
-        [
-          {
-            "name": "aca-backend",
-            "target": "aca-backend",
-            "dockerfile": "containers/fullstack-backend/Dockerfile",
-            "context": ".",
-            "build_args": {
-              "APP_PATH": "apps/aca/backend",
-              "APP_PACKAGE": "aca-backend",
-              "APP_MODULE": "app.main:app",
-              "APP_PORT": "8000"
-            }
-          },
-          {
-            "name": "aca-frontend",
-            "target": "aca-frontend",
-            "dockerfile": "containers/fullstack-frontend/Dockerfile",
-            "context": ".",
-            "build_args": {
-              "APP_PATH": "apps/aca/frontend",
-              "APP_FILTER": "aca",
-              "VITE_API_URL": "http://localhost",
-              "VITE_MOCK_AUTH": "true",
-              "VITE_GIT_SHA": "0.0.0-mech.94.c6a53e6"
-            }
-          }
-        ]
+      publish_images: true
+      compose_file: docker-compose.yml
+      publish_targets: "backend,frontend"  # excludes e.g. a "test-runner" build target
 ```
 
-**`build_args`/`dockerfile`/`context` no longer drive a build in this
-workflow** (see [Digest-verified quarantine publish](#digest-verified-quarantine-publish):
+Naming a target `compose_file` doesn't declare (a typo, or one that's
+excluded via `profiles: [local]`) fails `derive-publish-targets` closed,
+citing the real available target list — never a silent no-op.
+
+Build args, Dockerfile paths, and build contexts are never declared here:
 `publish-images-deferred` only retags an already-built quarantine image
-by digest). They remain useful as documentation of how the image was
-actually built, and matter to the one place that still builds it: the
-same PR's `reusable-security-gate.yml` Compose file / bake target
-definition, the real source of truth for build args, base image, and
-Dockerfile path. On `VITE_API_URL` (and any other frontend-runtime-config
-build arg): that build only proves the image **builds and publishes**,
-not that its baked-in runtime config is correct for any particular
-consumer. A staging-only placeholder value (e.g. `http://localhost`)
-works fine there; a downstream composed-smoke consumer that needs the
-real API URL at runtime overrides it through its own mechanism (e.g. an
-env var or config map at `helm install` time) instead of rebuilding the
-image with a different value.
+by digest (see [Digest-verified quarantine publish](#digest-verified-quarantine-publish)),
+so it has no need to know them. The same PR's `reusable-security-gate.yml`
+Compose file / bake target definition is the one and only place that
+actually builds the image, and the one and only place any of that detail
+needs to live.
 
 ## Worked example: `require_hardened_bases` (Chainguard and/or Iron Bank)
 
@@ -278,11 +294,7 @@ jobs:
       chart_path: helm/rms-copilot
       publish_images: true
       require_hardened_bases: true
-      images: |
-        [
-          {"name": "backend", "target": "backend", "dockerfile": "apps/psp7-gateway/backend/Dockerfile", "context": "apps/psp7-gateway/backend"},
-          {"name": "psp7-gateway-frontend", "target": "psp7-gateway-frontend", "dockerfile": "apps/psp7-gateway/frontend/Dockerfile", "context": "."}
-        ]
+      compose_file: docker-compose.yml
     secrets:
       IRONBANK_USERNAME: ${{ secrets.IRONBANK_USERNAME }}
       IRONBANK_TOKEN: ${{ secrets.IRONBANK_TOKEN }}
@@ -399,8 +411,6 @@ without blocking. Everything else blocks the run.
 |---|---|---|
 | [`publish-ref-pin`](#rule-publish-ref-pin) | block | `uses:` is not pinned by a full 40-hex commit SHA |
 | [`publish-decoy-job`](#rule-publish-decoy-job) | block | more than one job in the caller calls `publish-staging-chart.yml` |
-| [`publish-images-target-required`](#rule-publish-images-target-required) | block | an `images[]` tuple has no non-empty `target` field |
-| [`publish-images-unparseable`](#rule-publish-images-unparseable) | block | `images:` is not a valid JSON array while `publish_images` is `true` |
 | [`publish-packages-write-missing`](#rule-publish-packages-write-missing) | block | `publish_images: true` is set but no `permissions:` block grants `packages: write` |
 | [`publish-permissions-both-levels`](#rule-publish-permissions-both-levels) | block | `permissions:` is declared at both the workflow level and the calling job level |
 | [`publish-chart-routes-missing`](#rule-publish-chart-routes-missing) | warn | the chart's `values.yaml` declares no non-empty `routes:` key |
@@ -421,21 +431,6 @@ workflow's own "Resolve callee (ci-scans) ref" step takes the FIRST
 `reusable-security-gate.yml`'s resolver uses) — a second, differently
 pinned job calling this workflow is a decoy vector against that resolver,
 exactly the reasoning behind `lint_caller.py`'s `decoy-gate-job` rule.
-
-### Rule: publish-images-target-required
-
-Every tuple in the `images[]` JSON array must carry a non-empty `target`
-field: the exact bake target name the same PR's `reusable-security-gate.yml`
-`build` job used for this image. Checked only when `publish_images` is
-`true` (an unused `images:` value is inert). A missing `target` means the
-quarantine-ref lookup 404s at merge time — this used to be discovered only
-then; now it's caught at lint time.
-
-### Rule: publish-images-unparseable
-
-`images:` must parse as a JSON array. Checked only when `publish_images` is
-`true` — `publish-images-deferred`'s matrix expression
-(`${{ fromJSON(inputs.images) }}`) fails at merge time on anything else.
 
 ### Rule: publish-packages-write-missing
 

@@ -44,48 +44,6 @@ def test_ref_pin_accepts_full_sha():
     assert "publish-ref-pin" not in _rule_ids(verdicts)
 
 
-# --- publish-images-target-required ----------------------------------------
-
-
-def test_images_target_required_flags_missing_target():
-    verdicts = lint_caller_workflow(FIXTURES / "bad-missing-target.yml")
-    assert "publish-images-target-required" in _rule_ids(verdicts)
-
-
-def test_images_target_required_passes_with_target():
-    verdicts = lint_caller_workflow(FIXTURES / "clean-with-images.yml")
-    assert "publish-images-target-required" not in _rule_ids(verdicts)
-
-
-def test_images_target_rule_inert_when_publish_images_false(tmp_path):
-    caller = tmp_path / "caller.yml"
-    caller.write_text(
-        "name: Publish Staging Chart\n"
-        "on:\n  pull_request:\n    types: [closed]\n"
-        "permissions:\n  contents: read\n"
-        "jobs:\n"
-        "  publish-staging-chart:\n"
-        "    uses: c3-e/c3cdao-ci-scans/.github/workflows/"
-        "publish-staging-chart.yml@" + "0" * 40 + "\n"
-        "    with:\n"
-        "      chart_path: chart\n"
-        # publish_images left at default false; a malformed images: value
-        # must not be flagged since it's never consumed.
-        "      images: not-json-but-inert\n"
-    )
-    verdicts = lint_caller_workflow(caller)
-    assert "publish-images-target-required" not in _rule_ids(verdicts)
-    assert "publish-images-unparseable" not in _rule_ids(verdicts)
-
-
-# --- publish-images-unparseable ---------------------------------------------
-
-
-def test_images_unparseable_flagged_only_when_publish_images_true():
-    verdicts = lint_caller_workflow(FIXTURES / "bad-unparseable-images.yml")
-    assert "publish-images-unparseable" in _rule_ids(verdicts)
-
-
 # --- publish-packages-write-missing -----------------------------------------
 
 
@@ -95,7 +53,7 @@ def test_packages_write_missing_flagged_when_absent():
 
 
 def test_packages_write_present_at_workflow_level_passes():
-    verdicts = lint_caller_workflow(FIXTURES / "clean-with-images.yml")
+    verdicts = lint_caller_workflow(FIXTURES / "clean-publish-images-true.yml")
     assert "publish-packages-write-missing" not in _rule_ids(verdicts)
 
 
@@ -113,7 +71,7 @@ def test_both_permission_levels_flagged():
 
 
 def test_workflow_level_only_permissions_not_flagged():
-    verdicts = lint_caller_workflow(FIXTURES / "clean-with-images.yml")
+    verdicts = lint_caller_workflow(FIXTURES / "clean-publish-images-true.yml")
     assert "publish-permissions-both-levels" not in _rule_ids(verdicts)
 
 

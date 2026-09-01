@@ -1,6 +1,6 @@
-# Lint fixture: publish_images: true with a well-formed images[] tuple
-# (non-empty target), workflow-level-only permissions granting
-# packages: write. Clean.
+# Lint fixture: publish_images: true with the compose_file-derived
+# publish-targets contract (Issue I -- no more hand-typed images[] JSON),
+# workflow-level-only permissions granting packages: write. Clean.
 name: Publish Staging Chart
 
 on:
@@ -18,5 +18,5 @@ jobs:
     with:
       chart_path: chart
       publish_images: true
-      images: |
-        [{"name": "app", "target": "app", "dockerfile": "Dockerfile", "context": "."}]
+      compose_file: docker-compose.yml
+      publish_targets: "backend,frontend"

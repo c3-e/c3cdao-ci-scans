@@ -8,17 +8,33 @@
 (ref-pin discipline, required secrets, known inputs, decoy-job
 detection). There was no equivalent for `publish-staging-chart.yml`'s
 caller — every real bug found onboarding Phase 2 pilots (a missing
-`target` field on an `images[]` tuple, a missing caller-side
-`packages: write` permission, a missing `routes:` key in the chart's
-`values.yaml`) was discovered ad hoc, per pilot, at merge time instead
-of caught mechanically at lint time. This module is that equivalent,
-scoped to `publish-staging-chart.yml`'s own actual shape rather than a
-generalization of `lint_caller.py`'s security-gate-specific internals
-(GATE_WORKFLOW_BASENAME, the four registry secrets, the
+`target` field on the old hand-typed `images[]` tuple, a missing
+caller-side `packages: write` permission, a missing `routes:` key in the
+chart's `values.yaml`) was discovered ad hoc, per pilot, at merge time
+instead of caught mechanically at lint time. This module is that
+equivalent, scoped to `publish-staging-chart.yml`'s own actual shape
+rather than a generalization of `lint_caller.py`'s security-gate-specific
+internals (GATE_WORKFLOW_BASENAME, the four registry secrets, the
 compose/Dockerfile/chart-render convention pipeline) — this workflow has
-none of that: no Compose file, no build matrix, no image_only mode. The
-shared verdict infrastructure (`lint_rules.verdict`/`load_gha_workflow`)
-is reused; the rule set below is independent.
+none of that: no build matrix, no image_only mode. The shared verdict
+infrastructure (`lint_rules.verdict`/`load_gha_workflow`) is reused; the
+rule set below is independent.
+
+NOTE on the retired `images[]` rules: Issue I (single source of truth
+for the publish target list) replaced the caller's hand-typed
+`images[]` JSON array entirely with a `derive-publish-targets` job that
+re-derives the target list from `compose_file` at merge time — so the
+two rules this module originally had for that shape
+(`publish-images-target-required`, `publish-images-unparseable`) no
+longer apply to anything a caller declares and have been removed. A
+caller-side `compose_file`/`publish_targets` mismatch is now caught by
+`derive-publish-targets`' own fail-closed runtime check (see
+docs/PUBLISH-STAGING-CHART.md), not by this lint — there is no
+consumer-repo-independent way to validate a CSV of target names against
+a compose file's actual build targets without checking out that repo,
+which is exactly what `--consumer-root` plus a real `docker buildx bake
+--print` would require; not worth duplicating plan's own derivation here
+for a lint-time nice-to-have.
 
 Every finding is a verdict object:
 
@@ -39,15 +55,6 @@ Rule ids:
                                  uses: parse the gate's resolver does, so
                                  it is equally exposed to a second,
                                  differently-pinned decoy job)
-  publish-images-target-required
-                          block  an images[] tuple has no non-empty
-                                 'target' field
-  publish-images-unparseable
-                          block  the images: input is not valid JSON /
-                                 not a JSON array (only checked when
-                                 publish_images is true — an unparseable
-                                 default "[]" with publish_images false
-                                 is inert and not linted)
   publish-packages-write-missing
                           block  publish_images: true is set but neither
                                  the caller's workflow-level nor
@@ -87,7 +94,6 @@ Rule ids:
 from __future__ import annotations
 
 import argparse
-import json
 import re
 import sys
 from pathlib import Path
@@ -130,61 +136,6 @@ def _ref_pin_verdicts(job_id: str, job: dict[str, Any]) -> list[Verdict]:
             "be recorded as a trailing comment)",
         )
     ]
-
-
-def _parse_images(with_map: dict[str, Any]) -> tuple[list[Any] | None, bool]:
-    """Returns (parsed_list_or_None, was_present). `images` defaults to
-    the JSON string "[]" per the workflow_call input's own default, so
-    absence and an explicit "[]" are equivalent -- both parse to []."""
-    raw = with_map.get("images", "[]")
-    if not isinstance(raw, str):
-        return None, "images" in with_map
-    try:
-        parsed = json.loads(raw)
-    except json.JSONDecodeError:
-        return None, True
-    if not isinstance(parsed, list):
-        return None, True
-    return parsed, "images" in with_map
-
-
-def _images_verdicts(with_map: dict[str, Any], publish_images: bool) -> list[Verdict]:
-    images, _present = _parse_images(with_map)
-    if images is None:
-        if not publish_images:
-            return []  # unparsed/inert images: input never consumed
-        return [
-            _v(
-                "publish-images-unparseable",
-                "images: is not a valid JSON array, but publish_images is "
-                "true; publish-images-deferred's matrix "
-                "(${{ fromJSON(inputs.images) }}) will fail to evaluate at "
-                "merge time",
-            )
-        ]
-    if not publish_images:
-        return []
-    verdicts: list[Verdict] = []
-    for i, tup in enumerate(images):
-        label = (
-            tup.get("name", f"images[{i}]")
-            if isinstance(tup, dict)
-            else f"images[{i}]"
-        )
-        target = tup.get("target") if isinstance(tup, dict) else None
-        if isinstance(target, str) and target.strip():
-            continue
-        verdicts.append(
-            _v(
-                "publish-images-target-required",
-                f"images[] tuple '{label}' has no non-empty 'target' "
-                "field; target must match byte-for-byte the bake target "
-                "name the same PR's reusable-security-gate.yml build job "
-                "used for this image, or the quarantine lookup 404s at "
-                "merge time",
-            )
-        )
-    return verdicts
 
 
 def _permissions_verdicts(
@@ -265,7 +216,6 @@ def lint_caller_workflow(caller_path: Path) -> list[Verdict]:
     publish_images = with_map.get("publish_images") is True
 
     verdicts += _ref_pin_verdicts(job_id, job)
-    verdicts += _images_verdicts(with_map, publish_images)
     verdicts += _permissions_verdicts(wf, job, publish_images)
     return verdicts
 

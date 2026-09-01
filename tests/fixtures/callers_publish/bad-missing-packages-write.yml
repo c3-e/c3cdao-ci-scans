@@ -18,5 +18,4 @@ jobs:
     with:
       chart_path: chart
       publish_images: true
-      images: |
-        [{"name": "app", "target": "app", "dockerfile": "Dockerfile", "context": "."}]
+      compose_file: docker-compose.yml

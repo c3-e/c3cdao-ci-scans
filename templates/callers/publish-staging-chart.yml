@@ -33,15 +33,7 @@ jobs:
       IRONBANK_USERNAME: ${{ secrets.IRONBANK_USERNAME }}
     with:
       chart_path: chart  # your deployable Helm chart directory (same one security-gate.yml's chart_path points at); its values.yaml MUST declare a non-empty routes: key (top-level or nested under fullstack-template.routes:)
-      publish_images: false  # true: retag each images[] tuple's scan-verified quarantine image into images-staging by digest (no rebuild) — set the SAME workflow's build job's publish_images: true on security-gate.yml too, or the quarantine ref never gets pushed in the first place
-      # images: JSON array, required when publish_images is true. Each
-      # tuple's `target` is REQUIRED and must match byte-for-byte the bake
-      # target name security-gate.yml's build job used for this image, or
-      # the quarantine lookup 404s at merge time. dockerfile/context/
-      # build_args are retained for documentation/audit only (this job
-      # never rebuilds).
-      # images: |
-      #   [
-      #     {"name": "app", "target": "app", "dockerfile": "Dockerfile", "context": "."}
-      #   ]
+      publish_images: false  # true: derive the publish target list from compose_file below and retag each target's scan-verified quarantine image into images-staging by digest (no rebuild) — set the SAME workflow's build job's publish_images: true on security-gate.yml too, or the quarantine ref never gets pushed in the first place
+      compose_file: docker-compose.yml  # only read when publish_images is true; MUST be the same file security-gate.yml's own compose_file input points at, or the derived target list won't match what got quarantined
+      # publish_targets: ""  # optional CSV allow-list (e.g. "backend,frontend") to publish only a subset of compose_file's built targets; default "" publishes all of them
       require_hardened_bases: false  # true: any declared image's Dockerfile FROMs a hardened base (Chainguard cgr.dev and/or Iron Bank registry1.dso.mil) and needs the matching credential secret pair above
