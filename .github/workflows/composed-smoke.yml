@@ -376,7 +376,25 @@ jobs:
           while IFS= read -r pilot; do
             name="$(jq -r '.name' <<<"$pilot")"
             helm template umbrella-ci "charts/${name}" -n "${NAMESPACE}" > "/tmp/rendered-${name}.yaml"
-            if grep -qE 'helm\.sh/hook:.*test' "/tmp/rendered-${name}.yaml"; then
+            # Real YAML-aware parse, not a text grep — mirrors
+            # reusable-security-gate.yml's own hook-detect step (see its
+            # comment for the full rationale: quoted annotation keys
+            # break a text grep but not a real parser; hook values are
+            # comma-separated and must match "test" exactly, not as a
+            # substring, to exclude Helm 2's legacy test-success/
+            # test-failure values).
+            hook_count=$(yq eval-all '
+                [select(
+                  (.metadata.annotations["helm.sh/hook"] // ""
+                    | split(",")
+                    | map(sub("^\s+|\s+$"; "")))
+                  | any_c(. == "test")
+                )] | length
+              ' "/tmp/rendered-${name}.yaml") || {
+              echo "::error::helm.sh/hook detection (yq parse) failed for pilot '${name}'"
+              exit 1
+            }
+            if [ "${hook_count}" -gt 0 ]; then
               echo "${name}" >> /tmp/hook-pilots.txt
             else
               echo "${name}" >> /tmp/nohook-pilots.txt

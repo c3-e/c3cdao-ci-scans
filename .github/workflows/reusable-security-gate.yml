@@ -1088,9 +1088,33 @@ jobs:
         if: steps.smoke.outcome == 'success'
         run: |
           set -uo pipefail
-          if grep -qE 'helm\.sh/hook:.*test' /tmp/rendered-chart.yaml; then
+          # Real YAML-aware parse, not a text grep — same fix pattern as
+          # the callee-ref-resolver's move off grep+sed. A plain-text
+          # `grep -qE 'helm\.sh/hook:.*test'` misses a quoted annotation
+          # key (`"helm.sh/hook": test`), since YAML quoting is a
+          # syntax-level artifact that a real parser discards but a text
+          # grep still sees. This checks the PARSED
+          # metadata.annotations["helm.sh/hook"] value on every document
+          # in the multi-doc rendered chart, split on commas per Helm's
+          # real hook-annotation semantics (`helm.sh/hook:
+          # pre-install,test` is a valid multi-hook resource), for a
+          # value that equals "test" exactly (not a substring match —
+          # Helm 2's legacy `test-success`/`test-failure` values must NOT
+          # match Helm 3's `test`).
+          hook_count=$(yq eval-all '
+              [select(
+                (.metadata.annotations["helm.sh/hook"] // ""
+                  | split(",")
+                  | map(sub("^\s+|\s+$"; "")))
+                | any_c(. == "test")
+              )] | length
+            ' /tmp/rendered-chart.yaml) || {
+            echo "::warning::cluster-smoke: helm.sh/hook detection (yq parse) failed"
+            exit 1
+          }
+          if [ "${hook_count}" -gt 0 ]; then
             echo "found=true" >> "$GITHUB_OUTPUT"
-            echo "helm.sh/hook: test resource(s) detected in rendered chart"
+            echo "helm.sh/hook: test resource(s) detected in rendered chart (${hook_count})"
           else
             echo "found=false" >> "$GITHUB_OUTPUT"
             echo "no helm.sh/hook: test resource detected; falling back to the derived-target probe"
