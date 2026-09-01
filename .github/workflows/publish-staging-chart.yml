@@ -8,9 +8,52 @@ on:
         type: string
         required: true
       publish_images:
-        description: "Deferred slot: when true (and base_ref is ci-scans or main), reserved for a future image-publish job. Default false keeps this input inert — no image-publish logic executes yet."
+        description: "When true (and the merge's base branch is ci-scans or main), retag each of the compose file's own non-local build targets' scan-verified quarantine image (pushed earlier by the SAME PR's reusable-security-gate.yml build job, gated by that workflow's own publish_images input) into images-staging by digest — no rebuild here. The target list is derived from compose_file at merge time (see derive-publish-targets below), the same derivation reusable-security-gate.yml's own plan job uses — never hand-declared, so it cannot drift from the gate's own build matrix. Fails closed if a quarantine image is missing or expired: the PR must be re-scanned via a fresh gate run before merge. Default false keeps this input inert."
         type: boolean
         default: false
+      compose_file:
+        description: "Path (relative to the calling repo root) of the canonical Compose file publish_images derives the publish target list from — the same file (and the same derivation reusable-security-gate.yml's own plan job runs) that produced the images-quarantine refs this job retags from. Only read when publish_images is true. Mirrors reusable-security-gate.yml's own compose_file input; keep both in sync when a caller's Compose file path is non-default."
+        type: string
+        default: docker-compose.yml
+      publish_targets:
+        description: >-
+          Optional CSV allow-list of compose build target names to publish
+          when publish_images is true — e.g. "backend,frontend". Default ""
+          publishes every non-local build target compose_file declares (the
+          common case: every built target ships). Set this only when a
+          repository builds a target it does NOT want landing in
+          images-staging (e.g. a build-only/test target never referenced by
+          the chart — see the built-unscheduled lint warning on
+          reusable-security-gate.yml). Naming a target compose_file does not
+          declare fails the job closed with the real target list in the
+          error.
+        type: string
+        default: ""
+      require_hardened_bases:
+        description: >-
+          Set true if any declared image's Dockerfile FROMs a hardened base
+          (Chainguard cgr.dev and/or Iron Bank registry1.dso.mil) and needs
+          the corresponding credential secret pair to build. Passed straight
+          through to this repo's own hardened-registry-login composite
+          action's require-hardened-bases input — fails closed (job errors)
+          when true and neither credential pair is configured; when false
+          (default), builds proceed on the Dockerfile's own declared bases
+          without any hardened-registry login attempt.
+        type: boolean
+        default: false
+    secrets:
+      CGR_PULL_TOKEN:
+        description: "Chainguard (cgr.dev) pull token. Only required when require_hardened_bases is true and the declared image(s) need Chainguard."
+        required: false
+      CGR_PULL_USERNAME:
+        description: "Chainguard (cgr.dev) pull username. Only required when require_hardened_bases is true and the declared image(s) need Chainguard."
+        required: false
+      IRONBANK_TOKEN:
+        description: "Iron Bank (registry1.dso.mil) pull token. Only required when require_hardened_bases is true and the declared image(s) need Iron Bank (e.g. geoint's backend/frontend, pipeassist's backend, dtic's fallback path)."
+        required: false
+      IRONBANK_USERNAME:
+        description: "Iron Bank (registry1.dso.mil) pull username. Only required when require_hardened_bases is true and the declared image(s) need Iron Bank."
+        required: false
 
 permissions:
   contents: read
@@ -178,17 +221,301 @@ jobs:
             echo "- this is a pre-merge test artifact, not a release (non-SemVer tag by design)"
           } >> "$GITHUB_STEP_SUMMARY"
 
-  # Deferred slot (PRD §10 item 1). Intentionally a no-op placeholder — no
-  # image-publish logic ships here. Narrower than the chart trigger by
-  # design (AD-3): only fires when publish_images is explicitly turned on
-  # by a future caller AND the merge base branch is ci-scans or main.
-  publish-images-deferred:
-    name: publish images (deferred slot, inert)
+  # Narrower than the chart trigger by design (AD-3): only fires when
+  # publish_images is explicitly turned on by a caller AND the merge base
+  # branch is ci-scans or main.
+  # Single source of truth for the publish target list (Issue I): re-derives
+  # the SAME non-local compose build-target set reusable-security-gate.yml's
+  # own plan job derives from the SAME compose_file, at the merge commit,
+  # instead of asking the caller to hand-redeclare an images[] JSON array
+  # that had to match the gate's build matrix byte-for-byte or the
+  # quarantine lookup below 404s (a real, confirmed drift trap — see
+  # docs/PUBLISH-STAGING-CHART.md's "Single source of truth for publish
+  # targets"). Deliberately a LOCAL re-derivation from the checked-out
+  # compose file, not a cross-run fetch of reusable-security-gate.yml's own
+  # plan-bom artifact: that artifact lives in a DIFFERENT workflow run (the
+  # gate fires on pull_request; this workflow fires on pull_request/closed),
+  # so consuming it here would need actions/download-artifact's cross-run
+  # mode (github-token + run-id + a new actions: read grant on every
+  # caller — the exact "missing grant" bug class Issue J's lint hardens
+  # against) PLUS a run lookup by head_sha with real ambiguity (which of
+  # possibly several gate runs for this head_sha is "the" scanned one) —
+  # reintroducing exactly the lookup problem the quarantine-ref formula
+  # below was designed to avoid by being a pure, deterministic formula. A
+  # local re-derivation has none of that: derive_bom.py/compose_facts.py
+  # are pure functions of the checked-out compose file, so this can never
+  # drift from what the gate scanned unless the compose file itself
+  # differs between the gate's head-sha checkout and this job's
+  # merge-commit checkout — a separate, already-tracked risk (Issue H,
+  # chart-identity verification), not a new one this introduces.
+  derive-publish-targets:
+    name: derive publish targets (compose-derived, no hand-typed images:)
     if: >-
       github.event.pull_request.merged == true &&
       inputs.publish_images == true &&
       contains(fromJSON('["ci-scans","main"]'), github.event.pull_request.base.ref)
     runs-on: ubuntu-latest
+    outputs:
+      targets: ${{ steps.emit.outputs.targets }}
+      # publish-images-deferred consumes this instead of running its own
+      # copy of the resolver below — same pattern reusable-security-gate.yml's
+      # own build job already uses against plan's callee_ref output ("this
+      # job's plain needs: [plan, ...] means GitHub never runs it at all
+      # unless plan succeeded, so the output is always set by the time this
+      # checkout runs"). Exactly one resolver site in this file, not two —
+      # each site is its own decoy-vector surface (see
+      # test_callee_ref_resolver_publish.py's test_resolver_site_present_once).
+      ci_scans_ref: ${{ steps.calleeref.outputs.ref }}
     steps:
-      - name: No-op placeholder
-        run: echo "image publish is not implemented by this workflow yet"
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4, matches every other job in this file
+        with:
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
+
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e  # v6, for derive_bom.py
+
+      # derive_bom.py shells out to `docker buildx bake --print`, same as
+      # reusable-security-gate.yml's own plan job.
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f  # v3
+
+      - name: Resolve callee (ci-scans) ref
+        id: calleeref
+        env:
+          WORKFLOW_REF: ${{ github.workflow_ref }}
+          JOB_WF_SHA: ${{ github.job_workflow_sha }}
+        run: |
+          caller="${WORKFLOW_REF#"$GITHUB_REPOSITORY/"}"; caller="${caller%%@*}"
+          ref=""
+          if [ -f "$caller" ]; then
+            ref="$(yq '[.. | select(has("uses")) | .uses | select(test("publish-staging-chart\.yml@"))] | .[0] // "" | split("publish-staging-chart.yml@")[1] // ""' "$caller")"
+          fi
+          ref="${ref:-${JOB_WF_SHA:-main}}"
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+        with:
+          repository: c3-e/c3cdao-ci-scans
+          ref: ${{ steps.calleeref.outputs.ref }}
+          path: .ci-scans
+
+      # jq, not a python heredoc: a heredoc's content inherits this YAML
+      # block scalar's own indentation, and Python (unlike jq) is
+      # indentation-sensitive — same "no heredoc" reasoning the
+      # "Validate chart shape" step's own comment already gives for why
+      # it avoids heredocs in this file.
+      - name: Derive publish targets from compose_file (no hand-typed images:)
+        id: emit
+        env:
+          GATE_COMPOSE_FILE: ${{ inputs.compose_file }}
+          PUBLISH_TARGETS: ${{ inputs.publish_targets }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/plan
+          uv run .ci-scans/scripts/lib/derive_bom.py \
+            "$GITHUB_WORKSPACE/${GATE_COMPOSE_FILE}" --out-dir /tmp/plan
+
+          ALL_TARGETS_JSON="$(jq -c '.targets' /tmp/plan/bom.json)"
+          if [ -n "$PUBLISH_TARGETS" ]; then
+            ALLOW_JSON="$(printf '%s' "$PUBLISH_TARGETS" \
+              | jq -Rc 'split(",") | map(gsub("^\\s+|\\s+$";"")) | map(select(length > 0))')"
+            MISSING_JSON="$(jq -cn --argjson allow "$ALLOW_JSON" --argjson all "$ALL_TARGETS_JSON" '$allow - $all')"
+            if [ "$(echo "$MISSING_JSON" | jq 'length')" -gt 0 ]; then
+              echo "::error::publish_targets names unknown compose build target(s) $(echo "$MISSING_JSON" | jq -c .); compose_file declares: ${ALL_TARGETS_JSON}"
+              exit 1
+            fi
+            TARGETS_JSON="$ALLOW_JSON"
+          else
+            TARGETS_JSON="$ALL_TARGETS_JSON"
+          fi
+          if [ "$(echo "$TARGETS_JSON" | jq 'length')" -eq 0 ]; then
+            echo "::error::compose_file declares no non-local build targets to publish"
+            exit 1
+          fi
+          echo "targets=${TARGETS_JSON}" >> "$GITHUB_OUTPUT"
+          echo "publishing target(s): ${TARGETS_JSON}"
+
+  publish-images-deferred:
+    name: publish images (quarantine retag)
+    needs: [derive-publish-targets]
+    if: >-
+      github.event.pull_request.merged == true &&
+      inputs.publish_images == true &&
+      contains(fromJSON('["ci-scans","main"]'), github.event.pull_request.base.ref)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJSON(needs.derive-publish-targets.outputs.targets) }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4, matches every other job in this file
+        with:
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
+
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f  # v3, same pinned action reusable-security-gate.yml already uses
+
+      - name: Log in to GHCR (Actions-native GITHUB_TOKEN, not a personal PAT)
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9  # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Escape hatch for a pilot needing a hardened-base pull credential
+      # (e.g. cra/dsa's Chainguard CGR_PULL_TOKEN, or geoint/pipeassist/
+      # dtic's Iron Bank IRONBANK_TOKEN — confirmed per-repo posture in
+      # the umbrella's image-publish-composed-smoke-plan.md §6.1 survey).
+      # Reuses this repo's OWN existing hardened-registry-login composite
+      # action (already proven in reusable-security-gate.yml's plan/build
+      # jobs) rather than a second, narrower Chainguard-only login step —
+      # one shared credential-resolution mechanism, not two. That action
+      # accepts both credential pairs as optional and fails over/closed
+      # per require-hardened-bases when neither is configured.
+      #
+      # This reusable workflow runs cross-repo: the checkout above resolves
+      # the CALLER's tree (chart_path/Dockerfiles are caller-repo-relative),
+      # so a local `uses: ./.github/actions/...` here would resolve against
+      # the CALLER's tree too, which does not have this action — only
+      # ci-scans does. Fetch ci-scans's own tooling into a subdirectory
+      # instead, same pattern reusable-security-gate.yml's own plan/build
+      # jobs already use for the identical problem — but consuming
+      # derive-publish-targets' ALREADY-RESOLVED ref (needs.
+      # derive-publish-targets.outputs.ci_scans_ref) instead of running a
+      # second copy of the resolver here: exactly one resolver site in
+      # this file (see test_callee_ref_resolver_publish.py's
+      # test_resolver_site_present_once), the same "consume the upstream
+      # job's output, don't re-resolve" pattern reusable-security-gate.yml's
+      # own build job already uses against plan's callee_ref output. No
+      # fallback needed here — this job's `needs: [derive-publish-targets]`
+      # means GitHub never runs it at all unless that job succeeded, so the
+      # output is always set by the time this checkout runs.
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+        with:
+          repository: c3-e/c3cdao-ci-scans
+          ref: ${{ needs.derive-publish-targets.outputs.ci_scans_ref }}
+          path: .ci-scans
+
+      # builder-image/runtime-image/ironbank-{builder,runtime}-image feed
+      # ONLY that action's own base-image-failover-resolution outputs
+      # (for a caller with a single builder/runtime base pair per repo,
+      # e.g. reusable-security-gate.yml's gate-owned GATE_BUILDER_IMAGE/
+      # GATE_RUNTIME_IMAGE). This job has no such single-pair model — each
+      # matrix leg's own Dockerfile already declares its own base(s)
+      # directly, unrelated to any other leg's — so, exactly like
+      # reusable-security-gate.yml itself ("resolved builder/runtime
+      # outputs are not consumed downstream; the gate injects nothing into
+      # any build"), this call only wants the action's LOGIN + fail-closed
+      # credential check side effect, not its resolved outputs. Passing
+      # empty strings for the base-image inputs is safe: they are required
+      # only by the action's schema, never read by anything after this
+      # step in this job.
+      - name: Login to hardened base registries (Chainguard + Iron Bank)
+        id: base-registry
+        uses: ./.ci-scans/.github/actions/hardened-registry-login
+        with:
+          cgr-pull-token: ${{ secrets.CGR_PULL_TOKEN }}
+          cgr-pull-username: ${{ secrets.CGR_PULL_USERNAME }}
+          ironbank-token: ${{ secrets.IRONBANK_TOKEN }}
+          ironbank-username: ${{ secrets.IRONBANK_USERNAME }}
+          ironbank-registry: registry1.dso.mil
+          builder-image: ""
+          runtime-image: ""
+          require-hardened-bases: ${{ inputs.require_hardened_bases }}
+
+      # Pilot name is the chart_path basename, same derivation as the
+      # chart-publish job above — unlike `helm push`, `docker buildx build
+      # --push` does NOT auto-append any path component, so the destination
+      # tag here must be the full, exact path including both <pilot> and
+      # <image-name> (see docs/PUBLISH-STAGING-CHART.md).
+      - name: Derive destination tag
+        id: coords
+        run: |
+          set -euo pipefail
+          PILOT="$(basename "${{ inputs.chart_path }}")"
+          PR_NUMBER="${{ github.event.pull_request.number }}"
+          SHA="${{ github.event.pull_request.merge_commit_sha }}"
+          SHORT_SHA="${SHA:0:7}"
+          TAG="0.0.0-mech.${PR_NUMBER}.${SHORT_SHA}"
+          DEST="ghcr.io/c3-e/images-staging/${PILOT}/${{ matrix.target }}:${TAG}"
+          echo "dest=${DEST}" >> "$GITHUB_OUTPUT"
+          echo "Publishing ${{ matrix.target }} -> ${DEST}"
+
+      # Reconstruct the exact quarantine ref reusable-security-gate.yml's
+      # build job pushed to (identical formula, same three source fields —
+      # github.repository, the PR number, and the PR's HEAD sha — both jobs
+      # run against the same PR, so github.event.pull_request.head.sha here
+      # is the same commit that job built FROM; merge_commit_sha, used
+      # everywhere else in this file, is deliberately NOT used here since
+      # the quarantine push happened before any merge existed).
+      # matrix.target comes from derive-publish-targets above, the SAME
+      # compose-derived target list reusable-security-gate.yml's own plan
+      # job used to name the quarantine ref in the first place — by
+      # construction, not by caller-typed coincidence, so this ref always
+      # resolves (barring the separate Issue H chart/build-identity risk
+      # noted on derive-publish-targets).
+      - name: Derive quarantine ref
+        id: quarantine
+        env:
+          TARGET: ${{ matrix.target }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          REPO_LOWER="$(echo "$REPO" | tr '[:upper:]' '[:lower:]')"
+          SHORT_HEAD_SHA="${HEAD_SHA:0:7}"
+          QUARANTINE_REF="ghcr.io/c3-e/images-quarantine/${REPO_LOWER}/${TARGET}:pr-${PR_NUMBER}-${SHORT_HEAD_SHA}"
+          echo "ref=${QUARANTINE_REF}" >> "$GITHUB_OUTPUT"
+
+      # Fail-closed, no rebuild fallback: this job never builds an image
+      # itself. If the quarantine image is missing (never pushed — the
+      # gate ran without publish_images: true) or expired (GHCR's own
+      # retention on the images-quarantine namespace), the PR must go back
+      # through a fresh reusable-security-gate.yml run before it can
+      # publish — a stale or absent quarantine image is never silently
+      # rebuilt from source here, since a rebuild would re-create bits that
+      # were never actually scanned by THIS PR's gate run.
+      - name: Verify quarantine image exists
+        id: verify
+        env:
+          QUARANTINE_REF: ${{ steps.quarantine.outputs.ref }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          if ! docker buildx imagetools inspect "$QUARANTINE_REF" >/tmp/imagetools-inspect.log 2>&1; then
+            cat /tmp/imagetools-inspect.log
+            echo "::error::quarantine image missing or expired for target ${TARGET}; PR must be re-scanned via a fresh gate run before merge"
+            exit 1
+          fi
+          DIGEST="$(docker buildx imagetools inspect "$QUARANTINE_REF" --format '{{json .Manifest.Digest}}' | tr -d '"')"
+          echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
+          echo "found ${QUARANTINE_REF} @ ${DIGEST}"
+
+      # Retag by digest — no rebuild. `imagetools create` is a registry-side
+      # copy (manifest/blob-mount, no local pull of image layers): for a
+      # single-platform source (every build in this fleet today is
+      # linux/amd64 only) it wraps the quarantined manifest, unmodified,
+      # in a new single-entry image index and tags THAT as $DEST —
+      # confirmed live via selftest-publish-images.yml's own run history
+      # (see docs/PUBLISH-STAGING-CHART.md for the full explanation). The
+      # wrapped child manifest keeps its original digest; `docker pull
+      # $DEST` transparently resolves to it, so nothing is rebuilt or
+      # re-derived here even though $DEST's own top-level digest (the new
+      # index) differs from $DIGEST.
+      - name: Retag quarantine image into images-staging
+        env:
+          QUARANTINE_REF: ${{ steps.quarantine.outputs.ref }}
+          DIGEST: ${{ steps.verify.outputs.digest }}
+          DEST: ${{ steps.coords.outputs.dest }}
+        run: |
+          set -euo pipefail
+          docker buildx imagetools create --tag "$DEST" "${QUARANTINE_REF}@${DIGEST}"
+
+      - name: Job summary
+        if: always()
+        run: |
+          {
+            echo "## Publish staging image: ${{ matrix.target }}"
+            echo
+            echo "- destination: \`${{ steps.coords.outputs.dest }}\`"
+            echo "- source (quarantine): \`${{ steps.quarantine.outputs.ref }}\` @ \`${{ steps.verify.outputs.digest }}\`"
+            echo "- this is a pre-merge test artifact, not a release"
+          } >> "$GITHUB_STEP_SUMMARY"

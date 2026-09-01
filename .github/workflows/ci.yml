@@ -20,6 +20,14 @@ jobs:
       - name: Assert caller-lint fixture verdicts
         run: ./scripts/test-lint-fixtures.sh
 
+  publish-caller-lint-fixtures:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: Assert publish-staging-chart caller-lint fixture verdicts
+        run: ./scripts/test-lint-fixtures-publish.sh
+
   setup-ruleset-diff:
     runs-on: ubuntu-latest
     steps:

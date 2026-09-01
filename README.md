@@ -89,3 +89,8 @@ squash-merged commit is picked up automatically.
 - [docs/CI-CONTRACT.md](docs/CI-CONTRACT.md): the derived consumer contract: Compose,
   Dockerfile, and chart conventions, plus the full lint rule table.
 - [docs/REQUIREMENTS-MAP.md](docs/REQUIREMENTS-MAP.md): gate jobs mapped to the CI spec.
+- [docs/PUBLISH-STAGING-CHART.md](docs/PUBLISH-STAGING-CHART.md): the merge-only
+  chart + image staging-publish workflow (`publish-staging-chart.yml`).
+- [docs/COMPOSED-SMOKE.md](docs/COMPOSED-SMOKE.md): the multi-pilot composed
+  `kind` smoke test (`composed-smoke.yml`) an umbrella repo calls to install
+  every pilot's published staging chart + images together.

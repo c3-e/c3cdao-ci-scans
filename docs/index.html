@@ -44,11 +44,14 @@
           <a href="#contract">Consumer contract</a>
           <a href="#security">Security coverage</a>
           <a href="#evidence">Run records</a>
+          <a href="#workflows">Sibling workflows</a>
           <a href="#rollout">Rollout</a>
           <p class="nav-label">Repository docs</p>
           <a href="RUNBOOK.md">Runbook <span>↗</span></a>
           <a href="INPUTS.md">Inputs <span>↗</span></a>
           <a href="CI-CONTRACT.md">Current contract <span>↗</span></a>
+          <a href="PUBLISH-STAGING-CHART.md">Publish staging chart <span>↗</span></a>
+          <a href="COMPOSED-SMOKE.md">Composed smoke <span>↗</span></a>
           <a href="REQUIREMENTS-MAP.md">Requirements map <span>↗</span></a>
         </nav>
         <div class="sidebar-note">
@@ -573,10 +576,58 @@
           </div>
         </section>
 
-        <section class="section" id="rollout" aria-labelledby="rollout-title">
+        <section class="section" id="workflows" aria-labelledby="workflows-title">
           <div class="section-heading">
             <div>
               <span class="section-number">06</span>
+              <h2 id="workflows-title">Sibling workflows</h2>
+            </div>
+            <p>Two more reusable workflows serve the same consumers. Neither is the scan gate; neither is folded into it.</p>
+          </div>
+
+          <div class="comparison-grid">
+            <article>
+              <span class="tag">Merge-only · registry writes</span>
+              <h3>publish-staging-chart.yml</h3>
+              <p>
+                Packages a merged PR's Helm chart, and optionally its images, to a staging OCI registry —
+                <code>charts-staging/&lt;pilot&gt;</code> and <code>images-staging/&lt;pilot&gt;/&lt;image&gt;</code>,
+                tagged <code>0.0.0-mech.&lt;pr&gt;.&lt;sha&gt;</code>. Triggers only on a merged
+                <code>pull_request</code> close; an open PR's ordinary pushes produce nothing. The one workflow in
+                this repo that writes to a registry outside a same-run build.
+              </p>
+            </article>
+            <article>
+              <span class="tag">Caller-triggered · read-only</span>
+              <h3>composed-smoke.yml</h3>
+              <p>
+                Pulls N pilots' already-published staging artifacts and installs them together in one
+                <code>kind</code> cluster, health-checking each pilot's own rendered Service. Proves cross-pilot
+                composition that a single pilot's own gate run can never see. Reuses the gate's own smoke-catalog
+                modules (<code>postgres-pgvector</code>, <code>gateway-crds</code>) rather than a second copy.
+              </p>
+            </article>
+          </div>
+
+          <div class="callout">
+            <div class="callout-mark">i</div>
+            <div>
+              <strong>Why three workflows, not one</strong>
+              <p>
+                Different trigger models (every push vs. merge-only vs. caller-chosen) and different side-effect
+                profiles (read-only scan vs. registry write vs. read-only cross-pilot install) argue against folding
+                any pair together. Full contracts:
+                <a href="PUBLISH-STAGING-CHART.md">PUBLISH-STAGING-CHART.md</a> and
+                <a href="COMPOSED-SMOKE.md">COMPOSED-SMOKE.md</a>.
+              </p>
+            </div>
+          </div>
+        </section>
+
+        <section class="section" id="rollout" aria-labelledby="rollout-title">
+          <div class="section-heading">
+            <div>
+              <span class="section-number">07</span>
               <h2 id="rollout-title">Rollout and proof</h2>
             </div>
             <p>The major release removes Makefile.ci and moves consumers to the derived contract.</p>
@@ -630,6 +681,7 @@
         <footer>
           <p>Requirements traceability: <a href="REQUIREMENTS-MAP.md">REQUIREMENTS-MAP.md</a></p>
           <p>Current implementation: <a href="https://github.com/c3-e/c3cdao-ci-scans/blob/main/.github/workflows/reusable-security-gate.yml">reusable-security-gate.yml</a></p>
+          <p>Also in this repo: <a href="https://github.com/c3-e/c3cdao-ci-scans/blob/main/.github/workflows/publish-staging-chart.yml">publish-staging-chart.yml</a>, <a href="https://github.com/c3-e/c3cdao-ci-scans/blob/main/.github/workflows/composed-smoke.yml">composed-smoke.yml</a></p>
         </footer>
       </main>
     </div>

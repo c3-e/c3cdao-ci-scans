@@ -10,6 +10,10 @@ push). The two are intentionally not folded together — different trigger
 model (every-push vs. merge-only) and different side-effect profile
 (read-only scans vs. registry writes) — see
 [PUBLISH-STAGING-CHART.md](PUBLISH-STAGING-CHART.md) for its own contract.
+A third workflow, [`composed-smoke.yml`](COMPOSED-SMOKE.md), installs N
+pilot subcharts an umbrella repo already published via the second
+workflow together in one `kind` cluster. See
+[COMPOSED-SMOKE.md](COMPOSED-SMOKE.md) for its own contract.
 
 The gate derives everything it builds, scans, and smokes from files your
 repository already maintains for local development: the canonical Compose
@@ -97,10 +101,13 @@ Compose declaration is updated.
   override, or require any base-image build arg. Pin bases to a registry
   the gate can authenticate to per
   [appendix B](RUNBOOK.md#b-hardened-base-registry-login-matrix) if you
-  want hardened bases; the gate scans whatever the Dockerfile builds. The
-  Dockerfile is resolved from `build.context`/`build.dockerfile` against
-  the Compose file's directory; `dockerfile_inline` is unsupported and
-  fails closed.
+  want hardened bases; the gate scans whatever the Dockerfile builds.
+  Declare which registry(s) your Dockerfile actually pins to via
+  `hardened_base_registry` (`chainguard` | `ironbank` | `both`, default
+  `both`) so the login step doesn't retry/back off against a registry you
+  don't use. The Dockerfile is resolved from `build.context`/
+  `build.dockerfile` against the Compose file's directory;
+  `dockerfile_inline` is unsupported and fails closed.
 - **Committed literal args.** `build.args` must be a mapping of committed
   literal values. List syntax, null pass-through values, any environment
   interpolation in a build-affecting field, `build.secrets`, and
@@ -144,7 +151,7 @@ failure fails closed before any chart rule runs.
 ## Caller conventions
 
 The caller workflow is a thin pointer: data, never behavior. See
-[INPUTS.md](INPUTS.md) for the seven-input surface and
+[INPUTS.md](INPUTS.md) for the eight-input surface and
 [RUNBOOK.md](RUNBOOK.md) for onboarding steps.
 
 - The gate ref in `uses:` is pinned by a full 40-hex commit SHA; record
@@ -181,7 +188,7 @@ else blocks the run before any build starts.
 | [`chart-undeclared`](#rule-chart-undeclared) | block | `image_only` is true but a Helm chart exists anywhere in the repo |
 | [`chart-resolve`](#rule-chart-resolve) | block | `helm template` fails on the declared chart (e.g. unresolved dependency) |
 | [`chart-readiness`](#rule-chart-readiness) | block | a rendered workload container lacks readiness |
-| [`smoke-target`](#rule-smoke-target) | block | no single Service-backed HTTP readiness target |
+| [`smoke-target`](#rule-smoke-target) | block | no single Service-backed HTTP readiness target (exempt when the chart carries a `helm.sh/hook: test` resource; see the rule's own note below) |
 | [`ship-set`](#rule-ship-set) | block | a rendered image is neither built nor a declared dependency |
 | [`built-unscheduled`](#rule-built-unscheduled) | warn | a built tag is never scheduled by the chart |
 | [`smoke-resource-unknown`](#rule-smoke-resource-unknown) | block | `smoke_resources` names a module outside the catalog |
@@ -313,6 +320,19 @@ back to `port`; named ports must match spelling). Zero or multiple
 targets block, naming the candidates. Remediation: expose exactly one
 HTTP readiness target through a matching Service.
 
+**Hook exemption (temporary fleet-migration state):** if any rendered
+resource carries a `helm.sh/hook` annotation whose value contains
+`test`, this rule passes regardless of the backed-candidate count (0, 1,
+or many). A chart in this state gets health-checked via `helm test`
+instead of the derived-target port-forward+curl probe; see
+`reusable-security-gate.yml`'s `cluster-smoke` job and
+`composed-smoke.yml`'s own equivalent hook partition, both documented
+below. `smoke_candidates()` and `derive_smoke_target.py` stay untouched
+by this exemption and remain the enforcement/derivation mechanism for
+hook-less charts. This dual-path state disappears once every onboarded
+pilot adopts a `helm test` hook, at which point the rule goes back to
+unconditionally requiring exactly one backed candidate.
+
 ### Rule: ship-set
 
 Enforces `S \ D ⊆ B` over the render: a scheduled image must be a built
@@ -384,7 +404,7 @@ missing mapping.
 
 ### Rule: unknown-input
 
-The `with:` surface is exactly the seven v0.6 inputs; inputs removed at
+The `with:` surface is exactly the eight v0.6 inputs; inputs removed at
 this major version are rejected by name with migration guidance.
 Remediation: delete the key; see the removed-inputs table in
 [INPUTS.md](INPUTS.md).

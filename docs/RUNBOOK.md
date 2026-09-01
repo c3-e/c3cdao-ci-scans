@@ -149,10 +149,11 @@ Settings → Secrets and variables → Actions → New repository secret.
 
 | Secret | Job |
 |--------|-----|
-| `CGR_PULL_TOKEN`, `CGR_PULL_USERNAME` | plan + build legs: Chainguard (`cgr.dev`) login |
-| `IRONBANK_TOKEN`, `IRONBANK_USERNAME` | SonarQube ephemeral + plan/build Iron Bank (`registry1.dso.mil`) login; runs **alongside** Chainguard when both are set |
+| `CGR_PULL_TOKEN`, `CGR_PULL_USERNAME` | plan + build legs: Chainguard (`cgr.dev`) login (skipped if your caller declares `hardened_base_registry: ironbank`) |
+| `IRONBANK_TOKEN`, `IRONBANK_USERNAME` | SonarQube ephemeral + plan/build Iron Bank (`registry1.dso.mil`) login (skipped if your caller declares `hardened_base_registry: chainguard`); runs **alongside** Chainguard when both are set and `hardened_base_registry: both` (default) |
 
-How the two logins interact is reference material:
+How the two logins interact, and how to declare the single registry tier
+your Dockerfile actually pins to, is reference material:
 [appendix B](#b-hardened-base-registry-login-matrix).
 
 **You should see:** all four names listed under the repo's Actions
@@ -502,18 +503,31 @@ and simply no-op — this is expected and not a failure.
 
 Logins are **independent** (docker stores credentials per registry host).
 Setting both `CGR_PULL_*` and `IRONBANK_*` authenticates **both** in one
-run. The gate's posture is fail-closed: no complete credential pair means
-the plan job blocks before docker or kind ever start; there is no public
-fallback and no consumer-side escape hatch. Base images and the failover
-order are gate-owned configuration for the login/failover resolution
-action itself; the gate does not inject or override any base-image build
-arg. Using a hardened base in `FROM` is the consumer's own choice; the
-gate scans whatever the Dockerfile builds.
+run — when `hardened_base_registry` is left at its default `both`. The
+gate's posture is fail-closed: no successful login among the attempted
+registry(s) means the plan job blocks before docker or kind ever start;
+there is no public fallback and no consumer-side escape hatch. Base
+images and the failover order are gate-owned configuration for the
+login/failover resolution action itself; the gate does not inject or
+override any base-image build arg. Using a hardened base in `FROM` is the
+consumer's own choice; the gate scans whatever the Dockerfile builds.
 
 The gate authenticates only to `cgr.dev` and `registry1.dso.mil` and
 scans images **as built with those gate-reachable bases**. Approved-image
 / OS-layer attestation for private-mirror or entitlement-unreachable
 bases stays with the consumer IL5 / Game Warden pipeline.
+
+**Declared tier (`hardened_base_registry`).** A live fleet survey found
+pilots pin their Dockerfiles to exactly one hardened registry, never
+both. Declaring `hardened_base_registry: chainguard` or `ironbank` (in
+your caller's `with:`) makes the login step skip the other registry's
+login attempt entirely — no credential check, no `docker login` call, no
+retry/backoff burned against a registry your images never reference. The
+default, `both`, attempts both logins exactly as before (unchanged
+behavior for callers that don't set the input): with `both`, a failure on
+one registry with a success on the other still passes (at-least-one
+semantics); a failure on every *attempted* registry — one, in the scoped
+cases, or both, in the default case — fails closed the same as today.
 
 ### C. Lint rule ids and remediation
 

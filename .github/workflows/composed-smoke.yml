@@ -1,0 +1,603 @@
+name: Composed Multi-Pilot Smoke Test
+
+# workflow_call reusable workflow: installs N pilot subcharts together
+# against a real staging-published chart + images, on the CALLER's own
+# umbrella tree, and health-checks each pilot's own derived HTTP target.
+#
+# Unlike reusable-security-gate.yml's cluster-smoke job (one chart, images
+# built THIS run), this job's charts and images were published by a PRIOR
+# run (a pilot fork's own publish-staging-chart.yml merge) — pulled here
+# from the staging OCI/registry namespaces, never built locally. This is
+# its own workflow rather than a reusable-security-gate.yml extension
+# because it composes multiple pilots' previously-published artifacts
+# together, not a single pilot's own from-source build.
+
+on:
+  workflow_call:
+    inputs:
+      pilots:
+        description: >-
+          JSON array, one entry per pilot subchart to compose:
+          [{"name":"rms-copilot","chart_ref":"oci://ghcr.io/c3-e/charts-staging/rms-copilot:0.0.0-mech.94.c6a53e6",
+          "images":[{"name":"backend","values_path":"rms-copilot.fullstack-template.backend.image"},
+                     {"name":"psp7-gateway-frontend","values_path":"rms-copilot.fullstack-template.frontend.image"}]}].
+          chart_ref is the exact OCI ref already pinned in the caller's own
+          Chart.yaml (same string, not re-derived) — this workflow does not
+          decide pilot versions, the caller's Chart.yaml already did. Each
+          images[] entry's name is the <image-name> path segment under
+          images-staging/<pilot>/<image-name> (see
+          c3-e/c3cdao-ci-scans's docs/PUBLISH-STAGING-CHART.md); values_path
+          is the dotted values key (repository/tag siblings) the caller's
+          own helm install overrides, e.g. via --set-string.
+        type: string
+        required: true
+      umbrella_values:
+        description: >-
+          Repo-root-relative path(s) to the caller's values file(s),
+          newline- or comma-separated. Each is passed to `helm upgrade
+          --install` as its own `-f`, in the given order (last wins on
+          conflict) — same semantics as stacking `-f` flags by hand. This
+          lets a caller layer a small CI-only overlay (e.g. placeholder
+          credentials or a smoke-fixture DB wiring that must NOT leak into
+          the same file's local/prod defaults) on top of its base
+          values.yaml, without duplicating it. Default is unchanged
+          single-file behavior for existing callers.
+        type: string
+        default: values.yaml
+      namespace:
+        description: "Kubernetes namespace this workflow creates and installs the composed release into."
+        type: string
+        default: umbrella-ci
+      smoke_resources:
+        description: >-
+          CSV of gate-owned smoke catalog module ids — reuses the SAME
+          catalog reusable-security-gate.yml's own cluster-smoke job already
+          owns (scripts/lib/smoke_catalog/*.yaml). Default covers the
+          umbrella's two known backing-service needs: a shared Postgres
+          fixture (ADR-08) and the Gateway API core CRDs every pilot's
+          chart-emitted HTTPRoute needs to install against.
+        type: string
+        default: postgres-pgvector,gateway-crds
+
+permissions:
+  contents: read
+  packages: read # only read: this workflow PULLS staging artifacts, never publishes
+
+jobs:
+  compose-smoke:
+    name: Composed Smoke (kind + N pilots + health)
+    runs-on: ubuntu-latest
+    # Longer than the single-pilot 30m budget (reusable-security-gate.yml's
+    # cluster-smoke) — N chart/image pulls + N installs + N probes, not 1.
+    timeout-minutes: 45
+    steps:
+      - name: Checkout caller (the umbrella)
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+
+      - name: Set up Helm
+        uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4
+
+      # Callee (ci-scans) checkout: the smoke-catalog manifests live in the
+      # gate repo, not the caller's tree (same cross-repo pattern
+      # reusable-security-gate.yml's own plan/build/cluster-smoke jobs use).
+      - name: Resolve callee (ci-scans) ref
+        id: calleeref
+        env:
+          WORKFLOW_REF: ${{ github.workflow_ref }}
+          JOB_WF_SHA: ${{ github.job_workflow_sha }}
+        run: |
+          caller="${WORKFLOW_REF#"$GITHUB_REPOSITORY/"}"; caller="${caller%%@*}"
+          ref=""
+          if [ -f "$caller" ]; then
+            ref="$(yq '[.. | select(has("uses")) | .uses | select(test("composed-smoke\.yml@"))] | .[0] // "" | split("composed-smoke.yml@")[1] // ""' "$caller")"
+          fi
+          ref="${ref:-${JOB_WF_SHA:-main}}"
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: c3-e/c3cdao-ci-scans
+          ref: ${{ steps.calleeref.outputs.ref }}
+          path: .ci-scans
+
+      # Both charts-staging and images-staging are private GHCR namespaces
+      # (confirmed live) — login BEFORE any OCI pull touches either
+      # one. Helm's own OCI client reads the SAME docker credential store
+      # `docker/login-action` writes (Helm 3.8+ compatibility with `docker
+      # login`), so one login covers both `helm pull oci://ghcr.io/...` and
+      # `docker pull ghcr.io/...` below — no separate `helm registry login`
+      # step needed. This workflow only ever reads, never writes
+      # (permissions: packages: read above).
+      - name: Log in to GHCR (read-only pull, covers both helm and docker OCI clients)
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Validate pilots input
+        id: pilots
+        env:
+          PILOTS_JSON: ${{ inputs.pilots }}
+        run: |
+          set -euo pipefail
+          echo "$PILOTS_JSON" | jq -e 'type == "array" and length > 0' >/dev/null \
+            || { echo "::error::pilots input must be a non-empty JSON array"; exit 1; }
+          echo "$PILOTS_JSON" | jq -c '.[]' > /tmp/pilots.jsonl
+          jq -r '.name' /tmp/pilots.jsonl > /tmp/pilot-names.txt
+          echo "pilot count: $(wc -l < /tmp/pilots.jsonl | tr -d ' ')"
+
+      # Resolve every OTHER OCI-repository dependency Chart.yaml declares
+      # (any engine pilot NOT under test in this run) BEFORE the
+      # pilots[]-specific pulls below overwrite the ones actually under
+      # test. Without this, `helm install` would error loading a
+      # dependency whose charts/<name> is entirely absent, regardless of
+      # its own `condition:` — Helm's chart loader resolves dependencies at
+      # LOAD time, before any condition is evaluated.
+      #
+      # Deliberately NOT `helm dependency build .` — that command fails
+      # closed on this repo's own local/packaged dependencies (petegpt has
+      # no `repository:` in Chart.yaml at all, by design: "consumed as a
+      # packaged chart... not a vendored source dir" per Chart.yaml's own
+      # comment), which `dependency build` cannot resolve without a source
+      # directory (confirmed live: `Error: directory charts/petegpt not
+      # found`). Local/packaged dependencies are already present in the
+      # checked-out tree (committed charts/*.tgz or vendored charts/<name>/
+      # directories) and need no fetch at all — this mirrors EXACTLY what
+      # the umbrella's own Makefile `deps-pull` target already does, and
+      # for the identical reason (its own comment: "helm dependency build
+      # can't be used umbrella-wide yet").
+      - name: Pull every OTHER OCI-pinned dependency
+        run: |
+          set -euo pipefail
+          mkdir -p charts
+          yq -o=json '.dependencies' Chart.yaml | jq -c '.[]' | while IFS= read -r dep; do
+            name="$(jq -r '.name' <<<"$dep")"
+            version="$(jq -r '.version' <<<"$dep")"
+            repository="$(jq -r '.repository // ""' <<<"$dep")"
+            if grep -qxF "$name" /tmp/pilot-names.txt; then
+              continue  # this run's own pilots[] pull (below) wins instead
+            fi
+            if [ -z "$repository" ] || [ "$repository" = "null" ]; then
+              echo "skipping ${name}: local/packaged dependency, already in the checked-out tree"
+              continue
+            fi
+            echo "pulling ${name} @ ${version} <- ${repository}"
+            helm pull "${repository}/${name}" --version "${version}" -d charts/
+          done
+
+      # Every dependency name Chart.yaml declares that is NOT one of THIS
+      # run's pilots[] must be disabled — otherwise `helm install --wait`
+      # waits on a sibling pilot's Deployment whose image was never loaded
+      # into this kind cluster (a real hang, not a fast failure). This is a
+      # deliberate scoping choice: a composed-smoke run composes EXACTLY the
+      # pilots the caller declared, nothing implied by the umbrella's own
+      # values.yaml defaults.
+      - name: Derive non-pilot disable flags
+        run: |
+          set -euo pipefail
+          : > /tmp/disable-flags.txt
+          yq -r '.dependencies[].name' Chart.yaml | while IFS= read -r dep; do
+            if ! grep -qxF "$dep" /tmp/pilot-names.txt; then
+              printf -- '--set\n%s.enabled=false\n' "$dep" >> /tmp/disable-flags.txt
+            fi
+          done
+          echo "disabled $(($(wc -l < /tmp/disable-flags.txt | tr -d ' ') / 2)) non-pilot dependency(ies)"
+
+      # helm pull every pilot's chart_ref — same OCI-pull mechanism
+      # hack/test-pilot-pin.sh's own --oci-ref mode already proves
+      # (`helm pull "$OCI_REF" -d "$SCRATCH/pkg"`), untarred directly so the
+      # caller's own `helm dependency build` (below) sees a chart DIRECTORY
+      # under charts/<pilot> rather than a bare .tgz — a chart declared with
+      # no `repository:` in Chart.yaml (a local/vendored dependency) is only
+      # resolved from charts/<name>/ as an extracted tree or an
+      # exactly-versioned .tgz; this caller's OCI-pinned dependencies DO
+      # declare `repository: oci://...`, so `helm dependency build` expects
+      # to fetch them itself — but this workflow pre-seeds charts/ instead
+      # of trusting a second live registry round-trip mid-job, exactly
+      # mirroring what `make deps-pull` already does locally (see the
+      # umbrella's own Makefile).
+      - name: Pull every pilot's staging chart
+        run: |
+          set -euo pipefail
+          mkdir -p charts
+          while IFS= read -r pilot; do
+            name="$(jq -r '.name' <<<"$pilot")"
+            chart_ref="$(jq -r '.chart_ref' <<<"$pilot")"
+            echo "pulling ${name} <- ${chart_ref}"
+            rm -rf "charts/${name}"
+            helm pull "$chart_ref" --untar --untardir charts/
+          done < /tmp/pilots.jsonl
+          ls -la charts/
+
+      # docker pull + kind load docker-image — the SAME technique
+      # reusable-security-gate.yml's own cluster-smoke job already uses for
+      # images built THIS run (`kind load docker-image "${tag}" --name
+      # "${CLUSTER}"`, reusable-security-gate.yml lines ~918-921), just
+      # sourced from a registry pull first instead of a same-run build.
+      # GHCR auth was already established above (covers both charts-staging
+      # and images-staging, the same private registry host).
+      - name: Pull every declared image ref
+        id: pullimages
+        run: |
+          set -euo pipefail
+          : > /tmp/pulled-tags.txt
+          while IFS= read -r pilot; do
+            name="$(jq -r '.name' <<<"$pilot")"
+            chart_ref="$(jq -r '.chart_ref' <<<"$pilot")"
+            # chart_ref shape: oci://ghcr.io/c3-e/charts-staging/<pilot>:<tag>
+            # images-staging shares the SAME <pilot>/<tag> salt (§1.3 of the
+            # image-publish-composed-smoke-plan.md) — derive the tag from
+            # the chart_ref rather than requiring a second, redundant field.
+            tag="${chart_ref##*:}"
+            jq -c '.images[]' <<<"$pilot" | while IFS= read -r image; do
+              image_name="$(jq -r '.name' <<<"$image")"
+              ref="ghcr.io/c3-e/images-staging/${name}/${image_name}:${tag}"
+              echo "pulling ${ref}"
+              docker pull "$ref"
+              echo "$ref" >> /tmp/pulled-tags.txt
+            done
+          done < /tmp/pilots.jsonl
+          echo "pulled $(wc -l < /tmp/pulled-tags.txt | tr -d ' ') image ref(s)"
+
+      - name: Create kind cluster
+        uses: helm/kind-action@ef37e7f390d99f746eb8b610417061a60e82a6cc # v1.14.0
+        with:
+          cluster_name: umbrella-ci
+
+      - name: Load pulled images into kind
+        run: |
+          set -euo pipefail
+          while IFS= read -r ref; do
+            kind load docker-image "${ref}" --name umbrella-ci \
+              || { echo "::error::kind load failed for ${ref}"; exit 1; }
+          done < /tmp/pulled-tags.txt
+
+      # Same provision_module() logic as reusable-security-gate.yml's own
+      # cluster-smoke step (readiness-gated BEFORE any helm install, same
+      # manifest source: scripts/lib/smoke_catalog/*.yaml) — reused
+      # directly, not forked into a second copy.
+      - name: Provision smoke_resources catalog (shared with reusable-security-gate.yml)
+        env:
+          SMOKE_RESOURCES: ${{ inputs.smoke_resources }}
+          NAMESPACE: ${{ inputs.namespace }}
+        run: |
+          set -uo pipefail
+          fail() { echo "::error::compose-smoke: $1"; exit 1; }
+
+          kubectl create namespace "${NAMESPACE}" --dry-run=client -o yaml | kubectl apply -f -
+
+          provision_module() {
+            local module="$1"
+            case "$module" in
+              (*[!a-z0-9-]*|"") echo "invalid smoke resource id '${module}'"; return 1 ;;
+            esac
+            local manifest=".ci-scans/scripts/lib/smoke_catalog/${module//-/_}.yaml"
+            [ -f "$manifest" ] || { echo "no catalog manifest for '${module}'"; return 1; }
+            kubectl apply -n "${NAMESPACE}" -f "$manifest" || return 1
+            if grep -q '^kind: CustomResourceDefinition' "$manifest"; then
+              kubectl wait --for=condition=Established -f "$manifest" \
+                --timeout=120s || return 1
+            fi
+            if grep -qE '^kind: (StatefulSet|Deployment)' "$manifest"; then
+              local ready=false
+              for _ in $(seq 1 30); do
+                if kubectl -n "${NAMESPACE}" wait --for=condition=Ready pod \
+                     -l "app.kubernetes.io/name=${module}" --timeout=6s \
+                     >/dev/null 2>&1; then
+                  ready=true; break
+                fi
+                sleep 2
+              done
+              if [ "$ready" != true ]; then
+                kubectl -n "${NAMESPACE}" get pods,statefulsets \
+                  -l "app.kubernetes.io/name=${module}" -o wide || true
+                kubectl -n "${NAMESPACE}" get events --sort-by=.lastTimestamp | tail -20 || true
+                return 1
+              fi
+            fi
+          }
+          IFS=',' read -ra modules <<< "${SMOKE_RESOURCES}"
+          for module in "${modules[@]}"; do
+            module="$(echo "$module" | tr -d '[:space:]')"
+            [ -n "$module" ] || continue
+            provision_module "$module" \
+              || fail "smoke resource '${module}' failed readiness before helm install"
+            echo "module ready: ${module}"
+          done
+
+      # --set-string image-repository/tag overrides derived from each
+      # pilots[].images[].values_path, mirroring the umbrella's own
+      # Makefile `install` target's LOCAL_IMAGE_PILOTS pattern
+      # (--set-string <pilot>.fullstack-template.<component>.image.{repository,tag})
+      # — same mechanism, pointed at images-staging/* tags instead of :local.
+      - name: Derive helm install flags
+        id: installflags
+        run: |
+          set -euo pipefail
+          : > /tmp/install-flags.txt
+          while IFS= read -r pilot; do
+            name="$(jq -r '.name' <<<"$pilot")"
+            chart_ref="$(jq -r '.chart_ref' <<<"$pilot")"
+            tag="${chart_ref##*:}"
+            jq -c '.images[]' <<<"$pilot" | while IFS= read -r image; do
+              image_name="$(jq -r '.name' <<<"$image")"
+              values_path="$(jq -r '.values_path' <<<"$image")"
+              repo="ghcr.io/c3-e/images-staging/${name}/${image_name}"
+              {
+                echo "--set-string"
+                echo "${values_path}.repository=${repo}"
+                echo "--set-string"
+                echo "${values_path}.tag=${tag}"
+                echo "--set-string"
+                echo "${values_path}.pullPolicy=IfNotPresent"
+              } >> /tmp/install-flags.txt
+            done
+          done < /tmp/pilots.jsonl
+          echo "derived $(($(wc -l < /tmp/install-flags.txt | tr -d ' ') / 6)) pilot image override group(s)"
+
+      - name: helm install the umbrella chart (with image overrides)
+        env:
+          NAMESPACE: ${{ inputs.namespace }}
+          UMBRELLA_VALUES: ${{ inputs.umbrella_values }}
+        run: |
+          set -euo pipefail
+          mapfile -t flags < <(cat /tmp/disable-flags.txt /tmp/install-flags.txt)
+          # UMBRELLA_VALUES may be a single path (existing callers, unchanged
+          # behavior) or a newline/comma-separated list — each becomes its
+          # own -f, in order, so a caller can layer a small CI-only overlay
+          # on top of its base values.yaml without duplicating it.
+          mapfile -t value_files < <(printf '%s' "${UMBRELLA_VALUES}" | tr ',' '\n' | sed '/^[[:space:]]*$/d')
+          value_flags=()
+          for vf in "${value_files[@]}"; do
+            value_flags+=("-f" "$vf")
+          done
+          helm upgrade --install umbrella-ci . \
+            -n "${NAMESPACE}" \
+            "${value_flags[@]}" \
+            "${flags[@]}" \
+            --wait --timeout 10m || {
+              echo "=== helm install failed: cluster diagnostics ==="
+              kubectl -n "${NAMESPACE}" get pods,jobs -o wide || true
+              kubectl -n "${NAMESPACE}" get events --sort-by=.lastTimestamp | tail -30 || true
+              for p in $(kubectl -n "${NAMESPACE}" get pods -o name 2>/dev/null); do
+                echo "--- describe ${p} ---"; kubectl -n "${NAMESPACE}" describe "${p}" | tail -25 || true
+                # `kubectl logs --all-containers` does NOT reliably cover
+                # initContainers (confirmed live: a crash-looping migrate
+                # init container's own output never showed up, only the
+                # main container's "PodInitializing" placeholder) — name
+                # every container AND initContainer explicitly instead.
+                for c in $(kubectl -n "${NAMESPACE}" get "${p}" \
+                    -o jsonpath='{range .spec.initContainers[*]}{.name}{"\n"}{end}{range .spec.containers[*]}{.name}{"\n"}{end}' \
+                    2>/dev/null); do
+                  echo "--- logs ${p} -c ${c} ---"
+                  kubectl -n "${NAMESPACE}" logs "${p}" -c "${c}" --tail=100 || true
+                  echo "--- logs ${p} -c ${c} (previous attempt, if any) ---"
+                  kubectl -n "${NAMESPACE}" logs "${p}" -c "${c}" --previous --tail=100 2>/dev/null || true
+                done
+              done
+              exit 1
+            }
+
+      # TEMPORARY migration scaffolding: partitions this run's pilots by
+      # whether their OWN rendered subchart carries a helm.sh/hook: test
+      # resource — hook-bearing pilots are covered by ONE release-wide
+      # `helm test` below instead of the derived-target port-forward+curl
+      # loop (Helm runs every hook-annotated resource across the release
+      # in a single invocation — documented Helm behavior, not reinvented
+      # here); hook-less pilots keep the existing per-target loop,
+      # byte-for-byte unchanged, in the health-check step below. This is
+      # in-progress fleet migration scaffolding, not the intended
+      # permanent design — tracked for deletion, together with
+      # reusable-security-gate.yml's own hook-detect step and the
+      # matching exemption in scripts/lib/lint_rules/chart.py's
+      # smoke_target rule, once every onboarded pilot has adopted a hook.
+      # See docs/CI-CONTRACT.md and docs/COMPOSED-SMOKE.md.
+      - name: Partition composed pilots by helm.sh/hook test resources
+        id: partition
+        env:
+          NAMESPACE: ${{ inputs.namespace }}
+        run: |
+          set -euo pipefail
+          : > /tmp/hook-pilots.txt
+          : > /tmp/nohook-pilots.txt
+          while IFS= read -r pilot; do
+            name="$(jq -r '.name' <<<"$pilot")"
+            helm template umbrella-ci "charts/${name}" -n "${NAMESPACE}" > "/tmp/rendered-${name}.yaml"
+            # Real YAML-aware parse, not a text grep — mirrors
+            # reusable-security-gate.yml's own hook-detect step (see its
+            # comment for the full rationale: quoted annotation keys
+            # break a text grep but not a real parser; hook values are
+            # comma-separated and must match "test" exactly, not as a
+            # substring, to exclude Helm 2's legacy test-success/
+            # test-failure values).
+            hook_count=$(yq eval-all '
+                [select(
+                  (.metadata.annotations["helm.sh/hook"] // ""
+                    | split(",")
+                    | map(sub("^\s+|\s+$"; "")))
+                  | any_c(. == "test")
+                )] | length
+              ' "/tmp/rendered-${name}.yaml") || {
+              echo "::error::helm.sh/hook detection (yq parse) failed for pilot '${name}'"
+              exit 1
+            }
+            if [ "${hook_count}" -gt 0 ]; then
+              echo "${name}" >> /tmp/hook-pilots.txt
+            else
+              echo "${name}" >> /tmp/nohook-pilots.txt
+            fi
+          done < /tmp/pilots.jsonl
+          echo "hook-bearing pilot(s): $(wc -l < /tmp/hook-pilots.txt | tr -d ' ')"
+          echo "hook-less pilot(s): $(wc -l < /tmp/nohook-pilots.txt | tr -d ' ')"
+
+      - name: helm test hook-bearing pilots (single release-wide run)
+        id: helm-test
+        env:
+          NAMESPACE: ${{ inputs.namespace }}
+        run: |
+          set -uo pipefail
+          if [ ! -s /tmp/hook-pilots.txt ]; then
+            echo "no hook-bearing pilots this run; skipping helm test"
+            exit 0
+          fi
+          echo "hook-bearing pilots covered by this run: $(paste -sd, /tmp/hook-pilots.txt)"
+          helm test umbrella-ci -n "${NAMESPACE}" --logs || {
+            echo "=== helm test failed: hook pod diagnostics ==="
+            kubectl -n "${NAMESPACE}" get pods -o wide || true
+            kubectl -n "${NAMESPACE}" get networkpolicies -o yaml || true
+            kubectl -n "${NAMESPACE}" get events --sort-by=.lastTimestamp | tail -30 || true
+            while IFS= read -r name; do
+              pod="$(kubectl -n "${NAMESPACE}" get pods -l "helm.sh/hook=test" \
+                -o jsonpath="{range .items[?(@.metadata.labels['app.kubernetes.io/instance']=='umbrella-ci')]}{.metadata.name}{'\n'}{end}" \
+                2>/dev/null | grep -F "$name" || true)"
+              [ -n "$pod" ] || continue
+              while IFS= read -r p; do
+                echo "--- describe pod/${p} ---"; kubectl -n "${NAMESPACE}" describe "pod/${p}" || true
+                for c in $(kubectl -n "${NAMESPACE}" get "pod/${p}" \
+                    -o jsonpath='{range .spec.containers[*]}{.name}{"\n"}{end}' 2>/dev/null); do
+                  echo "--- logs pod/${p} -c ${c} ---"
+                  kubectl -n "${NAMESPACE}" logs "pod/${p}" -c "${c}" --tail=100 || true
+                done
+              done <<< "$pod"
+            done < /tmp/hook-pilots.txt
+            exit 1
+          }
+
+      # Small companion probe script: every fullstack-template pilot exposes
+      # BOTH a frontend and a backend Service-backed HTTP readiness
+      # target — reusable-security-gate.yml's own smoke-target lint rule
+      # requires EXACTLY ONE for a single-repo gate's simpler single-target
+      # probe, but that constraint is a single-chart-gate opinion, not a
+      # hard limit of the underlying candidate-derivation logic
+      # (lint_rules.chart.smoke_candidates, shared by derive_smoke_target.py
+      # and the lint rule alike). This job probes EVERY Service-backed
+      # candidate a pilot's own chart yields — not just one — since "the
+      # whole pilot is healthy" for a multi-component pilot means every one
+      # of its own exposed health endpoints answers, not an arbitrary single
+      # pick. Calls the SAME underlying function derive_smoke_target.py
+      # wraps, directly, rather than the CLI's own "exactly one" rule.
+      - name: Write per-pilot target probe script
+        run: |
+          cat > /tmp/probe_targets.py <<'PYEOF'
+          import sys, json, yaml
+          sys.path.insert(0, ".ci-scans/scripts/lib")
+          from lint_rules.chart import smoke_candidates
+
+          docs = [d for d in yaml.safe_load_all(open(sys.argv[1])) if isinstance(d, dict)]
+          backed, unbacked = smoke_candidates(docs)
+          if not backed:
+              detail = "; ".join(unbacked) if unbacked else "no httpGet readinessProbe declared"
+              print(f"no Service-backed HTTP readiness target found ({detail})", file=sys.stderr)
+              sys.exit(1)
+          for c in backed:
+              print(json.dumps({"service": c["service"], "port": c["port"], "path": c["path"]}, sort_keys=True))
+          PYEOF
+          python3 -c "import ast; ast.parse(open('/tmp/probe_targets.py').read())" \
+            || { echo "::error::generated probe script has a syntax error"; cat -A /tmp/probe_targets.py; exit 1; }
+
+      - name: Health-check every composed pilot
+        id: health
+        env:
+          NAMESPACE: ${{ inputs.namespace }}
+        run: |
+          set -uo pipefail
+          fail_any=0
+          : > /tmp/pilot-results.tsv
+
+          # Hook-bearing pilots were already covered by the single
+          # release-wide `helm test` run above (partition step); record
+          # their result here without re-probing — TEMPORARY migration
+          # scaffolding, see the partition step's own comment.
+          if [ -s /tmp/hook-pilots.txt ]; then
+            while IFS= read -r name; do
+              chart_ref="$(jq -r --arg n "$name" 'select(.name == $n) | .chart_ref' /tmp/pilots.jsonl)"
+              if [ "${{ steps.helm-test.outcome }}" = "success" ]; then
+                printf '%s\t%s\tOK (helm test)\tn/a\n' "$name" "$chart_ref" >> /tmp/pilot-results.tsv
+              else
+                echo "::error::${name}: covered by helm test, which failed"
+                printf '%s\t%s\tFAIL (helm test)\tn/a\n' "$name" "$chart_ref" >> /tmp/pilot-results.tsv
+                fail_any=1
+              fi
+            done < /tmp/hook-pilots.txt
+          fi
+
+          while IFS= read -r pilot; do
+            name="$(jq -r '.name' <<<"$pilot")"
+            if grep -qxF "$name" /tmp/hook-pilots.txt; then
+              continue  # covered above by the release-wide helm test
+            fi
+            chart_ref="$(jq -r '.chart_ref' <<<"$pilot")"
+            echo "=== health-checking pilot: ${name} ==="
+            if ! helm template umbrella-ci "charts/${name}" \
+              -n "${NAMESPACE}" > "/tmp/rendered-${name}.yaml" 2>/tmp/render-err.txt; then
+              echo "::error::${name}: helm template failed for smoke-target derivation"
+              cat /tmp/render-err.txt
+              printf '%s\t%s\tFAIL (render)\tn/a\n' "$name" "$chart_ref" >> /tmp/pilot-results.tsv
+              fail_any=1
+              continue
+            fi
+            if ! uv run --with pyyaml python3 /tmp/probe_targets.py "/tmp/rendered-${name}.yaml" \
+              > "/tmp/targets-${name}.jsonl" 2>/tmp/derive-err.txt; then
+              echo "::error::${name}: smoke-target derivation failed"
+              cat /tmp/derive-err.txt
+              printf '%s\t%s\tFAIL (no target)\tn/a\n' "$name" "$chart_ref" >> /tmp/pilot-results.tsv
+              fail_any=1
+              continue
+            fi
+
+            pilot_ok=1
+            probe_summary=""
+            while IFS= read -r target_json; do
+              probe_svc="$(jq -re .service <<<"$target_json")"
+              probe_port="$(jq -re .port <<<"$target_json")"
+              probe_path="$(jq -re .path <<<"$target_json")"
+              kubectl -n "${NAMESPACE}" port-forward "svc/${probe_svc}" \
+                "18080:${probe_port}" >/tmp/pf-"${name}"-"${probe_svc}".log 2>&1 &
+              pf_pid=$!
+              sleep 6
+              code=$(curl -s --max-time 30 -o /dev/null -w '%{http_code}' \
+                "http://127.0.0.1:18080${probe_path}" || echo 000)
+              kill "${pf_pid}" 2>/dev/null || true
+              echo "GET ${probe_path} via svc/${probe_svc}:${probe_port} -> ${code}"
+              if [ "${code}" = "200" ]; then
+                probe_summary="${probe_summary}svc/${probe_svc}:${probe_port}${probe_path} -> 200; "
+              else
+                echo "::error::${name}: ${probe_path} via svc/${probe_svc} returned ${code}, expected 200"
+                probe_summary="${probe_summary}svc/${probe_svc}:${probe_port}${probe_path} -> ${code} (FAIL); "
+                pilot_ok=0
+              fi
+            done < "/tmp/targets-${name}.jsonl"
+
+            if [ "$pilot_ok" -eq 1 ]; then
+              printf '%s\t%s\tOK\t%s\n' "$name" "$chart_ref" "$probe_summary" >> /tmp/pilot-results.tsv
+            else
+              printf '%s\t%s\tFAIL (probe)\t%s\n' "$name" "$chart_ref" "$probe_summary" >> /tmp/pilot-results.tsv
+              fail_any=1
+            fi
+          done < /tmp/pilots.jsonl
+          echo "all_ok=$([ "$fail_any" -eq 0 ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          exit "$fail_any"
+
+      - name: Job summary
+        if: always()
+        run: |
+          {
+            echo "## Composed Multi-Pilot Smoke Test"
+            echo
+            echo "| Pilot | Chart ref | Result | Probe |"
+            echo "| --- | --- | --- | --- |"
+            if [ -f /tmp/pilot-results.tsv ]; then
+              while IFS=$'\t' read -r name chart_ref result probe; do
+                echo "| \`${name}\` | \`${chart_ref}\` | ${result} | ${probe} |"
+              done < /tmp/pilot-results.tsv
+            else
+              echo "| (no results captured — an earlier step failed before health-check ran) | | | |"
+            fi
+            echo
+            echo "- namespace: \`${{ inputs.namespace }}\`"
+            echo "- smoke_resources: \`${{ inputs.smoke_resources }}\`"
+            echo "- this is a pre-merge composability artifact, not a release"
+          } >> "$GITHUB_STEP_SUMMARY"

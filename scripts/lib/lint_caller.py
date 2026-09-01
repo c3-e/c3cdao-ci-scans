@@ -81,8 +81,10 @@ REQUIRED_SECRETS = (
 KNOWN_INPUTS = (
     "chart_path",
     "compose_file",
+    "hardened_base_registry",
     "image_only",
     "namespace",
+    "publish_images",
     "release",
     "smoke_resources",
     "values_local",

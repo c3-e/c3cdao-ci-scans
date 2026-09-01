@@ -7,7 +7,7 @@ doc tests cross-check every input and secret name against it).
 
 Since v0.6 the gate derives build facts (images, Dockerfiles, contexts,
 build args, smoke target) from your Compose file and Helm chart; see
-[CI-CONTRACT.md](CI-CONTRACT.md). The seven inputs that remain are paths
+[CI-CONTRACT.md](CI-CONTRACT.md). The eight inputs that remain are paths
 and orchestration knobs, all defaulted: a conforming repository with
 default paths passes nothing but secrets.
 
@@ -22,6 +22,7 @@ default paths passes nothing but secrets.
 | `namespace` | string | `app-ci` | Kubernetes namespace cluster-smoke creates and installs the release into. |
 | `smoke_resources` | string | `""` | CSV of gate-owned smoke catalog module ids (`postgres-pgvector`, `gateway-crds`) provisioned before helm install. Unknown ids block (`smoke-resource-unknown`). Default provisions none. |
 | `image_only` | boolean | `false` | When true, skip helm-check and cluster-smoke (and drop them from the blocking set), for repos that build and scan images without a deployable chart. |
+| `hardened_base_registry` | string | `both` | Which hardened-base registry(s) the login step attempts: `chainguard` (`cgr.dev` only), `ironbank` (`registry1.dso.mil` only), or `both` (attempts both, unchanged prior behavior). Declare the single tier your Dockerfile actually pins to so the login step never retries/backs off against a registry you don't use. Does not change the fail-closed `require_hardened_bases` posture — only which registry(s) it checks. |
 
 ## Secrets
 
@@ -32,12 +33,13 @@ explicitly; `secrets: inherit` only works within one org/enterprise
 
 | Secret | Used by |
 | --- | --- |
-| `CGR_PULL_TOKEN`, `CGR_PULL_USERNAME` | plan + every build leg: Chainguard (`cgr.dev`) login |
-| `IRONBANK_TOKEN`, `IRONBANK_USERNAME` | SonarQube ephemeral + plan/build Iron Bank (`registry1.dso.mil`) login; runs alongside Chainguard when both are set |
+| `CGR_PULL_TOKEN`, `CGR_PULL_USERNAME` | plan + every build leg: Chainguard (`cgr.dev`) login (skipped when `hardened_base_registry: ironbank`) |
+| `IRONBANK_TOKEN`, `IRONBANK_USERNAME` | SonarQube ephemeral + plan/build Iron Bank (`registry1.dso.mil`) login (skipped when `hardened_base_registry: chainguard`); runs alongside Chainguard when both are set and `hardened_base_registry: both` |
 
 Base images, the Iron Bank registry host, and the hardened-base posture
 are gate-owned configuration (workflow `env`), not inputs: the gate is
-fail-closed: no credential pair means no build.
+fail-closed: no successful login among the attempted registry(s) means no
+build.
 
 ## Worked example
 

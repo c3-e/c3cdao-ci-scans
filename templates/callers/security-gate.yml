@@ -45,3 +45,5 @@ jobs:
       namespace: app-ci  # Kubernetes namespace cluster-smoke installs into
       smoke_resources: ""  # CSV of gate-owned smoke catalog module ids provisioned before helm install (e.g. postgres-pgvector,gateway-crds); "" = none
       image_only: false  # true: skip helm-check + cluster-smoke (image build/scan only); keep false for deployable apps
+      hardened_base_registry: both  # chainguard | ironbank | both; declare the single tier your Dockerfile pins to (both is safe default, matches prior behavior)
+      publish_images: false  # true: push each scan-verified target to the images-quarantine namespace for a later publish-staging-chart.yml digest retag; see docs/PUBLISH-STAGING-CHART.md

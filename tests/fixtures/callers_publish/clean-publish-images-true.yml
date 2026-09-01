@@ -1,0 +1,22 @@
+# Lint fixture: publish_images: true with the compose_file-derived
+# publish-targets contract (Issue I -- no more hand-typed images[] JSON),
+# workflow-level-only permissions granting packages: write. Clean.
+name: Publish Staging Chart
+
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish-staging-chart:
+    if: github.event.pull_request.merged == true
+    uses: c3-e/c3cdao-ci-scans/.github/workflows/publish-staging-chart.yml@0123456789abcdef0123456789abcdef01234567  # v0.1.0
+    with:
+      chart_path: chart
+      publish_images: true
+      compose_file: docker-compose.yml
+      publish_targets: "backend,frontend"
