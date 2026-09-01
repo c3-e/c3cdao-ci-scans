@@ -32,7 +32,16 @@ on:
         type: string
         required: true
       umbrella_values:
-        description: "Path to the caller's values.yaml (repo-root-relative)."
+        description: >-
+          Repo-root-relative path(s) to the caller's values file(s),
+          newline- or comma-separated. Each is passed to `helm upgrade
+          --install` as its own `-f`, in the given order (last wins on
+          conflict) — same semantics as stacking `-f` flags by hand. This
+          lets a caller layer a small CI-only overlay (e.g. placeholder
+          credentials or a smoke-fixture DB wiring that must NOT leak into
+          the same file's local/prod defaults) on top of its base
+          values.yaml, without duplicating it. Default is unchanged
+          single-file behavior for existing callers.
         type: string
         default: values.yaml
       namespace:
@@ -336,9 +345,18 @@ jobs:
         run: |
           set -euo pipefail
           mapfile -t flags < <(cat /tmp/disable-flags.txt /tmp/install-flags.txt)
+          # UMBRELLA_VALUES may be a single path (existing callers, unchanged
+          # behavior) or a newline/comma-separated list — each becomes its
+          # own -f, in order, so a caller can layer a small CI-only overlay
+          # on top of its base values.yaml without duplicating it.
+          mapfile -t value_files < <(printf '%s' "${UMBRELLA_VALUES}" | tr ',' '\n' | sed '/^[[:space:]]*$/d')
+          value_flags=()
+          for vf in "${value_files[@]}"; do
+            value_flags+=("-f" "$vf")
+          done
           helm upgrade --install umbrella-ci . \
             -n "${NAMESPACE}" \
-            -f "${UMBRELLA_VALUES}" \
+            "${value_flags[@]}" \
             "${flags[@]}" \
             --wait --timeout 10m || {
               echo "=== helm install failed: cluster diagnostics ==="
@@ -346,10 +364,107 @@ jobs:
               kubectl -n "${NAMESPACE}" get events --sort-by=.lastTimestamp | tail -30 || true
               for p in $(kubectl -n "${NAMESPACE}" get pods -o name 2>/dev/null); do
                 echo "--- describe ${p} ---"; kubectl -n "${NAMESPACE}" describe "${p}" | tail -25 || true
-                echo "--- logs ${p} ---"; kubectl -n "${NAMESPACE}" logs "${p}" --all-containers --tail=40 || true
+                # `kubectl logs --all-containers` does NOT reliably cover
+                # initContainers (confirmed live: a crash-looping migrate
+                # init container's own output never showed up, only the
+                # main container's "PodInitializing" placeholder) — name
+                # every container AND initContainer explicitly instead.
+                for c in $(kubectl -n "${NAMESPACE}" get "${p}" \
+                    -o jsonpath='{range .spec.initContainers[*]}{.name}{"\n"}{end}{range .spec.containers[*]}{.name}{"\n"}{end}' \
+                    2>/dev/null); do
+                  echo "--- logs ${p} -c ${c} ---"
+                  kubectl -n "${NAMESPACE}" logs "${p}" -c "${c}" --tail=100 || true
+                  echo "--- logs ${p} -c ${c} (previous attempt, if any) ---"
+                  kubectl -n "${NAMESPACE}" logs "${p}" -c "${c}" --previous --tail=100 2>/dev/null || true
+                done
               done
               exit 1
             }
+
+      # TEMPORARY migration scaffolding: partitions this run's pilots by
+      # whether their OWN rendered subchart carries a helm.sh/hook: test
+      # resource — hook-bearing pilots are covered by ONE release-wide
+      # `helm test` below instead of the derived-target port-forward+curl
+      # loop (Helm runs every hook-annotated resource across the release
+      # in a single invocation — documented Helm behavior, not reinvented
+      # here); hook-less pilots keep the existing per-target loop,
+      # byte-for-byte unchanged, in the health-check step below. This is
+      # in-progress fleet migration scaffolding, not the intended
+      # permanent design — tracked for deletion, together with
+      # reusable-security-gate.yml's own hook-detect step and the
+      # matching exemption in scripts/lib/lint_rules/chart.py's
+      # smoke_target rule, once every onboarded pilot has adopted a hook.
+      # See docs/CI-CONTRACT.md and docs/COMPOSED-SMOKE.md.
+      - name: Partition composed pilots by helm.sh/hook test resources
+        id: partition
+        env:
+          NAMESPACE: ${{ inputs.namespace }}
+        run: |
+          set -euo pipefail
+          : > /tmp/hook-pilots.txt
+          : > /tmp/nohook-pilots.txt
+          while IFS= read -r pilot; do
+            name="$(jq -r '.name' <<<"$pilot")"
+            helm template umbrella-ci "charts/${name}" -n "${NAMESPACE}" > "/tmp/rendered-${name}.yaml"
+            # Real YAML-aware parse, not a text grep — mirrors
+            # reusable-security-gate.yml's own hook-detect step (see its
+            # comment for the full rationale: quoted annotation keys
+            # break a text grep but not a real parser; hook values are
+            # comma-separated and must match "test" exactly, not as a
+            # substring, to exclude Helm 2's legacy test-success/
+            # test-failure values).
+            hook_count=$(yq eval-all '
+                [select(
+                  (.metadata.annotations["helm.sh/hook"] // ""
+                    | split(",")
+                    | map(sub("^\s+|\s+$"; "")))
+                  | any_c(. == "test")
+                )] | length
+              ' "/tmp/rendered-${name}.yaml") || {
+              echo "::error::helm.sh/hook detection (yq parse) failed for pilot '${name}'"
+              exit 1
+            }
+            if [ "${hook_count}" -gt 0 ]; then
+              echo "${name}" >> /tmp/hook-pilots.txt
+            else
+              echo "${name}" >> /tmp/nohook-pilots.txt
+            fi
+          done < /tmp/pilots.jsonl
+          echo "hook-bearing pilot(s): $(wc -l < /tmp/hook-pilots.txt | tr -d ' ')"
+          echo "hook-less pilot(s): $(wc -l < /tmp/nohook-pilots.txt | tr -d ' ')"
+
+      - name: helm test hook-bearing pilots (single release-wide run)
+        id: helm-test
+        env:
+          NAMESPACE: ${{ inputs.namespace }}
+        run: |
+          set -uo pipefail
+          if [ ! -s /tmp/hook-pilots.txt ]; then
+            echo "no hook-bearing pilots this run; skipping helm test"
+            exit 0
+          fi
+          echo "hook-bearing pilots covered by this run: $(paste -sd, /tmp/hook-pilots.txt)"
+          helm test umbrella-ci -n "${NAMESPACE}" --logs || {
+            echo "=== helm test failed: hook pod diagnostics ==="
+            kubectl -n "${NAMESPACE}" get pods -o wide || true
+            kubectl -n "${NAMESPACE}" get networkpolicies -o yaml || true
+            kubectl -n "${NAMESPACE}" get events --sort-by=.lastTimestamp | tail -30 || true
+            while IFS= read -r name; do
+              pod="$(kubectl -n "${NAMESPACE}" get pods -l "helm.sh/hook=test" \
+                -o jsonpath="{range .items[?(@.metadata.labels['app.kubernetes.io/instance']=='umbrella-ci')]}{.metadata.name}{'\n'}{end}" \
+                2>/dev/null | grep -F "$name" || true)"
+              [ -n "$pod" ] || continue
+              while IFS= read -r p; do
+                echo "--- describe pod/${p} ---"; kubectl -n "${NAMESPACE}" describe "pod/${p}" || true
+                for c in $(kubectl -n "${NAMESPACE}" get "pod/${p}" \
+                    -o jsonpath='{range .spec.containers[*]}{.name}{"\n"}{end}' 2>/dev/null); do
+                  echo "--- logs pod/${p} -c ${c} ---"
+                  kubectl -n "${NAMESPACE}" logs "pod/${p}" -c "${c}" --tail=100 || true
+                done
+              done <<< "$pod"
+            done < /tmp/hook-pilots.txt
+            exit 1
+          }
 
       # Small companion probe script: every fullstack-template pilot exposes
       # BOTH a frontend and a backend Service-backed HTTP readiness
@@ -391,8 +506,29 @@ jobs:
           set -uo pipefail
           fail_any=0
           : > /tmp/pilot-results.tsv
+
+          # Hook-bearing pilots were already covered by the single
+          # release-wide `helm test` run above (partition step); record
+          # their result here without re-probing — TEMPORARY migration
+          # scaffolding, see the partition step's own comment.
+          if [ -s /tmp/hook-pilots.txt ]; then
+            while IFS= read -r name; do
+              chart_ref="$(jq -r --arg n "$name" 'select(.name == $n) | .chart_ref' /tmp/pilots.jsonl)"
+              if [ "${{ steps.helm-test.outcome }}" = "success" ]; then
+                printf '%s\t%s\tOK (helm test)\tn/a\n' "$name" "$chart_ref" >> /tmp/pilot-results.tsv
+              else
+                echo "::error::${name}: covered by helm test, which failed"
+                printf '%s\t%s\tFAIL (helm test)\tn/a\n' "$name" "$chart_ref" >> /tmp/pilot-results.tsv
+                fail_any=1
+              fi
+            done < /tmp/hook-pilots.txt
+          fi
+
           while IFS= read -r pilot; do
             name="$(jq -r '.name' <<<"$pilot")"
+            if grep -qxF "$name" /tmp/hook-pilots.txt; then
+              continue  # covered above by the release-wide helm test
+            fi
             chart_ref="$(jq -r '.chart_ref' <<<"$pilot")"
             echo "=== health-checking pilot: ${name} ==="
             if ! helm template umbrella-ci "charts/${name}" \

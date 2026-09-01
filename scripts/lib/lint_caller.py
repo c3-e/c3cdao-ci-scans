@@ -84,6 +84,7 @@ KNOWN_INPUTS = (
     "hardened_base_registry",
     "image_only",
     "namespace",
+    "publish_images",
     "release",
     "smoke_resources",
     "values_local",

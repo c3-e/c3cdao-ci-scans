@@ -2,8 +2,10 @@
 
 Static drift guards on .github/workflows/reusable-security-gate.yml and
 templates/callers/security-gate.yml: the workflow_call surface is exactly
-the 8 v0.6 inputs + 4 secrets, image-scan fans out over the plan matrix
-consuming per-leg artifacts with one designated source-SBOM leg, and the
+the v0.6 inputs (the original 7, plus hardened_base_registry for
+caller-declared registry tier and publish_images for the digest-verified
+quarantine publish mechanism) + 4 secrets, image-scan fans out over the
+plan matrix consuming per-leg artifacts with one designated source-SBOM leg, and the
 fan-in required-check context `security-scan / Security Gate` survives
 byte-for-byte. The smoke rewiring modifies the same file; these
 assertions keep the scan/fan-in surface from regressing.
@@ -25,6 +27,7 @@ V06_INPUTS = {
     "hardened_base_registry",
     "image_only",
     "namespace",
+    "publish_images",
     "release",
     "smoke_resources",
     "values_local",
@@ -53,7 +56,7 @@ def _workflow() -> dict:
     return yaml.safe_load(WORKFLOW.read_text())
 
 
-def test_workflow_call_inputs_are_exactly_the_v06_eight():
+def test_workflow_call_inputs_are_exactly_the_v06_set():
     call = _workflow()[True]["workflow_call"]  # YAML parses bare `on` as True
     assert set(call["inputs"]) == V06_INPUTS
 

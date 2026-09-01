@@ -10,9 +10,9 @@ push). The two are intentionally not folded together — different trigger
 model (every-push vs. merge-only) and different side-effect profile
 (read-only scans vs. registry writes) — see
 [PUBLISH-STAGING-CHART.md](PUBLISH-STAGING-CHART.md) for its own contract.
-A third, [`composed-smoke.yml`](COMPOSED-SMOKE.md), installs N pilot
-subcharts an umbrella repo already published via the second workflow,
-together, in one `kind` cluster — see
+A third workflow, [`composed-smoke.yml`](COMPOSED-SMOKE.md), installs N
+pilot subcharts an umbrella repo already published via the second
+workflow together in one `kind` cluster. See
 [COMPOSED-SMOKE.md](COMPOSED-SMOKE.md) for its own contract.
 
 The gate derives everything it builds, scans, and smokes from files your
@@ -188,7 +188,7 @@ else blocks the run before any build starts.
 | [`chart-undeclared`](#rule-chart-undeclared) | block | `image_only` is true but a Helm chart exists anywhere in the repo |
 | [`chart-resolve`](#rule-chart-resolve) | block | `helm template` fails on the declared chart (e.g. unresolved dependency) |
 | [`chart-readiness`](#rule-chart-readiness) | block | a rendered workload container lacks readiness |
-| [`smoke-target`](#rule-smoke-target) | block | no single Service-backed HTTP readiness target |
+| [`smoke-target`](#rule-smoke-target) | block | no single Service-backed HTTP readiness target (exempt when the chart carries a `helm.sh/hook: test` resource; see the rule's own note below) |
 | [`ship-set`](#rule-ship-set) | block | a rendered image is neither built nor a declared dependency |
 | [`built-unscheduled`](#rule-built-unscheduled) | warn | a built tag is never scheduled by the chart |
 | [`smoke-resource-unknown`](#rule-smoke-resource-unknown) | block | `smoke_resources` names a module outside the catalog |
@@ -319,6 +319,19 @@ of the pod labels; probe port equals the Service `targetPort`, falling
 back to `port`; named ports must match spelling). Zero or multiple
 targets block, naming the candidates. Remediation: expose exactly one
 HTTP readiness target through a matching Service.
+
+**Hook exemption (temporary fleet-migration state):** if any rendered
+resource carries a `helm.sh/hook` annotation whose value contains
+`test`, this rule passes regardless of the backed-candidate count (0, 1,
+or many). A chart in this state gets health-checked via `helm test`
+instead of the derived-target port-forward+curl probe; see
+`reusable-security-gate.yml`'s `cluster-smoke` job and
+`composed-smoke.yml`'s own equivalent hook partition, both documented
+below. `smoke_candidates()` and `derive_smoke_target.py` stay untouched
+by this exemption and remain the enforcement/derivation mechanism for
+hook-less charts. This dual-path state disappears once every onboarded
+pilot adopts a `helm test` hook, at which point the rule goes back to
+unconditionally requiring exactly one backed candidate.
 
 ### Rule: ship-set
 

@@ -1,0 +1,17 @@
+# Lint fixture: single violation — the publish-staging-chart ref is a
+# branch, not a full 40-hex commit SHA (publish-ref-pin).
+name: Publish Staging Chart
+
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  contents: read
+
+jobs:
+  publish-staging-chart:
+    if: github.event.pull_request.merged == true
+    uses: c3-e/c3cdao-ci-scans/.github/workflows/publish-staging-chart.yml@main
+    with:
+      chart_path: chart

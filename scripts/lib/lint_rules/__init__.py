@@ -20,12 +20,17 @@ Verdict = dict[str, str]
 ONBOARDING_DOC = "docs/CI-CONTRACT.md"
 
 
-def verdict(rule_id: str, message: str, level: str = "block") -> Verdict:
+def verdict(
+    rule_id: str, message: str, level: str = "block", doc: str = ONBOARDING_DOC
+) -> Verdict:
+    """`doc` lets a second lint module (e.g. the publish-staging-chart
+    caller lint) point its remediation_ref at its own rule-table doc
+    instead of the security-gate's docs/CI-CONTRACT.md default."""
     return {
         "rule_id": rule_id,
         "level": level,
         "message": message,
-        "remediation_ref": f"{ONBOARDING_DOC}#rule-{rule_id}",
+        "remediation_ref": f"{doc}#rule-{rule_id}",
     }
 
 
