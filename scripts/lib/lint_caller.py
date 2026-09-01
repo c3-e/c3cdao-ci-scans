@@ -83,6 +83,7 @@ KNOWN_INPUTS = (
     "compose_file",
     "image_only",
     "namespace",
+    "publish_images",
     "release",
     "smoke_resources",
     "values_local",

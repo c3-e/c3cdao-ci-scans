@@ -882,6 +882,7 @@ def test_unknown_input_rejects_arbitrary_keys_and_accepts_v06_surface(tmp_path):
         "release": "app-ci",
         "namespace": "app-ci",
         "smoke_resources": "postgres-pgvector",
+        "publish_images": True,
     }
     assert lint_caller_file(tmp_path, caller_yaml(with_map=v06)) == []
     verdicts = lint_caller_file(
