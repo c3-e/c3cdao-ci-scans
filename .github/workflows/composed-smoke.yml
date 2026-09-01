@@ -444,7 +444,27 @@ jobs:
             exit 0
           fi
           echo "hook-bearing pilots covered by this run: $(paste -sd, /tmp/hook-pilots.txt)"
-          helm test umbrella-ci -n "${NAMESPACE}" --logs
+          helm test umbrella-ci -n "${NAMESPACE}" --logs || {
+            echo "=== helm test failed: hook pod diagnostics ==="
+            kubectl -n "${NAMESPACE}" get pods -o wide || true
+            kubectl -n "${NAMESPACE}" get networkpolicies -o yaml || true
+            kubectl -n "${NAMESPACE}" get events --sort-by=.lastTimestamp | tail -30 || true
+            while IFS= read -r name; do
+              pod="$(kubectl -n "${NAMESPACE}" get pods -l "helm.sh/hook=test" \
+                -o jsonpath="{range .items[?(@.metadata.labels['app.kubernetes.io/instance']=='umbrella-ci')]}{.metadata.name}{'\n'}{end}" \
+                2>/dev/null | grep -F "$name" || true)"
+              [ -n "$pod" ] || continue
+              while IFS= read -r p; do
+                echo "--- describe pod/${p} ---"; kubectl -n "${NAMESPACE}" describe "pod/${p}" || true
+                for c in $(kubectl -n "${NAMESPACE}" get "pod/${p}" \
+                    -o jsonpath='{range .spec.containers[*]}{.name}{"\n"}{end}' 2>/dev/null); do
+                  echo "--- logs pod/${p} -c ${c} ---"
+                  kubectl -n "${NAMESPACE}" logs "pod/${p}" -c "${c}" --tail=100 || true
+                done
+              done <<< "$pod"
+            done < /tmp/hook-pilots.txt
+            exit 1
+          }
 
       # Small companion probe script: every fullstack-template pilot exposes
       # BOTH a frontend and a backend Service-backed HTTP readiness
