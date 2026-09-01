@@ -10,9 +10,8 @@ For the umbrella (`c3-e/c3cdao-apps`) consumer-side chart-shape contract and
 the full pilot onboarding sequence (including wiring this workflow into a
 new pilot's own fork repo), see `PILOT-ONBOARDING-RUNBOOK.md` in that repo.
 
-A downstream consumer of this workflow's own output is
-[`composed-smoke.yml`](COMPOSED-SMOKE.md) — the umbrella's own reusable
-workflow that installs every pilot's published `charts-staging`/
+This workflow's output feeds [`composed-smoke.yml`](COMPOSED-SMOKE.md): a
+reusable workflow that installs every pilot's published `charts-staging`/
 `images-staging` artifacts together in one `kind` cluster. See
 [COMPOSED-SMOKE.md](COMPOSED-SMOKE.md) for its contract.
 
@@ -32,29 +31,29 @@ close.
 | Input | Type | Default | Where the value comes from |
 | --- | --- | --- | --- |
 | `chart_path` | string | *(required)* | Path (relative to the calling repo root) of the Helm chart to package and push on merge. The pilot name (used in the staging path and pin naming convention) is derived as this path's basename. |
-| `publish_images` | boolean | `false` | When `true` (and the merge's base branch is `ci-scans` or `main` — narrower than the chart trigger, since image publishes are a heavier, more security-sensitive write), the `publish-images-deferred` job retags each declared `images[]` tuple's **already-built, already-scanned** quarantine image into `images-staging` by digest. It does **not** build anything itself — see [Digest-verified quarantine publish](#digest-verified-quarantine-publish) below for the full mechanism and its same-repo-PR requirement. Default `false` keeps this input inert. |
-| `images` | string (JSON) | `"[]"` | JSON array of image build tuples to publish when `publish_images` is `true`: `{"name","target","dockerfile","context","build_args"?}`. `name` becomes the `<image-name>` path segment (see [Output](#output) below). `target` is **required**: the exact bake target name the SAME PR's `reusable-security-gate.yml` `build` job used for this image (the name its matrix fans out over) — used to reconstruct the quarantine ref this job retags from; a mismatch here 404s the quarantine lookup and fails the job closed. `dockerfile`/`context`/`build_args` are retained in the tuple shape for documentation/audit purposes only — this job no longer builds, so it does not read them (a future cleanup may drop them once the migration is complete; see [Digest-verified quarantine publish](#digest-verified-quarantine-publish)). Ignored when `publish_images` is `false`. |
-| `require_hardened_bases` | boolean | `false` | Set `true` if any declared image's Dockerfile `FROM`s a hardened base — Chainguard (`cgr.dev`) and/or Iron Bank (`registry1.dso.mil`) — and needs the corresponding credential secret pair to pull it during build. Passed straight through to this repo's own [`hardened-registry-login`](../.github/actions/hardened-registry-login/action.yml) composite action's `require-hardened-bases` input — the SAME shared mechanism `reusable-security-gate.yml`'s `plan`/`build` jobs already use, reused here rather than a second, narrower login step. Fails closed (job errors) when `true` and neither credential pair is configured; when `false` (default), builds proceed on the Dockerfile's own declared bases with no hardened-registry login attempt. (Renamed from this input's earlier, Chainguard-only `cgr_pull_required` name once the per-repo survey found several pilots — `geoint`, `pipeassist`, `dtic`'s fallback path — need Iron Bank instead of or in addition to Chainguard.) |
+| `publish_images` | boolean | `false` | When `true` (and the merge's base branch is `ci-scans` or `main`, narrower than the chart trigger since image publishes are a heavier, more security-sensitive write), the `publish-images-deferred` job retags each declared `images[]` tuple's **already-built, already-scanned** quarantine image into `images-staging` by digest. It does **not** build anything; see [Digest-verified quarantine publish](#digest-verified-quarantine-publish) below for the full mechanism and its same-repo-PR requirement. Default `false` keeps this input inert. |
+| `images` | string (JSON) | `"[]"` | JSON array of image build tuples to publish when `publish_images` is `true`: `{"name","target","dockerfile","context","build_args"?}`. `name` becomes the `<image-name>` path segment (see [Output](#output) below). `target` is **required**: the exact bake target name the same PR's `reusable-security-gate.yml` `build` job used for this image (the name its matrix fans out over), used to reconstruct the quarantine ref this job retags from; a mismatch here 404s the quarantine lookup and fails the job closed. `dockerfile`/`context`/`build_args` are retained in the tuple shape for documentation/audit purposes only; this job no longer builds, so it does not read them (a future cleanup may drop them once the migration is complete; see [Digest-verified quarantine publish](#digest-verified-quarantine-publish)). Ignored when `publish_images` is `false`. |
+| `require_hardened_bases` | boolean | `false` | Set `true` if any declared image's Dockerfile `FROM`s a hardened base (Chainguard's `cgr.dev` and/or Iron Bank's `registry1.dso.mil`) and needs the corresponding credential secret pair to pull it during build. Passed straight through to this repo's [`hardened-registry-login`](../.github/actions/hardened-registry-login/action.yml) composite action's `require-hardened-bases` input, the same mechanism `reusable-security-gate.yml`'s `plan`/`build` jobs already use, reused here instead of a second, narrower login step. Fails closed (job errors) when `true` and neither credential pair is configured; when `false` (default), builds proceed on the Dockerfile's declared bases with no hardened-registry login attempt. (Renamed from this input's earlier, Chainguard-only `cgr_pull_required` name once the per-repo survey found several pilots (`geoint`, `pipeassist`, `dtic`'s fallback path) needing Iron Bank instead of or in addition to Chainguard.) |
 
 **Cross-repo gotcha (worth checking before filling in `images:` for any pilot):**
 some pilots maintain multiple wrapper-chart copies (e.g. `c3cdao-cra` has both
 an older `helm/aca` and the actually-consumed `helm/contract-automation`).
 Always source image build coordinates (Dockerfile paths, build contexts,
-build args) from the chart the umbrella's own `Chart.yaml` actually depends
-on — confirm which one that is via that pilot repo's own
+build args) from the chart the umbrella's `Chart.yaml` actually depends
+on. Confirm which one that is via that pilot repo's
 `publish-staging-chart-caller.yml`'s `chart_path` input, not by guessing from
 directory names. A wrong guess here silently builds/publishes images for a
 chart nobody consumes.
 
 ## Secrets
 
-None required for the base case. Authentication for the chart-publish job is
-the calling job's own `GITHUB_TOKEN` with `permissions: packages: write` —
+None required for the base case. Authentication for the chart-publish job
+uses the calling job's `GITHUB_TOKEN` with `permissions: packages: write`,
 Actions-native, not a personal PAT (a personal PAT lacks `write:packages` and
 requires an interactive scope grant, which isn't viable for CI). The
 image-publish job (`publish-images-deferred`) uses the same `GITHUB_TOKEN`
 for its GHCR login and additionally accepts four **optional**
-`workflow_call` secrets, only needed when `require_hardened_bases: true` —
+`workflow_call` secrets, needed only when `require_hardened_bases: true`:
 one credential pair per hardened registry, mirroring exactly what
 `reusable-security-gate.yml`'s own callers already configure for the same
 underlying `hardened-registry-login` composite action, so a repo that has
@@ -65,7 +64,7 @@ use them here:
 | --- | --- | --- |
 | `CGR_PULL_TOKEN` | Only if `require_hardened_bases: true` and the image(s) need Chainguard | Chainguard (`cgr.dev`) registry pull token. |
 | `CGR_PULL_USERNAME` | Only if `require_hardened_bases: true` and the image(s) need Chainguard | Chainguard (`cgr.dev`) registry pull username. |
-| `IRONBANK_TOKEN` | Only if `require_hardened_bases: true` and the image(s) need Iron Bank | Iron Bank (`registry1.dso.mil`) pull token — e.g. `geoint`'s backend/frontend, `pipeassist`'s backend, `dtic`'s fallback path. |
+| `IRONBANK_TOKEN` | Only if `require_hardened_bases: true` and the image(s) need Iron Bank | Iron Bank (`registry1.dso.mil`) pull token, e.g. `geoint`'s backend/frontend, `pipeassist`'s backend, `dtic`'s fallback path. |
 | `IRONBANK_USERNAME` | Only if `require_hardened_bases: true` and the image(s) need Iron Bank | Iron Bank (`registry1.dso.mil`) pull username. |
 
 Both pairs may be configured at once (a repo whose images span both
@@ -87,8 +86,8 @@ Image artifacts (one per `images[]` tuple, only when `publish_images: true`):
 ghcr.io/c3-e/images-staging/<pilot>/<image-name>:0.0.0-mech.<pr-number>.<short-sha>
 ```
 
-Unlike `helm push` (which always appends the chart's own name as an extra
-path component — see the comment above), `docker buildx imagetools create
+Unlike `helm push` (which always appends the chart's name as an extra
+path component; see the comment above), `docker buildx imagetools create
 --tag` does **not** infer or append any path segment: the destination tag
 the job constructs is the full, exact path, including both `<pilot>` and
 `<image-name>`.
@@ -102,9 +101,9 @@ artifacts, not releases.
 ## Digest-verified quarantine publish
 
 `publish_images: true` never rebuilds an image. Instead it retags, by
-digest, an image the SAME pull request's `reusable-security-gate.yml` run
-already built and scanned. This is the sole publish mechanism — there is
-no rebuild fallback.
+digest, an image the same pull request's `reusable-security-gate.yml` run
+already built and scanned. This is the sole publish mechanism: no
+rebuild fallback exists.
 
 **How it works, end to end:**
 
@@ -118,38 +117,39 @@ no rebuild fallback.
    ```
    `<repo>` is `github.repository` (lowercased), `<target>` is the bake
    target name, `<short-head-sha>` is the first 7 characters of the PR's
-   HEAD commit SHA. This happens BEFORE image-scan runs — the quarantine
-   tag is not itself a scan attestation, it is a candidate later retrieved
-   only once the whole gate run (including image-scan) has gone green.
+   HEAD commit SHA. This happens before image-scan runs, so the
+   quarantine tag is not itself a scan attestation: it's a candidate
+   retrieved later, only once the whole gate run (including image-scan)
+   has gone green.
 2. On merge, this workflow's `publish-images-deferred` job reconstructs
    the identical quarantine ref from the same three fields
    (`github.repository`, the PR number, and
-   `github.event.pull_request.head.sha` — deliberately the PR's head SHA,
-   not the merge commit SHA, since the quarantine push happened before any
-   merge existed) plus the `images[]` tuple's own `target` field.
+   `github.event.pull_request.head.sha`, deliberately the PR's head SHA
+   rather than the merge commit SHA, since the quarantine push happened
+   before any merge existed) plus the `images[]` tuple's `target` field.
 3. It runs `docker buildx imagetools inspect` against that ref. If the
    image is missing or has expired out of the quarantine namespace's own
    GHCR retention, the job fails closed:
    ```
    ::error::quarantine image missing or expired for target <target>; PR must be re-scanned via a fresh gate run before merge
    ```
-   There is no rebuild fallback — a missing quarantine image means the PR
-   must go through a fresh `reusable-security-gate.yml` run (with
-   `publish_images: true`) before it can be merged and published.
+   No rebuild fallback exists: a missing quarantine image means the PR
+   needs a fresh `reusable-security-gate.yml` run (with
+   `publish_images: true`) before it can merge and publish.
 4. On success, the job extracts the quarantine manifest's digest and runs
-   `docker buildx imagetools create --tag <dest> <quarantine-ref>@<digest>`
-   — a registry-side manifest/blob copy, not a rebuild or a client-side
-   pull. For a single-platform source (every build in this fleet today —
+   `docker buildx imagetools create --tag <dest> <quarantine-ref>@<digest>`,
+   a registry-side manifest/blob copy, not a rebuild or a client-side
+   pull. For a single-platform source (every build in this fleet today;
    see [CI-CONTRACT.md](CI-CONTRACT.md), `linux/amd64` only), `imagetools
    create` wraps the quarantined manifest in a new single-entry image
-   index (manifest list) and tags THAT as `<dest>` — confirmed live via
-   `selftest-publish-images.yml`'s own run history. The wrapped child
+   index (manifest list) and tags that as `<dest>`, confirmed live via
+   `selftest-publish-images.yml`'s run history. The wrapped child
    manifest is copied unmodified, keeping its original digest (nothing is
    rebuilt or re-derived); only the outer index is new bytes. So
-   `<dest>`'s own top-level digest differs from the quarantine digest, but
+   `<dest>`'s top-level digest differs from the quarantine digest, but
    `docker buildx imagetools inspect <dest> --raw | jq '.manifests[].digest'`
    still shows the untouched quarantine digest, and `docker pull <dest>`
-   transparently resolves to that same, unmodified image
+   resolves to that same, unmodified image
    `reusable-security-gate.yml`'s image-scan job scanned.
 
 **Fork-PR caveat:** this mechanism assumes same-repo PRs. `GITHUB_TOKEN` is
@@ -160,7 +160,7 @@ namespace in the first place, and this job's retag step would fail closed
 on the missing-image path for the same reason. Callers publishing images
 from fork PRs are not supported by this mechanism today.
 
-## Worked example — chart only
+## Worked example: chart only
 
 ```yaml
 jobs:
@@ -171,7 +171,7 @@ jobs:
       chart_path: helm/rms-copilot
 ```
 
-## Worked example — chart + images
+## Worked example: chart + images
 
 ```yaml
 jobs:
@@ -188,10 +188,10 @@ jobs:
         ]
 ```
 
-`target` must equal the bake target name the SAME PR's
+`target` must equal the bake target name the same PR's
 `reusable-security-gate.yml` `build` job matrixed over for this image (see
 [Digest-verified quarantine publish](#digest-verified-quarantine-publish));
-it usually — but not necessarily — matches `name`.
+it usually, but not necessarily, matches `name`.
 
 Produces, from one merge (PR `#94`, merge commit `c6a53e6...`):
 
@@ -201,12 +201,12 @@ ghcr.io/c3-e/images-staging/rms-copilot/frontend:0.0.0-mech.94.c6a53e6
 ghcr.io/c3-e/images-staging/rms-copilot/backend:0.0.0-mech.94.c6a53e6
 ```
 
-## Worked example — images with `build_args` (shared/generic Dockerfile)
+## Worked example: images with `build_args` (shared/generic Dockerfile)
 
-For a pilot whose Dockerfile is a shared, generic per-app template (not
-baked with the app's own identity) — e.g. `cra`'s `aca-backend`/
+For a pilot whose Dockerfile is a shared, generic per-app template, not
+baked with the app's identity (e.g. `cra`'s `aca-backend`/
 `aca-frontend`, built from the shared `containers/fullstack-backend`/
-`containers/fullstack-frontend` engine Dockerfiles — supply the per-app
+`containers/fullstack-frontend` engine Dockerfiles), supply the per-app
 values as `build_args`. Any tuple that needs no build args (like
 `backend` below) can simply omit the field:
 
@@ -241,31 +241,31 @@ values as `build_args`. Any tuple that needs no build args (like
         ]
 ```
 
-**`build_args`/`dockerfile`/`context` no longer drive a build in THIS
-workflow** (see [Digest-verified quarantine publish](#digest-verified-quarantine-publish)
-— `publish-images-deferred` only retags an already-built quarantine image
+**`build_args`/`dockerfile`/`context` no longer drive a build in this
+workflow** (see [Digest-verified quarantine publish](#digest-verified-quarantine-publish):
+`publish-images-deferred` only retags an already-built quarantine image
 by digest). They remain useful as documentation of how the image was
-actually built, and matter to the ONE place that still builds it: the
-SAME PR's `reusable-security-gate.yml` Compose file / bake target
-definition, which is the real source of truth for build args, base image,
-and Dockerfile path. Note on `VITE_API_URL` (and any other
-frontend-runtime-config build arg) for that build: it only proves the
-image **builds and publishes**, not that its baked-in runtime config is
-correct for any particular consumer — a staging-only placeholder value
-(e.g. `http://localhost`) is sufficient there, and a downstream
-composed-smoke consumer that needs the real API URL at runtime overrides
-it via its own mechanism (e.g. an env var or config map at `helm install`
-time) rather than rebuilding the image with a different value.
+actually built, and matter to the one place that still builds it: the
+same PR's `reusable-security-gate.yml` Compose file / bake target
+definition, the real source of truth for build args, base image, and
+Dockerfile path. On `VITE_API_URL` (and any other frontend-runtime-config
+build arg): that build only proves the image **builds and publishes**,
+not that its baked-in runtime config is correct for any particular
+consumer. A staging-only placeholder value (e.g. `http://localhost`)
+works fine there; a downstream composed-smoke consumer that needs the
+real API URL at runtime overrides it through its own mechanism (e.g. an
+env var or config map at `helm install` time) instead of rebuilding the
+image with a different value.
 
-## Worked example — `require_hardened_bases` (Chainguard and/or Iron Bank)
+## Worked example: `require_hardened_bases` (Chainguard and/or Iron Bank)
 
-`require_hardened_bases` on THIS workflow governs only the login side
+`require_hardened_bases` on this workflow governs only the login side
 effect this job's `publish-images-deferred` step performs before its
 `imagetools inspect`/`imagetools create` calls (both operate registry-side
 against `ghcr.io`, but the same shared `hardened-registry-login` action
 is reused here for consistency with `reusable-security-gate.yml`'s own
 plan/build jobs). The actual base-image pull happened earlier, in the
-gate's own `build` job — set `require_hardened_bases` on both workflows
+gate's own `build` job. Set `require_hardened_bases` on both workflows
 consistently, since each governs its own registry-credential-login step
 independently and neither reads the other's:
 
