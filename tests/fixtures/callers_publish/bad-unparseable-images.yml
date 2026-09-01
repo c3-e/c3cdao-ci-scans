@@ -1,0 +1,20 @@
+# Lint fixture: single violation — images: is not valid JSON, and
+# publish_images is true (publish-images-unparseable).
+name: Publish Staging Chart
+
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish-staging-chart:
+    if: github.event.pull_request.merged == true
+    uses: c3-e/c3cdao-ci-scans/.github/workflows/publish-staging-chart.yml@0123456789abcdef0123456789abcdef01234567  # v0.1.0
+    with:
+      chart_path: chart
+      publish_images: true
+      images: "not json"

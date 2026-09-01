@@ -366,3 +366,111 @@ chart dependency), or a registry-push failure fails the calling job closed —
 visible as a red step on the PR's Checks tab, never a green run with a
 missing or malformed artifact. This is not (currently) a required check; it
 reports independently of the repo's own existing gate.
+
+## Caller lint
+
+`scripts/lib/lint_caller_publish.py` is the caller-lint equivalent of
+`reusable-security-gate.yml`'s `lint_caller.py`, scoped to this workflow's
+own actual shape (no Compose file, no build matrix, no `image_only` mode —
+so none of `lint_caller.py`'s convention pipeline applies). Every real bug
+found onboarding Phase 2 pilots — a missing `target` field on an
+`images[]` tuple, a missing caller-side `packages: write` permission, a
+missing `routes:` key in the chart's `values.yaml` — was previously
+discovered ad hoc, per pilot, at merge time; this catches the first two
+mechanically at lint time and the third as an early warning. Run it via:
+
+```sh
+uv run scripts/lib/lint_caller_publish.py <caller.yml> [--consumer-root <path>]
+```
+
+`--consumer-root` is required only to enable the `publish-chart-routes-missing`
+warn rule (it needs the caller's `chart_path` resolved against the actual
+consumer checkout to find `values.yaml`); the rest of the rules run against
+the caller file alone. See `templates/callers/publish-staging-chart.yml`
+for a starting caller you can copy into your own repo.
+
+### Rule table
+
+Every lint finding carries a `remediation_ref` pointing at one of the rule
+headings below. `publish-chart-routes-missing` is **warn**: it reports
+without blocking. Everything else blocks the run.
+
+| Rule id | Level | Check |
+|---|---|---|
+| [`publish-ref-pin`](#rule-publish-ref-pin) | block | `uses:` is not pinned by a full 40-hex commit SHA |
+| [`publish-decoy-job`](#rule-publish-decoy-job) | block | more than one job in the caller calls `publish-staging-chart.yml` |
+| [`publish-images-target-required`](#rule-publish-images-target-required) | block | an `images[]` tuple has no non-empty `target` field |
+| [`publish-images-unparseable`](#rule-publish-images-unparseable) | block | `images:` is not a valid JSON array while `publish_images` is `true` |
+| [`publish-packages-write-missing`](#rule-publish-packages-write-missing) | block | `publish_images: true` is set but no `permissions:` block grants `packages: write` |
+| [`publish-permissions-both-levels`](#rule-publish-permissions-both-levels) | block | `permissions:` is declared at both the workflow level and the calling job level |
+| [`publish-chart-routes-missing`](#rule-publish-chart-routes-missing) | warn | the chart's `values.yaml` declares no non-empty `routes:` key |
+| [`unreadable-caller`](#rule-unreadable-caller) | block | the caller workflow cannot be parsed, or no job's `uses:` matches `publish-staging-chart.yml` |
+
+### Rule: publish-ref-pin
+
+The `publish-staging-chart.yml` ref in `uses:` must be pinned by a full
+40-hex commit SHA; record the release tag as a trailing comment. Mirrors
+`lint_caller.py`'s `gate-ref-pin` rule for the security gate. Tags and
+branches (including `@main`) block.
+
+### Rule: publish-decoy-job
+
+Exactly one job may call `publish-staging-chart.yml`, run or not. This
+workflow's own "Resolve callee (ci-scans) ref" step takes the FIRST
+`uses:` match in the caller file (same first-match parse
+`reusable-security-gate.yml`'s resolver uses) — a second, differently
+pinned job calling this workflow is a decoy vector against that resolver,
+exactly the reasoning behind `lint_caller.py`'s `decoy-gate-job` rule.
+
+### Rule: publish-images-target-required
+
+Every tuple in the `images[]` JSON array must carry a non-empty `target`
+field: the exact bake target name the same PR's `reusable-security-gate.yml`
+`build` job used for this image. Checked only when `publish_images` is
+`true` (an unused `images:` value is inert). A missing `target` means the
+quarantine-ref lookup 404s at merge time — this used to be discovered only
+then; now it's caught at lint time.
+
+### Rule: publish-images-unparseable
+
+`images:` must parse as a JSON array. Checked only when `publish_images` is
+`true` — `publish-images-deferred`'s matrix expression
+(`${{ fromJSON(inputs.images) }}`) fails at merge time on anything else.
+
+### Rule: publish-packages-write-missing
+
+When `publish_images: true` is set, some `permissions:` block on the caller
+(workflow-level or job-level) must grant `packages: write`. This is the
+exact bug that caused a real, hard-to-diagnose failure in production
+onboarding: a **missing grant**, not a missing declaration — GitHub Actions
+caps a reusable workflow's granted permissions at whatever the caller
+itself grants, independent of the callee's own `permissions:` block.
+Without it, `publish-images-deferred`'s `imagetools create` push fails at
+merge time with a registry-permission error, not a clean, named lint
+finding.
+
+### Rule: publish-permissions-both-levels
+
+`permissions:` must not be declared at both the workflow level and the
+calling job level on the same caller. Confirmed live (see the "Caller
+gotcha" worked example above) to silently produce
+`conclusion: startup_failure` with zero jobs allocated and no error
+message anywhere in the API or the Actions UI.
+
+### Rule: publish-chart-routes-missing
+
+**Warn only.** The declared `chart_path`'s `values.yaml` should declare a
+non-empty `routes:` key, either top-level or nested one level under
+`fullstack-template.routes:` — the same two shapes the "Chart-shape
+validation" runtime check above enforces at merge time. Reported as a
+warning rather than a block because a brand-new pilot's chart may not
+exist yet at lint time; the real, blocking enforcement of this contract
+remains the runtime `check-jsonschema` step. Fixing it before merge avoids
+discovering the gap only when the merge-time step fails.
+
+### Rule: unreadable-caller
+
+The caller workflow must parse as YAML with a non-empty `jobs:` mapping,
+and at least one job's `uses:` must match `publish-staging-chart.yml`.
+Fails closed rather than silently reporting a clean run for an
+unparseable or unrelated caller file.

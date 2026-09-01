@@ -1,0 +1,22 @@
+# Lint fixture: single violation — publish_images: true but no
+# permissions: block anywhere grants packages: write
+# (publish-packages-write-missing). This is the exact bug that caused a
+# real, hard-to-diagnose failure in production onboarding.
+name: Publish Staging Chart
+
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  contents: read
+
+jobs:
+  publish-staging-chart:
+    if: github.event.pull_request.merged == true
+    uses: c3-e/c3cdao-ci-scans/.github/workflows/publish-staging-chart.yml@0123456789abcdef0123456789abcdef01234567  # v0.1.0
+    with:
+      chart_path: chart
+      publish_images: true
+      images: |
+        [{"name": "app", "target": "app", "dockerfile": "Dockerfile", "context": "."}]
