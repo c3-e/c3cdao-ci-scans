@@ -32,7 +32,16 @@ on:
         type: string
         required: true
       umbrella_values:
-        description: "Path to the caller's values.yaml (repo-root-relative)."
+        description: >-
+          Repo-root-relative path(s) to the caller's values file(s),
+          newline- or comma-separated. Each is passed to `helm upgrade
+          --install` as its own `-f`, in the given order (last wins on
+          conflict) — same semantics as stacking `-f` flags by hand. This
+          lets a caller layer a small CI-only overlay (e.g. placeholder
+          credentials or a smoke-fixture DB wiring that must NOT leak into
+          the same file's local/prod defaults) on top of its base
+          values.yaml, without duplicating it. Default is unchanged
+          single-file behavior for existing callers.
         type: string
         default: values.yaml
       namespace:
@@ -336,9 +345,18 @@ jobs:
         run: |
           set -euo pipefail
           mapfile -t flags < <(cat /tmp/disable-flags.txt /tmp/install-flags.txt)
+          # UMBRELLA_VALUES may be a single path (existing callers, unchanged
+          # behavior) or a newline/comma-separated list — each becomes its
+          # own -f, in order, so a caller can layer a small CI-only overlay
+          # on top of its base values.yaml without duplicating it.
+          mapfile -t value_files < <(printf '%s' "${UMBRELLA_VALUES}" | tr ',' '\n' | sed '/^[[:space:]]*$/d')
+          value_flags=()
+          for vf in "${value_files[@]}"; do
+            value_flags+=("-f" "$vf")
+          done
           helm upgrade --install umbrella-ci . \
             -n "${NAMESPACE}" \
-            -f "${UMBRELLA_VALUES}" \
+            "${value_flags[@]}" \
             "${flags[@]}" \
             --wait --timeout 10m || {
               echo "=== helm install failed: cluster diagnostics ==="
@@ -346,7 +364,19 @@ jobs:
               kubectl -n "${NAMESPACE}" get events --sort-by=.lastTimestamp | tail -30 || true
               for p in $(kubectl -n "${NAMESPACE}" get pods -o name 2>/dev/null); do
                 echo "--- describe ${p} ---"; kubectl -n "${NAMESPACE}" describe "${p}" | tail -25 || true
-                echo "--- logs ${p} ---"; kubectl -n "${NAMESPACE}" logs "${p}" --all-containers --tail=40 || true
+                # `kubectl logs --all-containers` does NOT reliably cover
+                # initContainers (confirmed live: a crash-looping migrate
+                # init container's own output never showed up, only the
+                # main container's "PodInitializing" placeholder) — name
+                # every container AND initContainer explicitly instead.
+                for c in $(kubectl -n "${NAMESPACE}" get "${p}" \
+                    -o jsonpath='{range .spec.initContainers[*]}{.name}{"\n"}{end}{range .spec.containers[*]}{.name}{"\n"}{end}' \
+                    2>/dev/null); do
+                  echo "--- logs ${p} -c ${c} ---"
+                  kubectl -n "${NAMESPACE}" logs "${p}" -c "${c}" --tail=100 || true
+                  echo "--- logs ${p} -c ${c} (previous attempt, if any) ---"
+                  kubectl -n "${NAMESPACE}" logs "${p}" -c "${c}" --previous --tail=100 2>/dev/null || true
+                done
               done
               exit 1
             }
