@@ -139,8 +139,18 @@ no rebuild fallback.
 4. On success, the job extracts the quarantine manifest's digest and runs
    `docker buildx imagetools create --tag <dest> <quarantine-ref>@<digest>`
    — a registry-side manifest/blob copy, not a rebuild or a client-side
-   pull. The digest landing in `images-staging` is byte-for-byte the same
-   image `reusable-security-gate.yml`'s image-scan job scanned.
+   pull. For a single-platform source (every build in this fleet today —
+   see [CI-CONTRACT.md](CI-CONTRACT.md), `linux/amd64` only), `imagetools
+   create` wraps the quarantined manifest in a new single-entry image
+   index (manifest list) and tags THAT as `<dest>` — confirmed live via
+   `selftest-publish-images.yml`'s own run history. The wrapped child
+   manifest is copied unmodified, keeping its original digest (nothing is
+   rebuilt or re-derived); only the outer index is new bytes. So
+   `<dest>`'s own top-level digest differs from the quarantine digest, but
+   `docker buildx imagetools inspect <dest> --raw | jq '.manifests[].digest'`
+   still shows the untouched quarantine digest, and `docker pull <dest>`
+   transparently resolves to that same, unmodified image
+   `reusable-security-gate.yml`'s image-scan job scanned.
 
 **Fork-PR caveat:** this mechanism assumes same-repo PRs. `GITHUB_TOKEN` is
 force-read-only for `pull_request` events triggered from a fork repo (a

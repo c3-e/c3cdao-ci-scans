@@ -389,10 +389,16 @@ jobs:
           echo "found ${QUARANTINE_REF} @ ${DIGEST}"
 
       # Retag by digest — no rebuild. `imagetools create` is a registry-side
-      # copy (manifest/blob-mount, no local pull of image layers), so the
-      # digest landing in images-staging is byte-for-byte the SAME image
-      # reusable-security-gate.yml's image-scan job already scanned; nothing
-      # is rebuilt or re-derived here.
+      # copy (manifest/blob-mount, no local pull of image layers): for a
+      # single-platform source (every build in this fleet today is
+      # linux/amd64 only) it wraps the quarantined manifest, unmodified,
+      # in a new single-entry image index and tags THAT as $DEST —
+      # confirmed live via selftest-publish-images.yml's own run history
+      # (see docs/PUBLISH-STAGING-CHART.md for the full explanation). The
+      # wrapped child manifest keeps its original digest; `docker pull
+      # $DEST` transparently resolves to it, so nothing is rebuilt or
+      # re-derived here even though $DEST's own top-level digest (the new
+      # index) differs from $DIGEST.
       - name: Retag quarantine image into images-staging
         env:
           QUARANTINE_REF: ${{ steps.quarantine.outputs.ref }}

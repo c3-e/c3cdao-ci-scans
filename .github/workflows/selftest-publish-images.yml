@@ -173,23 +173,36 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # The actual claim under test: the digest landing in images-staging
-      # is byte-for-byte the SAME digest that was quarantined and scanned —
+      # The actual claim under test: the image landing in images-staging is
+      # byte-for-byte the SAME manifest that was quarantined and scanned —
       # not a rebuild, not a re-derivation.
+      #
+      # `docker buildx imagetools create --tag DEST SRC@DIGEST` does NOT
+      # push DIGEST itself as DEST's top-level manifest — confirmed live on
+      # this selftest's own first run (see the run this comment's PR
+      # cites): for a single-platform source it wraps that source manifest
+      # in a NEW single-entry image index (manifest list) and tags THAT.
+      # The wrapped child manifest is copied unmodified and keeps its
+      # original digest — nothing is rebuilt or re-derived — but the
+      # OUTER index has its own, different digest (the index's own bytes
+      # are new). So the correct equality check is against the child
+      # manifest digest recorded inside DEST's index
+      # (`.manifests[].digest`), not DEST's own top-level digest.
       - name: Assert digests match
         env:
           QUARANTINE_DIGEST: ${{ needs.quarantine-push.outputs.quarantine_digest }}
           STAGING_REF: ${{ needs.retag.outputs.staging_ref }}
         run: |
           set -euo pipefail
-          STAGING_DIGEST="$(docker buildx imagetools inspect "$STAGING_REF" --format '{{json .Manifest.Digest}}' | tr -d '"')"
-          echo "quarantine digest: ${QUARANTINE_DIGEST}"
-          echo "staging digest:    ${STAGING_DIGEST}"
-          if [ "$QUARANTINE_DIGEST" != "$STAGING_DIGEST" ]; then
-            echo "::error::digest mismatch: images-staging digest does not match the quarantined, scan-verified image"
+          STAGING_CHILD_DIGEST="$(docker buildx imagetools inspect "$STAGING_REF" --raw \
+            | jq -r '.manifests[0].digest')"
+          echo "quarantine digest:        ${QUARANTINE_DIGEST}"
+          echo "staging index child digest: ${STAGING_CHILD_DIGEST}"
+          if [ "$QUARANTINE_DIGEST" != "$STAGING_CHILD_DIGEST" ]; then
+            echo "::error::digest mismatch: images-staging's wrapped manifest does not match the quarantined, scan-verified image"
             exit 1
           fi
-          echo "MATCH: images-staging digest == images-quarantine digest (no rebuild occurred)"
+          echo "MATCH: images-staging wraps the images-quarantine manifest unmodified, by its original digest (no rebuild occurred)"
 
       - name: Job summary
         if: always()
