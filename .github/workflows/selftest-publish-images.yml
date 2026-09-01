@@ -1,4 +1,4 @@
-name: Selftest — Publish Images (dry-run)
+name: Selftest — Publish Images (quarantine round trip)
 
 # WHY THIS FILE EXISTS (dry-run prerequisite for the real publish job):
 #
@@ -22,33 +22,37 @@ name: Selftest — Publish Images (dry-run)
 #       unsupported even if some hack could approximate it.
 #
 # So this is a SEPARATE, workflow_dispatch-only workflow that exercises the
-# exact same build+login+push mechanics publish-images-deferred uses (same
-# pinned actions, same GHCR auth pattern, same jq-based build_args
-# passthrough logic) directly against a fixed, trivial, harmless fixture
-# Dockerfile (tests/fixtures/hello-image/Dockerfile) — proving the mechanics
-# work in isolation from any specific pilot's real Dockerfile quirks, before
-# any real pilot caller depends on them (a real pass/fail gate, not a
-# smoke test of syntax alone). The destination tag is deliberately a
-# throwaway, unmistakably-selftest path
-# (images-staging/selftest/hello-image:workflow-dispatch-<run-id> — no
-# leading underscore: the OCI/Docker distribution spec's path-component
-# grammar disallows a leading `_`, confirmed live via this workflow's own
-# first dry-run attempt failing "invalid reference format" on an earlier
-# `_selftest/...` path) so it can never be confused with, or collide with,
-# a real pilot's staging artifact.
+# FULL round trip of the digest-verified quarantine publish mechanism (see
+# docs/PUBLISH-STAGING-CHART.md "Digest-verified quarantine publish"):
 #
-# Note: the real job's hardened-registry-login step (require_hardened_bases,
-# calling this repo's own shared .github/actions/hardened-registry-login
-# composite action for both Chainguard and Iron Bank credentials) is
-# intentionally NOT exercised here — the fixture Dockerfile is FROM scratch
-# (no hardened base to pull), so there is nothing for that step to prove
-# that isn't already proven by the identical docker/login-action-style
+#   1. quarantine-push: builds the fixture image (tests/fixtures/hello-image/
+#      Dockerfile) and tags+pushes it to images-quarantine, the identical
+#      "docker tag <tag> $QUARANTINE_REF && docker push $QUARANTINE_REF"
+#      mechanic reusable-security-gate.yml's build job performs when
+#      inputs.publish_images is true.
+#   2. retag: reconstructs the SAME quarantine ref from the SAME formula
+#      publish-images-deferred uses, runs `docker buildx imagetools
+#      inspect` against it (the identical fail-closed existence check —
+#      exercising the missing-image failure path is out of scope for a
+#      green selftest, but the success path here IS the real code, not a
+#      simulation of it), then `docker buildx imagetools create --tag`
+#      to retag it into images-staging by digest — no rebuild.
+#   3. verify: independently inspects the final images-staging digest and
+#      asserts it is byte-for-byte identical to the quarantine digest
+#      captured in step 1 — the actual claim this whole mechanism makes.
+#
+# The destination tags are deliberately throwaway, unmistakably-selftest
+# paths (images-quarantine/selftest/hello-image:... and
+# images-staging/selftest/hello-image:... keyed by this run's run_id) so
+# they can never be confused with, or collide with, a real pilot's
+# quarantine or staging artifact.
+#
+# Note: the real jobs' hardened-registry-login steps (require_hardened_bases)
+# are intentionally NOT exercised here — the fixture Dockerfile is FROM
+# scratch (no hardened base to pull), so there is nothing for that step to
+# prove that isn't already proven by the identical docker/login-action-style
 # mechanics already exercised for the GHCR login below (same credential-pair
-# pattern, just a different registry endpoint). This selftest exists to
-# prove the build+login+push mechanics on the common, no-hardened-base-
-# needed path; it deliberately does not need ci-scans's own composite
-# action tooling checked out, unlike the real job (see that job's own
-# "Resolve callee (ci-scans) ref" step for why it needs a second checkout).
+# pattern, just a different registry endpoint).
 
 on:
   workflow_dispatch:
@@ -58,78 +62,142 @@ permissions:
   packages: write
 
 jobs:
-  selftest-publish-image:
-    name: selftest publish image (workflow_dispatch dry-run)
+  quarantine-push:
+    name: 1. build + push to quarantine (mirrors reusable-security-gate.yml's build job)
     runs-on: ubuntu-latest
+    outputs:
+      quarantine_ref: ${{ steps.push.outputs.quarantine_ref }}
+      quarantine_digest: ${{ steps.push.outputs.quarantine_digest }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4, same pin publish-staging-chart.yml uses everywhere in that file
         with:
           ref: ${{ github.sha }}
 
-      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f  # v3, same pin publish-images-deferred uses
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f  # v3, same pin publish-images-deferred / reusable-security-gate.yml's build job use
 
       - name: Log in to GHCR (Actions-native GITHUB_TOKEN, not a personal PAT)
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9  # v3, same pin publish-images-deferred uses
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9  # v3, same pin publish-images-deferred / reusable-security-gate.yml's build job use
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Same jq-based JSON-object -> newline-delimited-string derivation
-      # publish-images-deferred's own "Derive build args" step uses,
-      # exercised here against a hardcoded fixture tuple (this workflow has
-      # no inputs.images to parse a matrix from) — GREETING is deliberately
-      # a NON-default value so the built image's LABEL is verifiably
-      # different from the Dockerfile's own ARG default, proving the value
-      # actually flowed through docker/build-push-action's build-args:
-      # input rather than silently falling back to the Dockerfile default.
-      # This proves the build_args passthrough code path end-to-end, not
-      # just the no-build-args path.
-      - name: Derive build args (mirrors publish-images-deferred's own step)
-        id: buildargs
-        env:
-          IMAGE_JSON: '{"name":"hello-image","dockerfile":"tests/fixtures/hello-image/Dockerfile","context":"tests/fixtures/hello-image","build_args":{"GREETING":"hello-from-selftest-workflow-dispatch"}}'
+      # Local build + load: this selftest builds the fixture directly with
+      # docker buildx (not docker/bake-action) since the round trip under
+      # test starts AFTER a local tag exists — how that local tag was
+      # produced (bake vs. plain buildx build) is orthogonal to the
+      # quarantine-push/retag/verify mechanics this workflow proves.
+      - name: Build fixture image (local, GREETING build arg exercises the same jq passthrough shape)
         run: |
           set -euo pipefail
-          ARGS="$(jq -r '(.build_args // {}) | to_entries[] | "\(.key)=\(.value)"' <<< "$IMAGE_JSON")"
-          {
-            echo "args<<BUILD_ARGS_EOF"
-            echo "$ARGS"
-            echo "BUILD_ARGS_EOF"
-          } >> "$GITHUB_OUTPUT"
+          docker buildx build \
+            --load \
+            --build-arg GREETING=hello-from-selftest-quarantine-roundtrip \
+            -t selftest/hello-image:local \
+            -f tests/fixtures/hello-image/Dockerfile \
+            tests/fixtures/hello-image
 
-      # Distinctive, unmistakably-throwaway destination — never confusable
-      # with a real pilot's images-staging/<pilot>/<image> artifact.
-      - name: Derive selftest destination tag
-        id: coords
+      # Identical mechanic to reusable-security-gate.yml build job's own
+      # "Push scan-verified image to quarantine" step: tag the locally-built
+      # image into the quarantine ref, push it, then capture its digest.
+      - name: Tag + push to quarantine, capture digest
+        id: push
         run: |
           set -euo pipefail
-          DEST="ghcr.io/c3-e/images-staging/selftest/hello-image:workflow-dispatch-${{ github.run_id }}"
-          echo "dest=${DEST}" >> "$GITHUB_OUTPUT"
-          echo "Publishing selftest fixture -> ${DEST}"
+          QUARANTINE_REF="ghcr.io/c3-e/images-quarantine/selftest/hello-image:workflow-dispatch-${{ github.run_id }}"
+          docker tag selftest/hello-image:local "$QUARANTINE_REF"
+          docker push "$QUARANTINE_REF"
+          DIGEST="$(docker buildx imagetools inspect "$QUARANTINE_REF" --format '{{json .Manifest.Digest}}' | tr -d '"')"
+          echo "quarantine_ref=${QUARANTINE_REF}" >> "$GITHUB_OUTPUT"
+          echo "quarantine_digest=${DIGEST}" >> "$GITHUB_OUTPUT"
+          echo "pushed ${QUARANTINE_REF} @ ${DIGEST}"
 
-      # Fail-closed: no continue-on-error, no `|| true` — same discipline as
-      # publish-images-deferred's own "Build and push" step. If this step is
-      # red, the mechanics are broken and no real pilot caller should be
-      # trusted to depend on them yet — that is the entire point of this
-      # gate.
-      - name: Build and push (selftest fixture)
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8  # v6, same pin publish-images-deferred uses
+  retag:
+    name: 2. verify + retag into images-staging (mirrors publish-images-deferred)
+    runs-on: ubuntu-latest
+    needs: [quarantine-push]
+    outputs:
+      staging_ref: ${{ steps.retag.outputs.staging_ref }}
+    steps:
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f  # v3
+
+      - name: Log in to GHCR (Actions-native GITHUB_TOKEN, not a personal PAT)
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9  # v3
         with:
-          context: tests/fixtures/hello-image
-          file: tests/fixtures/hello-image/Dockerfile
-          push: true
-          tags: ${{ steps.coords.outputs.dest }}
-          build-args: ${{ steps.buildargs.outputs.args }}
-          platforms: linux/amd64
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Identical fail-closed existence check to publish-images-deferred's
+      # own "Verify quarantine image exists" step.
+      - name: Verify quarantine image exists
+        id: verify
+        env:
+          QUARANTINE_REF: ${{ needs.quarantine-push.outputs.quarantine_ref }}
+        run: |
+          set -euo pipefail
+          if ! docker buildx imagetools inspect "$QUARANTINE_REF" >/tmp/imagetools-inspect.log 2>&1; then
+            cat /tmp/imagetools-inspect.log
+            echo "::error::quarantine image missing or expired; selftest cannot proceed"
+            exit 1
+          fi
+          DIGEST="$(docker buildx imagetools inspect "$QUARANTINE_REF" --format '{{json .Manifest.Digest}}' | tr -d '"')"
+          echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
+
+      # Identical retag mechanic to publish-images-deferred's own "Retag
+      # quarantine image into images-staging" step — registry-side
+      # manifest/blob copy, no rebuild.
+      - name: Retag into images-staging by digest
+        id: retag
+        env:
+          QUARANTINE_REF: ${{ needs.quarantine-push.outputs.quarantine_ref }}
+          DIGEST: ${{ steps.verify.outputs.digest }}
+        run: |
+          set -euo pipefail
+          STAGING_REF="ghcr.io/c3-e/images-staging/selftest/hello-image:workflow-dispatch-${{ github.run_id }}"
+          docker buildx imagetools create --tag "$STAGING_REF" "${QUARANTINE_REF}@${DIGEST}"
+          echo "staging_ref=${STAGING_REF}" >> "$GITHUB_OUTPUT"
+          echo "retagged ${QUARANTINE_REF}@${DIGEST} -> ${STAGING_REF}"
+
+  verify-digest-match:
+    name: 3. verify final digest == quarantine digest
+    runs-on: ubuntu-latest
+    needs: [quarantine-push, retag]
+    steps:
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f  # v3
+
+      - name: Log in to GHCR (Actions-native GITHUB_TOKEN, not a personal PAT)
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9  # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # The actual claim under test: the digest landing in images-staging
+      # is byte-for-byte the SAME digest that was quarantined and scanned —
+      # not a rebuild, not a re-derivation.
+      - name: Assert digests match
+        env:
+          QUARANTINE_DIGEST: ${{ needs.quarantine-push.outputs.quarantine_digest }}
+          STAGING_REF: ${{ needs.retag.outputs.staging_ref }}
+        run: |
+          set -euo pipefail
+          STAGING_DIGEST="$(docker buildx imagetools inspect "$STAGING_REF" --format '{{json .Manifest.Digest}}' | tr -d '"')"
+          echo "quarantine digest: ${QUARANTINE_DIGEST}"
+          echo "staging digest:    ${STAGING_DIGEST}"
+          if [ "$QUARANTINE_DIGEST" != "$STAGING_DIGEST" ]; then
+            echo "::error::digest mismatch: images-staging digest does not match the quarantined, scan-verified image"
+            exit 1
+          fi
+          echo "MATCH: images-staging digest == images-quarantine digest (no rebuild occurred)"
 
       - name: Job summary
         if: always()
         run: |
           {
-            echo "## Selftest: publish images (dry-run)"
+            echo "## Selftest: publish images (quarantine round trip)"
             echo
-            echo "- destination: \`${{ steps.coords.outputs.dest }}\`"
-            echo "- build_args exercised: \`GREETING=hello-from-selftest-workflow-dispatch\`"
+            echo "- quarantine: \`${{ needs.quarantine-push.outputs.quarantine_ref }}\` @ \`${{ needs.quarantine-push.outputs.quarantine_digest }}\`"
+            echo "- staging: \`${{ needs.retag.outputs.staging_ref }}\`"
             echo "- this is a throwaway selftest artifact, never a real pilot image"
           } >> "$GITHUB_STEP_SUMMARY"

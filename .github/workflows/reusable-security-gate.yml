@@ -102,6 +102,10 @@ on:
         description: "When true, skip helm-check and cluster-smoke (and omit them from the Security Gate blocking set), for infra/image-only repos that build and vuln-scan images without a deployable app chart. Default false keeps app callers unchanged (helm + smoke still blocking)."
         type: boolean
         default: false
+      publish_images:
+        description: "When true, the build job pushes each scan-verified target's image to the ghcr.io/c3-e/images-quarantine/<repo>/<target> quarantine namespace after it builds (tagged pr-<pr-number>-<short-head-sha>), so a later publish-staging-chart.yml run on the same PR can retag it into images-staging by digest without rebuilding. Default false keeps this a pure build-and-scan (no registry write, matching every caller today)."
+        type: boolean
+        default: false
     secrets:
       CGR_PULL_TOKEN:
         required: false
@@ -357,6 +361,21 @@ jobs:
     name: build (${{ matrix.target }})
     runs-on: ubuntu-latest
     needs: [plan]
+    # Job-level override: this is the ONLY job in this workflow that needs
+    # packages: write (to push the quarantine image when publish_images is
+    # true); every other job relies solely on the workflow-level permissions:
+    # block above. Per this repo's own documented convention (see
+    # docs/PUBLISH-STAGING-CHART.md's "caller gotcha"), job-level and
+    # workflow-level permissions: must never both be set for the SAME job —
+    # that combination silently produces startup_failure with zero jobs
+    # allocated. That convention is about a caller job that also `uses:` a
+    # reusable workflow; this job does not `uses:` anything (it's a plain
+    # job with steps), so a job-level permissions: block here is safe and
+    # simply narrows/extends this job's own token beyond the workflow-level
+    # contents: read / pull-requests: write grant.
+    permissions:
+      contents: read
+      packages: write
     strategy:
       fail-fast: false
       matrix:
@@ -472,6 +491,59 @@ jobs:
             echo "::error::bake for target '$TARGET' did not produce the planned tag '$TAG'"
             exit 1
           fi
+
+      # Quarantine publish (publish_images only): this leg's own image, once
+      # it has reached this point, has been built via the identical bake
+      # invocation the published plan promised (parity-checked above) and is
+      # about to be handed to image-scan. Pushing it here — BEFORE any scan
+      # result exists — means the quarantine tag is not itself a scan
+      # attestation; it is retrieved by digest later ONLY after this same PR's
+      # gate run (all of its jobs, including image-scan) has completed, so by
+      # the time a publish-staging-chart.yml run retags it the scan already
+      # ran against this exact digest. Same GHCR host as every other push in
+      # this repo (images-staging, charts-staging), same GITHUB_TOKEN
+      # Actions-native login pattern.
+      - name: Log in to GHCR (quarantine push)
+        if: ${{ inputs.publish_images == true }}
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9  # v3, same pin publish-staging-chart.yml's publish-images-deferred job uses
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # QUARANTINE_REF formula is duplicated (not shared via a composite
+      # action) in publish-staging-chart.yml's publish-images-deferred job,
+      # which reconstructs the identical ref from the same three inputs
+      # (repo, PR number, head SHA) to retrieve what this step pushes — see
+      # that job's own comment for why this is safe (both sides derive from
+      # the same pull_request event fields, nothing passed between runs).
+      - name: Push scan-verified image to quarantine
+        if: ${{ inputs.publish_images == true }}
+        env:
+          TARGET: ${{ matrix.target }}
+          TAG: ${{ matrix.tag }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          # GHCR requires lowercase OCI path components; github.repository
+          # for every consumer in this fleet is already lowercase (org
+          # c3-e, lowercase repo names), but lowercase defensively rather
+          # than assume that holds forever.
+          REPO_LOWER="$(echo "$REPO" | tr '[:upper:]' '[:lower:]')"
+          SHORT_HEAD_SHA="${HEAD_SHA:0:7}"
+          QUARANTINE_REF="ghcr.io/c3-e/images-quarantine/${REPO_LOWER}/${TARGET}:pr-${PR_NUMBER}-${SHORT_HEAD_SHA}"
+          docker tag "$TAG" "$QUARANTINE_REF"
+          docker push "$QUARANTINE_REF"
+          DIGEST="$(docker buildx imagetools inspect "$QUARANTINE_REF" --format '{{json .Manifest.Digest}}' | tr -d '"')"
+          echo "pushed ${TARGET} -> ${QUARANTINE_REF} (digest ${DIGEST})"
+          {
+            echo "## Quarantine publish: ${TARGET}"
+            echo
+            echo "- ref: \`${QUARANTINE_REF}\`"
+            echo "- digest: \`${DIGEST}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Generate image SBOM
         uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610  # v0.24.0
