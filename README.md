@@ -94,3 +94,8 @@ squash-merged commit is picked up automatically.
 - [docs/COMPOSED-SMOKE.md](docs/COMPOSED-SMOKE.md): the multi-pilot composed
   `kind` smoke test (`composed-smoke.yml`) an umbrella repo calls to install
   every pilot's published staging chart + images together.
+- `scripts/fleet_status.py` (`uv run scripts/fleet_status.py`): script-generated
+  fleet-status table — gate pin, hook mechanism, publish contract, VEX, ruleset
+  enforcement, and last real run per (pilot, branch) in
+  `configs/fleet-pilots.yaml`, queried live from the GitHub API. Add a pilot to
+  that config when it's onboarded; nothing else needs to know about it.
