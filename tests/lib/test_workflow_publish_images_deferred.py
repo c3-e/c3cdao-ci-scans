@@ -73,19 +73,23 @@ def test_publish_images_input_declared_boolean_default_false():
     assert inputs["publish_images"]["default"] is False
 
 
-def test_build_job_has_packages_write_permission_only():
-    build = _build_job()
-    assert build["permissions"]["packages"] == "write"
-    # Workflow-level permissions (contents/pull-requests) are untouched —
-    # this job-level block narrows/extends, it does not replace them.
+def test_packages_write_lives_at_workflow_level_only():
+    # A real regression (found via live bisection, not this test): a
+    # job-level permissions: block on `build`, coexisting with the
+    # workflow-level block, produced a silent zero-job startup_failure —
+    # scoped to ANY job in this file, not just callers that `uses:` a
+    # reusable workflow. packages: write must live in the single
+    # workflow-level block; `build` must carry no job-level block at all.
     workflow_perms = _gate()["permissions"]
-    assert workflow_perms == {"contents": "read", "pull-requests": "write"}
+    assert workflow_perms == {
+        "contents": "read",
+        "pull-requests": "write",
+        "packages": "write",
+    }
 
 
-def test_no_other_job_has_job_level_permissions():
+def test_no_job_has_job_level_permissions():
     for job_id, job in _gate()["jobs"].items():
-        if job_id == "build":
-            continue
         assert "permissions" not in job, f"unexpected job-level permissions: on '{job_id}'"
 
 
