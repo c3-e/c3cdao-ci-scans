@@ -14,8 +14,7 @@ in the plan job).
 Output (stdout, single-line JSON): {"workload", "container", "service",
 "port", "path"} — the Service name/port to port-forward and the probe
 path to curl. Zero or multiple candidates exit non-zero naming every
-candidate (AC-2). `--image-only` skips derivation: image-only consumers
-have no rendered chart claim (prints a skip marker, exits 0).
+candidate (AC-2).
 """
 
 from __future__ import annotations
@@ -63,15 +62,7 @@ def main(argv: list[str]) -> int:
     parser.add_argument(
         "rendered", type=Path, help="multi-doc YAML rendered by helm template"
     )
-    parser.add_argument(
-        "--image-only",
-        action="store_true",
-        help="image_only consumer: no chart claim, skip derivation",
-    )
     args = parser.parse_args(argv)
-    if args.image_only:
-        print(json.dumps({"skipped": "image_only"}))
-        return 0
     try:
         docs = [
             d

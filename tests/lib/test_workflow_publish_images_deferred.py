@@ -48,6 +48,10 @@ def _build_run_text() -> str:
     return "\n".join(str(s.get("run", "")) for s in _build_job()["steps"])
 
 
+def _package_job() -> dict:
+    return _publish()["jobs"]["publish-staging-chart"]
+
+
 def _deferred_job() -> dict:
     return _publish()["jobs"]["publish-images-deferred"]
 
@@ -73,19 +77,23 @@ def test_publish_images_input_declared_boolean_default_false():
     assert inputs["publish_images"]["default"] is False
 
 
-def test_build_job_has_packages_write_permission_only():
-    build = _build_job()
-    assert build["permissions"]["packages"] == "write"
-    # Workflow-level permissions (contents/pull-requests) are untouched —
-    # this job-level block narrows/extends, it does not replace them.
+def test_packages_write_lives_at_workflow_level_only():
+    # A real regression (found via live bisection, not this test): a
+    # job-level permissions: block on `build`, coexisting with the
+    # workflow-level block, produced a silent zero-job startup_failure —
+    # scoped to ANY job in this file, not just callers that `uses:` a
+    # reusable workflow. packages: write must live in the single
+    # workflow-level block; `build` must carry no job-level block at all.
     workflow_perms = _gate()["permissions"]
-    assert workflow_perms == {"contents": "read", "pull-requests": "write"}
+    assert workflow_perms == {
+        "contents": "read",
+        "pull-requests": "write",
+        "packages": "write",
+    }
 
 
-def test_no_other_job_has_job_level_permissions():
+def test_no_job_has_job_level_permissions():
     for job_id, job in _gate()["jobs"].items():
-        if job_id == "build":
-            continue
         assert "permissions" not in job, f"unexpected job-level permissions: on '{job_id}'"
 
 
@@ -108,6 +116,57 @@ def test_quarantine_ref_formula_present():
     assert "docker tag" in text
     assert "docker push" in text
     assert "imagetools inspect" in text
+
+
+# --- publish-staging-chart.yml: publish-staging-chart (chart packaging) --------
+
+
+def test_package_job_resolves_dependencies_before_packaging():
+    """A real, live bug (#34, 8613d62): a pilot chart declaring a
+    file://-referenced local dependency (e.g. a sibling fullstack-template
+    engine chart) with no pre-vendored charts/ subdir made `helm package`
+    fail with "found in Chart.yaml, but missing in charts/ directory".
+    `helm dependency build` fixes this for any pilot (a no-op for pilots
+    that already pre-vendor — helm validates the existing tgz against
+    Chart.lock's digest) but only if it runs before the package step."""
+    steps = _package_job()["steps"]
+    dep_build_idx = next(
+        i
+        for i, s in enumerate(steps)
+        if "helm dependency build" in str(s.get("run", ""))
+    )
+    package_idx = next(
+        i for i, s in enumerate(steps) if s.get("name") == "Package chart"
+    )
+    assert dep_build_idx < package_idx, (
+        "helm dependency build must run before the Package chart step"
+    )
+
+
+def test_package_job_oci_dest_has_no_trailing_pilot_segment():
+    """A real, live bug (#33, 44c8ed6): `helm push` always appends the
+    chart's own name (from Chart.yaml) as an extra path component, so a
+    DEST that already includes the pilot segment lands the chart at
+    charts-staging/<pilot>/<pilot> instead of the locked
+    charts-staging/<pilot> shape. DEST must be the bare registry path;
+    the pilot segment must appear only in the human-facing echo/summary
+    text, never inside the coords.dest output `helm push` actually
+    receives."""
+    steps = _package_job()["steps"]
+    coords_run = next(
+        str(s.get("run", "")) for s in steps if s.get("id") == "coords"
+    )
+    dest_line = next(
+        line for line in coords_run.splitlines() if line.strip().startswith("DEST=")
+    )
+    assert "PILOT" not in dest_line, (
+        f"DEST must not embed the pilot segment (helm push appends it "
+        f"automatically): {dest_line!r}"
+    )
+    push_run = next(
+        str(s.get("run", "")) for s in steps if s.get("name") == "Push to staging OCI registry"
+    )
+    assert "coords.outputs.dest" in push_run
 
 
 # --- publish-staging-chart.yml: derive-publish-targets (Issue I) ----------------

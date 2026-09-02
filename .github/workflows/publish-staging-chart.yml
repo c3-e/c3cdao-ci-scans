@@ -277,18 +277,35 @@ jobs:
       # reusable-security-gate.yml's own plan job.
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f  # v3
 
+      # Same decoy-job hardening as reusable-security-gate.yml's own
+      # resolver: job_workflow_sha (trusted, resolved by GitHub itself from
+      # the actually-executing job's own pin) takes priority over parsing
+      # the caller's text; lint_caller_publish.py's publish-decoy-job rule
+      # is what makes the text-parse fallback safe (at most one candidate
+      # can exist in a passing caller). Fail-closed: an external caller
+      # with no parseable pin and no job_workflow_sha fails the run instead
+      # of silently defaulting to main; only ci-scans' own fixture/selftest
+      # callers keep that fallback.
       - name: Resolve callee (ci-scans) ref
         id: calleeref
         env:
           WORKFLOW_REF: ${{ github.workflow_ref }}
           JOB_WF_SHA: ${{ github.job_workflow_sha }}
         run: |
+          set -euo pipefail
           caller="${WORKFLOW_REF#"$GITHUB_REPOSITORY/"}"; caller="${caller%%@*}"
-          ref=""
-          if [ -f "$caller" ]; then
+          ref="$JOB_WF_SHA"
+          if [ -z "$ref" ] && [ -f "$caller" ]; then
             ref="$(yq '[.. | select(has("uses")) | .uses | select(test("publish-staging-chart\.yml@"))] | .[0] // "" | split("publish-staging-chart.yml@")[1] // ""' "$caller")"
           fi
-          ref="${ref:-${JOB_WF_SHA:-main}}"
+          if [ -z "$ref" ]; then
+            if [ "$GITHUB_REPOSITORY" = "c3-e/c3cdao-ci-scans" ]; then
+              ref="main"
+            else
+              echo "::error::publish-staging-chart: could not resolve the ci-scans ref this workflow was called at — no parseable 'uses:' pin found in '${caller}', and github.job_workflow_sha is empty. Refusing to silently fall back to main; pin the caller's uses: line to a real ref."
+              exit 1
+            fi
+          fi
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
 
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4

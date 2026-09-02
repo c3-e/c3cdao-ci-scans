@@ -6,9 +6,9 @@ side-effecting) and different side-effect profile (registry writes vs.
 read-only scans). See [CI-CONTRACT.md](CI-CONTRACT.md) for why the two are
 not folded together.
 
-For the umbrella (`c3-e/c3cdao-apps`) consumer-side chart-shape contract and
-the full pilot onboarding sequence (including wiring this workflow into a
-new pilot's own fork repo), see `PILOT-ONBOARDING-RUNBOOK.md` in that repo.
+For an umbrella repo's consumer-side chart-shape contract and the full
+pilot onboarding sequence (including wiring this workflow into a new
+pilot's own fork repo), see that umbrella's own onboarding runbook.
 
 This workflow's output feeds [`composed-smoke.yml`](COMPOSED-SMOKE.md): a
 reusable workflow that installs every pilot's published `charts-staging`/

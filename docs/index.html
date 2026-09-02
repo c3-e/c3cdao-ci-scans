@@ -590,7 +590,7 @@
               <span class="tag">Merge-only · registry writes</span>
               <h3>publish-staging-chart.yml</h3>
               <p>
-                Packages a merged PR's Helm chart, and optionally its images, to a staging OCI registry —
+                Packages a merged PR's Helm chart, and optionally its images, to a staging OCI registry:
                 <code>charts-staging/&lt;pilot&gt;</code> and <code>images-staging/&lt;pilot&gt;/&lt;image&gt;</code>,
                 tagged <code>0.0.0-mech.&lt;pr&gt;.&lt;sha&gt;</code>. Triggers only on a merged
                 <code>pull_request</code> close; an open PR's ordinary pushes produce nothing. The one workflow in

@@ -1,9 +1,9 @@
 """Unit tests for the chart-derived smoke target (scripts/lib/derive_smoke_target.py).
 
 Zero/two-candidate failure paths (each names the candidates) plus the
-ticket's test-file spec: happy path, non-HTTP probe, no Service backing,
-image_only skip. Rendered-chart inputs are authored inline as parsed
-documents (same convention as tests/lib/test_lint_rules.py).
+ticket's test-file spec: happy path, non-HTTP probe, no Service backing.
+Rendered-chart inputs are authored inline as parsed documents (same
+convention as tests/lib/test_lint_rules.py).
 """
 
 from __future__ import annotations
@@ -123,19 +123,6 @@ def test_http_probe_without_service_backing_names_the_unbacked_candidate():
     message = str(exc.value)
     assert "no Service routes" in message
     assert "Deployment/web container 'web'" in message
-
-
-# --- image_only skip -------------------------------------------------------------
-
-
-def test_image_only_skips_derivation_via_cli(tmp_path, capsys):
-    import json
-
-    from derive_smoke_target import main
-
-    # No rendered chart needs to exist: image_only makes no chart claim.
-    assert main([str(tmp_path / "absent.yaml"), "--image-only"]) == 0
-    assert json.loads(capsys.readouterr().out) == {"skipped": "image_only"}
 
 
 

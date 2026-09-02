@@ -7,7 +7,7 @@ doc tests cross-check every input and secret name against it).
 
 Since v0.6 the gate derives build facts (images, Dockerfiles, contexts,
 build args, smoke target) from your Compose file and Helm chart; see
-[CI-CONTRACT.md](CI-CONTRACT.md). The eight inputs that remain are paths
+[CI-CONTRACT.md](CI-CONTRACT.md). The nine inputs that remain are paths
 and orchestration knobs, all defaulted: a conforming repository with
 default paths passes nothing but secrets.
 
@@ -23,6 +23,7 @@ default paths passes nothing but secrets.
 | `smoke_resources` | string | `""` | CSV of gate-owned smoke catalog module ids (`postgres-pgvector`, `gateway-crds`) provisioned before helm install. Unknown ids block (`smoke-resource-unknown`). Default provisions none. |
 | `image_only` | boolean | `false` | When true, skip helm-check and cluster-smoke (and drop them from the blocking set), for repos that build and scan images without a deployable chart. |
 | `hardened_base_registry` | string | `both` | Which hardened-base registry(s) the login step attempts: `chainguard` (`cgr.dev` only), `ironbank` (`registry1.dso.mil` only), or `both` (attempts both, unchanged prior behavior). Declare the single tier your Dockerfile actually pins to so the login step never retries/backs off against a registry you don't use. Does not change the fail-closed `require_hardened_bases` posture — only which registry(s) it checks. |
+| `publish_images` | boolean | `false` | When true, the build job pushes each scan-verified target's image to the `ghcr.io/c3-e/images-quarantine/<repo>/<target>` quarantine namespace after it builds (tagged `pr-<pr-number>-<short-head-sha>`), so a later `publish-staging-chart.yml` run on the same PR can retag it into `images-staging` by digest without rebuilding. Default `false` keeps this a pure build-and-scan (no registry write, matching every caller today). |
 
 ## Secrets
 

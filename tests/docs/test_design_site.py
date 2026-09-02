@@ -143,6 +143,15 @@ _RETIRED_INSTRUCTIONS = (
     r"templates/consumer/",
 )
 
+# `require_hardened_bases:` is retired ONLY as a reusable-security-gate.yml
+# input (removed at v0.6). publish-staging-chart.yml has its own, currently
+# live, differently-scoped `require_hardened_bases` boolean — legitimately
+# documented in PUBLISH-STAGING-CHART.md, which this pattern would otherwise
+# false-positive on since the two workflows share the name.
+_RETIRED_INSTRUCTIONS_EXCLUDE = {
+    r"require_hardened_bases:": {"PUBLISH-STAGING-CHART.md"},
+}
+
 
 def test_drift_guard_docs_never_instruct_retired_machinery() -> None:
     """AC-2: a doc reintroducing Makefile.ci/contract_file instructions fails."""
@@ -151,6 +160,8 @@ def test_drift_guard_docs_never_instruct_retired_machinery() -> None:
         rel = path.relative_to(ROOT)
         for lineno, line in enumerate(path.read_text().splitlines(), 1):
             for pattern in _RETIRED_INSTRUCTIONS:
+                if path.name in _RETIRED_INSTRUCTIONS_EXCLUDE.get(pattern, ()):
+                    continue
                 if re.search(pattern, line, re.IGNORECASE):
                     violations.append(
                         f"{rel}:{lineno}: instructs retired machinery "
