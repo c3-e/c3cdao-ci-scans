@@ -35,3 +35,12 @@ jobs:
       - uses: astral-sh/setup-uv@v6
       - name: Assert setup-ruleset --diff verdicts
         run: ./scripts/test-setup-ruleset-diff.sh
+
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4  # v4
+      - name: Run pytest tests/
+        run: uv run --with pytest --with pyyaml python -m pytest tests/ -q
