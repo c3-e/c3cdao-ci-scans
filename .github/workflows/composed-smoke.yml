@@ -82,18 +82,37 @@ jobs:
       # Callee (ci-scans) checkout: the smoke-catalog manifests live in the
       # gate repo, not the caller's tree (same cross-repo pattern
       # reusable-security-gate.yml's own plan/build/cluster-smoke jobs use).
+      # Same decoy-job hardening as reusable-security-gate.yml's own
+      # resolver: job_workflow_sha (trusted, resolved by GitHub itself from
+      # the actually-executing job's own pin) takes priority over parsing
+      # the caller's text. NOTE, unlike the other two resolver copies:
+      # there is no lint_caller module for composed-smoke.yml callers yet
+      # (no decoy-job rule exists), so the "at most one candidate" safety
+      # assumption behind the text-parse fallback isn't lint-enforced here
+      # — still, failing closed instead of silently defaulting to main is
+      # strictly safer either way, and is the fix being applied now. A
+      # composed-smoke caller-lint module with its own decoy-job rule is a
+      # separate, not-yet-built piece of work.
       - name: Resolve callee (ci-scans) ref
         id: calleeref
         env:
           WORKFLOW_REF: ${{ github.workflow_ref }}
           JOB_WF_SHA: ${{ github.job_workflow_sha }}
         run: |
+          set -euo pipefail
           caller="${WORKFLOW_REF#"$GITHUB_REPOSITORY/"}"; caller="${caller%%@*}"
-          ref=""
-          if [ -f "$caller" ]; then
+          ref="$JOB_WF_SHA"
+          if [ -z "$ref" ] && [ -f "$caller" ]; then
             ref="$(yq '[.. | select(has("uses")) | .uses | select(test("composed-smoke\.yml@"))] | .[0] // "" | split("composed-smoke.yml@")[1] // ""' "$caller")"
           fi
-          ref="${ref:-${JOB_WF_SHA:-main}}"
+          if [ -z "$ref" ]; then
+            if [ "$GITHUB_REPOSITORY" = "c3-e/c3cdao-ci-scans" ]; then
+              ref="main"
+            else
+              echo "::error::composed-smoke: could not resolve the ci-scans ref this workflow was called at — no parseable 'uses:' pin found in '${caller}', and github.job_workflow_sha is empty. Refusing to silently fall back to main; pin the caller's uses: line to a real ref."
+              exit 1
+            fi
+          fi
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
