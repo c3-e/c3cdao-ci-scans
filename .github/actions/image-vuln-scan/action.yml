@@ -27,6 +27,10 @@ inputs:
     description: "'true' makes scans fail the build (vars.SECURITY_SCAN_BLOCKING); anything else reports only."
     required: false
     default: "false"
+  chart-path:
+    description: "Path to the Helm chart (e.g. 'chart', 'apps/myapp/helm'). Used to derive PILOT for vex-tracking OCI artifact. Optional; vex-tracking steps skip if Chart.yaml is not found."
+    required: false
+    default: "chart"
 runs:
   using: composite
   steps:
@@ -183,6 +187,150 @@ runs:
         fail-build: ${{ inputs.blocking == 'true' }}
         output-format: table
         config: .grype.yaml
+
+    # VEX Tracking: read/merge/write durable tracking record of unresolved
+    # findings, preserving first_issued timestamps across runs. Unsigned OCI
+    # artifact stored independently of the app image. This step is advisory
+    # (tracking data only) and never blocks the gate; push failure is logged
+    # but does not propagate.
+    - name: Derive PILOT name from Chart.yaml
+      id: pilot
+      if: always()
+      run: |
+        set -euo pipefail
+        chart_path="${{ inputs.chart-path }}"
+        if [ ! -f "${chart_path}/Chart.yaml" ]; then
+          echo "Chart.yaml not found at ${chart_path}/Chart.yaml; skipping vex-tracking steps"
+          echo "skip=true" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+        NAME="$(yq eval '.name' "${chart_path}/Chart.yaml")"
+        if [ "$NAME" = "null" ] || [ -z "$NAME" ]; then
+          echo "::warning::Chart.yaml at ${chart_path}/Chart.yaml is missing or has null .name field; skipping vex-tracking steps"
+          echo "skip=true" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+        echo "pilot=$NAME" >> "$GITHUB_OUTPUT"
+        echo "skip=false" >> "$GITHUB_OUTPUT"
+
+    - name: Pull prior vex-tracking record from OCI
+      id: vex-pull
+      if: always() && steps.pilot.outputs.skip == 'false'
+      shell: bash
+      run: |
+        set -euo pipefail
+        pilot="${{ steps.pilot.outputs.pilot }}"
+        registry_ref="ghcr.io/c3-e/vex-tracking/${pilot}:latest"
+        prior_doc_dir="${RUNNER_TEMP}/vex-prior"
+        mkdir -p "$prior_doc_dir"
+
+        # Try to pull prior doc; tolerate 404 as "no prior state"
+        if command -v oras >/dev/null 2>&1; then
+          oras pull "$registry_ref" -o "$prior_doc_dir" 2>/dev/null || {
+            code=$?
+            # 404 is expected on first run; any other error is re-raised
+            if [ $code -ne 0 ]; then
+              # Check if error is 404-like (pull returns non-zero for any error)
+              # Treat as "no prior state" and continue
+              echo "::notice::No prior vex-tracking record found at ${registry_ref} (first run or network error); proceeding with empty prior state"
+              echo "prior_doc=" >> "$GITHUB_ENV"
+            fi
+          }
+          # If pull succeeded, oras writes files to the output dir
+          if [ -f "$prior_doc_dir/vex-tracking.json" ]; then
+            echo "prior_doc=$prior_doc_dir/vex-tracking.json" >> "$GITHUB_ENV"
+            echo "::notice::Loaded prior vex-tracking record"
+          fi
+        else
+          echo "::warning::oras CLI not found; skipping vex-tracking pull/push steps"
+          echo "skip_push=true" >> "$GITHUB_ENV"
+        fi
+
+    - name: Merge vex-tracking record with current findings
+      id: vex-merge
+      if: always() && steps.pilot.outputs.skip == 'false'
+      shell: bash
+      run: |
+        set -euo pipefail
+        pilot="${{ steps.pilot.outputs.pilot }}"
+
+        # Determine prior doc path
+        prior_doc_arg="-"
+        if [ -n "${prior_doc:-}" ] && [ -f "$prior_doc" ]; then
+          prior_doc_arg="$prior_doc"
+        fi
+
+        # Current findings: prefer Grype JSON (more complete), fall back to Trivy
+        current_findings_file="${RUNNER_TEMP}/security-export/grype-image.json"
+        if [ ! -f "$current_findings_file" ]; then
+          current_findings_file="${RUNNER_TEMP}/security-export/trivy-image.json"
+        fi
+        if [ ! -f "$current_findings_file" ]; then
+          echo "::warning::No current scan findings found; proceeding with empty findings"
+          # Create empty findings doc
+          current_findings_file="${RUNNER_TEMP}/empty-findings.json"
+          echo '{"matches":[]}' > "$current_findings_file"
+        fi
+
+        # Human disposition doc (if it exists in the consumer's repo)
+        human_disposition_arg="-"
+        if [ -f ".openvex/templates/main.openvex.json" ]; then
+          human_disposition_arg=".openvex/templates/main.openvex.json"
+        fi
+
+        # Run vex_tracking.py merge
+        merged_doc_file="${RUNNER_TEMP}/vex-tracking-merged.json"
+        python3 "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../../scripts/lib/vex_tracking.py" \
+          "$prior_doc_arg" \
+          "$current_findings_file" \
+          "$human_disposition_arg" \
+          > "$merged_doc_file"
+
+        echo "merged_doc=$merged_doc_file" >> "$GITHUB_ENV"
+        echo "::notice::Generated merged vex-tracking record with $(jq '.statements | length' "$merged_doc_file") unresolved findings"
+
+    - name: Push vex-tracking record to OCI
+      id: vex-push
+      if: always() && steps.pilot.outputs.skip == 'false'
+      continue-on-error: true
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        # Skip if oras was not available during pull
+        if [ "${skip_push:-false}" = "true" ]; then
+          echo "::warning::Skipping vex-tracking push (oras not available)"
+          exit 0
+        fi
+
+        pilot="${{ steps.pilot.outputs.pilot }}"
+        merged_doc="${merged_doc:-}"
+
+        if [ -z "$merged_doc" ] || [ ! -f "$merged_doc" ]; then
+          echo "::warning::Merged vex-tracking record not found; skipping push"
+          exit 0
+        fi
+
+        registry_ref="ghcr.io/c3-e/vex-tracking/${pilot}:latest"
+
+        if command -v oras >/dev/null 2>&1; then
+          echo "::notice::Pushing vex-tracking record to ${registry_ref}"
+          # Copy merged doc to a temp location with the expected name for oras push
+          push_dir="${RUNNER_TEMP}/vex-push"
+          mkdir -p "$push_dir"
+          cp "$merged_doc" "$push_dir/vex-tracking.json"
+
+          oras push "$registry_ref" "$push_dir/vex-tracking.json:application/json" \
+            --disable-path-validation \
+            2>&1 || {
+            code=$?
+            echo "::warning::vex-tracking push to ${registry_ref} failed with code $code (advisory; does not fail gate)"
+            exit 0  # Don't fail: this is advisory data
+          }
+          echo "::notice::Successfully pushed vex-tracking record"
+        else
+          echo "::warning::oras CLI not available; skipping vex-tracking push"
+        fi
 
     # ------------------------------------------------------------------------
     # Per-run security export bundle. Machine-readable evidence for one
