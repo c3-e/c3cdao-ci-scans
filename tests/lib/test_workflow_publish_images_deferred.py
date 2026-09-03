@@ -89,6 +89,7 @@ def test_packages_write_lives_at_workflow_level_only():
         "contents": "read",
         "pull-requests": "write",
         "packages": "write",
+        "issues": "write",
     }
 
 
