@@ -37,8 +37,6 @@
 
 on:
   workflow_dispatch:
-  pull_request:  # temporary, for one more dispatch (bug-10 Grype-key fix check)
-    branches: [main]
 
 permissions:
   contents: read
