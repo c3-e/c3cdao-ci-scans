@@ -17,7 +17,13 @@ def _get_cve_id(finding: Dict[str, Any]) -> Optional[str]:
 
     Handles both formats:
     - Trivy: finding['VulnerabilityID']
-    - Grype: finding['vulnerability']['name']
+    - Grype: finding['vulnerability']['id'] — verified live against a real
+      `grype alpine:3.12.0 -o json` export: Grype's real schema has no
+      `vulnerability.name` key at all, only `.id` (e.g. "CVE-2021-3711").
+      Reading `.name` here made every Grype finding's CVE ID resolve to
+      None, silently dropping all of them from the tracking doc — the
+      same key `scripts/lib/pending_disposition_report.py`'s own
+      pre-existing grype_findings() already reads correctly.
     """
     # Try Trivy format
     if "VulnerabilityID" in finding:
@@ -25,9 +31,9 @@ def _get_cve_id(finding: Dict[str, Any]) -> Optional[str]:
 
     # Try Grype format
     if "vulnerability" in finding and isinstance(finding["vulnerability"], dict):
-        vuln_name = finding["vulnerability"].get("name")
-        if vuln_name:
-            return vuln_name
+        vuln_id = finding["vulnerability"].get("id")
+        if vuln_id:
+            return vuln_id
 
     return None
 
