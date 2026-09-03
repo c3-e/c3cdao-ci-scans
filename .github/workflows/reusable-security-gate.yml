@@ -177,9 +177,50 @@ jobs:
       # needs.plan.outputs.callee_ref — a single resolver site instead of
       # one duplicated copy per job.
       callee_ref: ${{ steps.calleeref.outputs.ref }}
+      # Event context: whether the trigger is a pull_request (has PR context
+      # for PR comment output) or a background trigger (schedule/merge_group/
+      # workflow_dispatch). Resolved once here, passed to downstream jobs
+      # to route results to the correct channel without re-reading event_name.
+      has_pr_context: ${{ steps.event-context.outputs.has_pr_context }}
+      output_channel: ${{ steps.event-context.outputs.output_channel }}
     steps:
       # Consumer repo (github.repository = the caller's repo).
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+
+      # Resolve event context once: map github.event_name to has_pr_context
+      # and output_channel. Consumed by downstream jobs to route results to
+      # the correct output channel (PR comment vs. issue vs. summary only).
+      # Fail-closed: unhandled event types cause an explicit error, not a
+      # silent fallback to the wrong channel.
+      - name: Resolve event context
+        id: event-context
+        run: |
+          set -euo pipefail
+          event_name="${{ github.event_name }}"
+          case "$event_name" in
+            pull_request)
+              has_pr_context="true"
+              output_channel="pr_comment"
+              ;;
+            schedule)
+              has_pr_context="false"
+              output_channel="issue"
+              ;;
+            merge_group)
+              has_pr_context="false"
+              output_channel="summary_only"
+              ;;
+            workflow_dispatch)
+              has_pr_context="false"
+              output_channel="summary_only"
+              ;;
+            *)
+              echo "::error::plan: unhandled event type '$event_name' — add explicit case mapping to resolve-event-context step"
+              exit 1
+              ;;
+          esac
+          echo "has_pr_context=$has_pr_context" >> "$GITHUB_OUTPUT"
+          echo "output_channel=$output_channel" >> "$GITHUB_OUTPUT"
 
       # Resolve which ci-scans ref to lint against: github.job_workflow_sha
       # first (trusted, resolved by GitHub itself), falling back to parsing
