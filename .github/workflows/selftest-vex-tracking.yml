@@ -116,6 +116,9 @@ jobs:
           jq '.statements | length' /tmp/vex-verify/vex-tracking.json
           echo "--- confirms both scanners contributed (Trivy + Grype VulnerabilityID/name shapes both present, not just one) ---"
           jq -r '.statements[].vulnerability.name' /tmp/vex-verify/vex-tracking.json | sort -u
+          echo "--- confirms the doc also lands inside security-export/ for pending_disposition_report.py (T-4), not just GHCR ---"
+          test -f "${RUNNER_TEMP}/security-export/vex-tracking.json" && echo "OK: ${RUNNER_TEMP}/security-export/vex-tracking.json exists" || { echo "::error::vex-tracking.json missing from security-export/ — T-4 would have no local way to read it"; exit 1; }
+          diff <(jq -S . /tmp/vex-verify/vex-tracking.json) <(jq -S . "${RUNNER_TEMP}/security-export/vex-tracking.json") && echo "OK: local copy matches the pushed artifact"
 
       - name: Job summary
         if: always()
