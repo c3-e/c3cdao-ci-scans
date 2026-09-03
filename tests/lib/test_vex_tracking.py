@@ -84,9 +84,11 @@ class TestGetCveId:
         assert cve_id == "CVE-2026-12345"
 
     def test_grype_format(self):
-        """Test extraction from Grype format (vulnerability.name field)."""
+        """Test extraction from Grype format (vulnerability.id field — verified
+        against a real `grype ... -o json` export; Grype has no
+        vulnerability.name key at all)."""
         finding = {
-            "vulnerability": {"name": "CVE-2026-67890"},
+            "vulnerability": {"id": "CVE-2026-67890"},
             "severity": "HIGH",
         }
         cve_id = vex_tracking._get_cve_id(finding)
@@ -97,6 +99,33 @@ class TestGetCveId:
         finding = {"severity": "HIGH"}
         cve_id = vex_tracking._get_cve_id(finding)
         assert cve_id is None
+
+
+class TestRealGrypeSchemaRegression:
+    """Locks in the bug-10 fix: Grype's REAL export schema (captured live via
+    `grype alpine:3.12.0 -o json`) has no vulnerability.name key at all —
+    only .id. A prior version of _get_cve_id() checked .name, which is
+    always None on real output, silently dropping every Grype finding from
+    the tracking doc. This uses a structurally-realistic match object (real
+    field names/shapes from that capture), not a minimal shape that could
+    pass even if .name were checked again by accident."""
+
+    def test_get_cve_id_reads_real_grype_shape(self):
+        real_grype_match = {
+            "vulnerability": {
+                "id": "CVE-2021-3711",
+                "dataSource": "https://security.alpinelinux.org/vuln/CVE-2021-3711",
+                "namespace": "alpine:distro:alpine:3.12",
+                "severity": "Critical",
+                "fix": {"versions": ["1.1.1l-r0"], "state": "fixed"},
+            },
+            "artifact": {"name": "libcrypto1.1", "version": "1.1.1k-r0"},
+        }
+        assert vex_tracking._get_cve_id(real_grype_match) == "CVE-2021-3711"
+        # The bug this guards: if _get_cve_id ever reverts to checking
+        # .name instead of .id, this real-shaped object has no .name key
+        # and the function would return None instead.
+        assert "name" not in real_grype_match["vulnerability"]
 
 
 class TestMergeFunctionality:
@@ -254,7 +283,7 @@ class TestMergeFunctionality:
 
         current_findings = [
             {
-                "vulnerability": {"name": "CVE-2026-grype"},
+                "vulnerability": {"id": "CVE-2026-grype"},
                 "severity": "HIGH",
             }
         ]
@@ -294,7 +323,7 @@ class TestMergeFunctionality:
         """Test handling a mix of Trivy and Grype format findings."""
         current_findings = [
             {"VulnerabilityID": "CVE-2026-trivy"},
-            {"vulnerability": {"name": "CVE-2026-grype"}},
+            {"vulnerability": {"id": "CVE-2026-grype"}},
         ]
 
         result = vex_tracking.merge(None, current_findings, None)
@@ -343,12 +372,12 @@ class TestLoadFindingsFile:
         assert ids == {"CVE-2026-T1", "CVE-2026-T2"}
 
     def test_loads_grype_shape(self, tmp_path):
-        grype_doc = {"matches": [{"vulnerability": {"name": "CVE-2026-G1"}}]}
+        grype_doc = {"matches": [{"vulnerability": {"id": "CVE-2026-G1"}}]}
         p = tmp_path / "grype-image.json"
         p.write_text(json.dumps(grype_doc))
         result = vex_tracking._load_findings_file(str(p))
         assert len(result) == 1
-        assert result[0]["vulnerability"]["name"] == "CVE-2026-G1"
+        assert result[0]["vulnerability"]["id"] == "CVE-2026-G1"
 
     def test_both_files_combine_not_either_or(self, tmp_path):
         """The exact regression this fix targets: a prior implementation
@@ -356,7 +385,7 @@ class TestLoadFindingsFile:
         silently dropped the other. Loading both and concatenating must
         yield the union, not just one scanner's findings."""
         trivy_doc = {"Results": [{"Vulnerabilities": [{"VulnerabilityID": "CVE-2026-TRIVY-ONLY"}]}]}
-        grype_doc = {"matches": [{"vulnerability": {"name": "CVE-2026-GRYPE-ONLY"}}]}
+        grype_doc = {"matches": [{"vulnerability": {"id": "CVE-2026-GRYPE-ONLY"}}]}
         trivy_p = tmp_path / "trivy-image.json"
         grype_p = tmp_path / "grype-image.json"
         trivy_p.write_text(json.dumps(trivy_doc))
