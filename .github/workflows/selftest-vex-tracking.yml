@@ -37,6 +37,8 @@
 
 on:
   workflow_dispatch:
+  pull_request:  # temporary, for one more dispatch (bug-10 Grype-key fix check)
+    branches: [main]
 
 permissions:
   contents: read
@@ -120,8 +122,10 @@ jobs:
           echo
           echo "--- statement count ---"
           jq '.statements | length' /tmp/vex-verify/vex-tracking.json
-          echo "--- confirms both scanners contributed (Trivy + Grype VulnerabilityID/name shapes both present, not just one) ---"
+          echo "--- confirms both scanners contributed (Trivy + Grype VulnerabilityID/id shapes both present, not just one) ---"
           jq -r '.statements[].vulnerability.name' /tmp/vex-verify/vex-tracking.json | sort -u
+          echo "--- bug-10 regression check: CVE-2021-4160 is a Grype-ONLY finding for alpine:3.12.0 (confirmed absent from a real local Trivy scan, present in a real local Grype scan) — its presence here proves Grype's own findings survive extraction, not just that the Grype file was read ---"
+          jq -e '.statements[] | select(.vulnerability.name == "CVE-2021-4160")' /tmp/vex-verify/vex-tracking.json || { echo "::error::CVE-2021-4160 (Grype-only finding) missing from tracking doc — Grype extraction is still broken"; exit 1; }
           echo "--- confirms the doc also lands inside security-export/ for pending_disposition_report.py (T-4), not just GHCR ---"
           test -f "${RUNNER_TEMP}/security-export/vex-tracking.json" && echo "OK: ${RUNNER_TEMP}/security-export/vex-tracking.json exists" || { echo "::error::vex-tracking.json missing from security-export/ — T-4 would have no local way to read it"; exit 1; }
           diff <(jq -S . /tmp/vex-verify/vex-tracking.json) <(jq -S . "${RUNNER_TEMP}/security-export/vex-tracking.json") && echo "OK: local copy matches the pushed artifact"
