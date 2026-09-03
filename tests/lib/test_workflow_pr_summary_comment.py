@@ -26,6 +26,7 @@ EVALUATOR = ROOT / "scripts/lib/evaluate_security_gate.py"
 
 FULL_SHA_USES = re.compile(r"@[0-9a-f]{40}$")
 MARKER = "<!-- security-export-summary -->"
+ISSUE_MARKER = "<!-- security-export-issue -->"
 
 
 def _workflow() -> dict:
@@ -52,6 +53,10 @@ def _build_step() -> dict:
 
 def _post_step() -> dict:
     return _step("Post or update PR scan-summary comment")
+
+
+def _issue_step() -> dict:
+    return _step("Post or update tracking Issue")
 
 
 def test_pr_summary_steps_exist_in_export_bundle():
@@ -190,8 +195,15 @@ def _pending_report_step() -> dict:
 
 
 def test_pending_disposition_step_exists_and_is_pull_request_gated():
+    # Runs for both pr_comment and issue — both channels' shared
+    # "Build PR scan-summary comment body" step needs this report's
+    # output_file; gating it to pr_comment-only would silently leave
+    # scheduled/issue-channel runs with an empty report body.
     step = _pending_report_step()
-    assert step.get("if") == "needs.plan.outputs.output_channel == 'pr_comment'"
+    assert (
+        step.get("if")
+        == "needs.plan.outputs.output_channel == 'pr_comment' || needs.plan.outputs.output_channel == 'issue'"
+    )
     assert step.get("continue-on-error") is True
 
 
@@ -227,9 +239,9 @@ def test_pending_disposition_step_runs_after_bundle_download():
 
 
 def test_pending_disposition_bootstrap_steps_are_pull_request_gated():
-    """The cross-repo checkout + setup-uv steps this report needs must not
-    run on non-PR triggers (merge_group/schedule/workflow_dispatch/push),
-    matching the report step itself. export-bundle carries no other
+    """The cross-repo checkout + setup-uv steps this report needs must run
+    on exactly the same channels as the report step itself — pr_comment
+    AND issue, never summary_only. export-bundle carries no other
     checkout/setup-uv steps, so every match here belongs to this feature."""
     steps = _export_bundle()["steps"]
     bootstrap = [
@@ -240,4 +252,91 @@ def test_pending_disposition_bootstrap_steps_are_pull_request_gated():
     ]
     assert bootstrap, "expected checkout/setup-uv bootstrap steps for the report"
     for step in bootstrap:
-        assert step.get("if") == "needs.plan.outputs.output_channel == 'pr_comment'"
+        assert (
+            step.get("if")
+            == "needs.plan.outputs.output_channel == 'pr_comment' || needs.plan.outputs.output_channel == 'issue'"
+        )
+
+
+# --- T-5: persistent tracking Issue path (output_channel == 'issue') ---------
+
+
+def test_issue_step_exists_and_is_issue_channel_gated():
+    step = _issue_step()
+    assert step.get("if") == "needs.plan.outputs.output_channel == 'issue'"
+
+
+def test_issue_step_carries_a_distinct_marker_from_the_pr_comment():
+    """The Issue path must use its own hidden marker, not accidentally
+    reuse the PR-comment's — a shared marker string would make the
+    find-or-create lookups on the two independent surfaces (PR comments
+    vs. repo issues) impossible to tell apart if either API ever returned
+    cross-contaminated results."""
+    run = _issue_step()["run"]
+    assert ISSUE_MARKER in run
+    assert ISSUE_MARKER != MARKER
+
+
+def test_issue_step_finds_existing_open_issue_via_marker_then_patches_or_creates():
+    run = _issue_step()["run"]
+    # Find: GET open issues, filtered by the marker substring, excluding PRs
+    # (GitHub's issues API returns pull requests too unless filtered out).
+    assert "/repos/${REPO}/issues?state=open" in run
+    assert "contains($marker)" in run
+    assert "pull_request == null" in run
+    # Update-in-place: PATCH the matched issue number.
+    assert "-X PATCH" in run
+    assert "/issues/${existing_number}" in run
+    # Create when no match: POST to the issues collection.
+    assert "-X POST" in run
+    assert '"${api}/repos/${REPO}/issues"' in run
+
+
+def test_issue_step_search_is_paginated():
+    """Same requirement as the PR-comment step's own find-or-create loop
+    (per this ticket's Exemplar-Files instruction to mirror it exactly) —
+    a single 100-item page would silently miss the tracking issue on a
+    repo with more than 100 open issues, creating a duplicate every run
+    instead of updating the one that already exists."""
+    run = _issue_step()["run"]
+    assert "page=${page}" in run
+    assert "page=$((page + 1))" in run
+
+
+def test_issue_step_failures_are_loud_not_swallowed():
+    """AC-6: a permissions problem or transient API error must surface as
+    an explicit ::error:: with a non-zero exit — never complete green
+    with no Issue created. continue-on-error is False (unlike the
+    PR-comment steps) so the step's own failure is visible in the job's
+    conclusion, not just its log."""
+    step = _issue_step()
+    assert step.get("continue-on-error") is False
+    run = step["run"]
+    assert run.count("::error::") >= 3  # missing body, list-failure, create/update-failure
+    assert "exit 1" in run
+
+
+def test_issue_step_uses_github_token_no_new_secret():
+    step = _issue_step()
+    assert step.get("env", {}).get("GITHUB_TOKEN") == "${{ secrets.GITHUB_TOKEN }}"
+
+
+def test_issue_step_reuses_the_shared_comment_body_not_a_second_report_run():
+    """Both output channels must read from the SAME pending-disposition
+    report and the SAME body-builder step's output — never re-run the
+    report or duplicate the SLA-banner logic for the Issue path."""
+    step = _issue_step()
+    assert step.get("env", {}).get("BODY_FILE") == "${{ steps.pr-summary.outputs.body_file }}"
+
+
+def test_sla_breach_banner_present_in_build_step_and_gated_on_real_report_content():
+    """AC-1: the banner must be conditional on the pending-disposition
+    report actually containing a breach string (T-4's own output), never
+    unconditionally present — and the build step must be the one place
+    this logic lives, since both channels share it."""
+    run = _build_step()["run"]
+    assert "SLA breach — 90-day threshold exceeded" in run
+    assert "⚠️" in run
+    # Conditional, not unconditional: the banner echo must be inside an
+    # `if` block that checks the report file for that exact string.
+    assert 'grep -q "SLA breach — 90-day threshold exceeded"' in run

@@ -1414,18 +1414,25 @@ jobs:
       # checkout only feeds a read-only, continue-on-error VEX report,
       # never security-gate's pass/fail.
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
-        if: needs.plan.outputs.output_channel == 'pr_comment'
+        if: needs.plan.outputs.output_channel == 'pr_comment' || needs.plan.outputs.output_channel == 'issue'
         with:
           repository: c3-e/c3cdao-ci-scans
           ref: ${{ needs.plan.outputs.callee_ref || github.job_workflow_sha || 'main' }}
           path: .ci-scans
 
       - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e  # v6
-        if: needs.plan.outputs.output_channel == 'pr_comment'
+        if: needs.plan.outputs.output_channel == 'pr_comment' || needs.plan.outputs.output_channel == 'issue'
 
+      # T-5: this report feeds the shared "Build PR scan-summary comment
+      # body" step below, which now runs for BOTH pr_comment and issue
+      # channels — this bootstrap must match that gate exactly, or an
+      # issue-channel run silently posts a Tracking Issue with no
+      # disposition content and no SLA banner at all (the bug an earlier
+      # build of this ticket shipped: only the shared body-builder step's
+      # own guard was widened, not its prerequisites).
       - name: Build pending-disposition report
         id: pending-disposition
-        if: needs.plan.outputs.output_channel == 'pr_comment'
+        if: needs.plan.outputs.output_channel == 'pr_comment' || needs.plan.outputs.output_channel == 'issue'
         continue-on-error: true
         run: |
           set -uo pipefail
@@ -1594,19 +1601,30 @@ jobs:
             cat "$BODY_FILE"
           } > "${BODY_FILE}.issue"
 
-          # Find existing open Issue with the marker
+          # Find existing open Issue with the marker. Paginated (mirrors
+          # the PR-comment step's own find-or-create loop exactly) — a
+          # single unpaginated 100-item page would miss the tracking issue
+          # entirely on a repo with more than 100 open issues, silently
+          # creating a duplicate every run instead of updating the one
+          # that already exists. Excludes pull requests: GitHub's issues
+          # API returns PRs too unless filtered — a PR whose body happens
+          # to contain this marker text must never be mistaken for it.
           existing_number=""
-          resp=$(curl -fsS \
-            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
-            "${api}/repos/${REPO}/issues?state=open&per_page=100&sort=updated") || {
-            echo "::error::Failed to list issues"
-            exit 1
-          }
-          match=$(echo "$resp" | jq -r --arg marker "$marker" '[.[] | select(.body | contains($marker))][0].number // empty')
-          if [ -n "$match" ]; then
-            existing_number="$match"
-          fi
+          page=1
+          while :; do
+            resp=$(curl -fsS \
+              -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              "${api}/repos/${REPO}/issues?state=open&per_page=100&sort=updated&page=${page}") || {
+              echo "::error::Failed to list issues"
+              exit 1
+            }
+            match=$(echo "$resp" | jq -r --arg marker "$marker" '[.[] | select(.pull_request == null) | select(.body | contains($marker))][0].number // empty')
+            if [ -n "$match" ]; then existing_number="$match"; break; fi
+            count=$(echo "$resp" | jq 'length' 2>/dev/null || echo 0)
+            [ "${count:-0}" -lt 100 ] && break
+            page=$((page + 1))
+          done
 
           issue_body=$(jq -Rs '{body: .}' < "${BODY_FILE}.issue")
 
