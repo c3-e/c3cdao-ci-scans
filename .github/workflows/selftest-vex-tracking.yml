@@ -37,8 +37,6 @@
 
 on:
   workflow_dispatch:
-  pull_request:  # temporary, for this one additional canary check only
-    branches: [main]
 
 permissions:
   contents: read
