@@ -156,25 +156,66 @@ def merge(
     return output_doc
 
 
+def _load_findings_file(path: str) -> List[Dict[str, Any]]:
+    """Load one Trivy- or Grype-shaped JSON export and return its findings as a flat list.
+
+    '-' means "this scanner's export wasn't available this run" and always
+    yields []. Both scanners' outputs are meant to be loaded (via two separate
+    calls) and concatenated by the caller — never just one or the other.
+    """
+    if path == "-":
+        return []
+
+    with open(path) as f:
+        findings_json = json.load(f)
+
+    # Trivy exports as {"Results": [...]} with each result's "Vulnerabilities"
+    # Grype exports as {"matches": [...]}
+    if isinstance(findings_json, dict):
+        if "Results" in findings_json:
+            out: List[Dict[str, Any]] = []
+            for result in findings_json["Results"] or []:
+                out.extend(result.get("Vulnerabilities") or [])
+            return out
+        if "matches" in findings_json:
+            return findings_json["matches"] or []
+        return []
+    if isinstance(findings_json, list):
+        return findings_json
+    return []
+
+
 def main():
-    """CLI entry point: merge prior + current + dispositions, write merged doc to stdout."""
-    if len(sys.argv) != 4:
+    """CLI entry point: merge prior + current (Trivy AND Grype) + dispositions, write merged doc to stdout."""
+    if len(sys.argv) != 5:
         print(
-            "Usage: vex_tracking.py <prior-doc-path|-> <current-findings-path> <human-disposition-doc-path|->",
+            "Usage: vex_tracking.py <prior-doc-path|-> <trivy-findings-path|-> "
+            "<grype-findings-path|-> <human-disposition-doc-path|->",
             file=sys.stderr,
         )
         print(
             "  prior-doc-path: path to prior tracking doc (or '-' for none/empty)",
             file=sys.stderr,
         )
-        print("  current-findings-path: path to current Trivy/Grype findings JSON", file=sys.stderr)
+        print(
+            "  trivy-findings-path: path to current Trivy JSON export (or '-' if unavailable)",
+            file=sys.stderr,
+        )
+        print(
+            "  grype-findings-path: path to current Grype JSON export (or '-' if unavailable)",
+            file=sys.stderr,
+        )
         print(
             "  human-disposition-doc-path: path to human VEX doc (or '-' for none)",
             file=sys.stderr,
         )
+        print(
+            "  Both scanner paths are read and combined — this is never an either/or choice.",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
-    prior_path, findings_path, disposition_path = sys.argv[1:]
+    prior_path, trivy_path, grype_path, disposition_path = sys.argv[1:]
 
     # Load prior doc
     prior_doc = None
@@ -185,26 +226,11 @@ def main():
         except FileNotFoundError:
             pass
 
-    # Load current findings
-    current_findings = []
+    # Load current findings from BOTH scanners and combine — never either/or.
     try:
-        with open(findings_path) as f:
-            findings_json = json.load(f)
-            # Trivy exports as {"Results": [...]} with each result's "Misconfigurations" or "Vulnerabilities"
-            # Grype exports as {"matches": [...]}
-            if isinstance(findings_json, dict):
-                if "Results" in findings_json:
-                    # Trivy format
-                    for result in findings_json["Results"]:
-                        if "Vulnerabilities" in result:
-                            current_findings.extend(result["Vulnerabilities"])
-                elif "matches" in findings_json:
-                    # Grype format
-                    current_findings = findings_json["matches"]
-            elif isinstance(findings_json, list):
-                current_findings = findings_json
+        current_findings = _load_findings_file(trivy_path) + _load_findings_file(grype_path)
     except (FileNotFoundError, json.JSONDecodeError) as e:
-        print(f"Error loading current findings from {findings_path}: {e}", file=sys.stderr)
+        print(f"Error loading current findings (trivy={trivy_path}, grype={grype_path}): {e}", file=sys.stderr)
         sys.exit(1)
 
     # Load human disposition doc

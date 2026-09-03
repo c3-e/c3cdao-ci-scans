@@ -319,6 +319,58 @@ class TestMergeFunctionality:
         assert isinstance(parsed, datetime)
 
 
+class TestLoadFindingsFile:
+    """Test _load_findings_file(): the function main() uses to load EACH
+    scanner's export separately, so both can be combined — never an
+    either/or choice between Trivy and Grype."""
+
+    def test_missing_sentinel_returns_empty(self):
+        """'-' means this scanner's export wasn't available; yields []."""
+        assert vex_tracking._load_findings_file("-") == []
+
+    def test_loads_trivy_shape(self, tmp_path):
+        trivy_doc = {
+            "Results": [
+                {"Vulnerabilities": [{"VulnerabilityID": "CVE-2026-T1"}]},
+                {"Vulnerabilities": [{"VulnerabilityID": "CVE-2026-T2"}]},
+                {},  # a result with no Vulnerabilities key at all
+            ]
+        }
+        p = tmp_path / "trivy-image.json"
+        p.write_text(json.dumps(trivy_doc))
+        result = vex_tracking._load_findings_file(str(p))
+        ids = {f["VulnerabilityID"] for f in result}
+        assert ids == {"CVE-2026-T1", "CVE-2026-T2"}
+
+    def test_loads_grype_shape(self, tmp_path):
+        grype_doc = {"matches": [{"vulnerability": {"name": "CVE-2026-G1"}}]}
+        p = tmp_path / "grype-image.json"
+        p.write_text(json.dumps(grype_doc))
+        result = vex_tracking._load_findings_file(str(p))
+        assert len(result) == 1
+        assert result[0]["vulnerability"]["name"] == "CVE-2026-G1"
+
+    def test_both_files_combine_not_either_or(self, tmp_path):
+        """The exact regression this fix targets: a prior implementation
+        picked ONE scanner's file ('prefer Grype, fall back to Trivy') and
+        silently dropped the other. Loading both and concatenating must
+        yield the union, not just one scanner's findings."""
+        trivy_doc = {"Results": [{"Vulnerabilities": [{"VulnerabilityID": "CVE-2026-TRIVY-ONLY"}]}]}
+        grype_doc = {"matches": [{"vulnerability": {"name": "CVE-2026-GRYPE-ONLY"}}]}
+        trivy_p = tmp_path / "trivy-image.json"
+        grype_p = tmp_path / "grype-image.json"
+        trivy_p.write_text(json.dumps(trivy_doc))
+        grype_p.write_text(json.dumps(grype_doc))
+
+        combined = vex_tracking._load_findings_file(str(trivy_p)) + vex_tracking._load_findings_file(
+            str(grype_p)
+        )
+        merged = vex_tracking.merge(None, combined, None, clock=lambda: "2026-09-03T00:00:00Z")
+        cve_names = {s["vulnerability"]["name"] for s in merged["statements"]}
+        # Would fail if either scanner's findings were silently dropped.
+        assert cve_names == {"CVE-2026-TRIVY-ONLY", "CVE-2026-GRYPE-ONLY"}
+
+
 class TestRealWorldScenario:
     """Test a realistic scenario with multiple findings across multiple runs."""
 
