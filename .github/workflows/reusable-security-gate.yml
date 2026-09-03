@@ -1619,7 +1619,7 @@ jobs:
               echo "::error::Failed to list issues"
               exit 1
             }
-            match=$(echo "$resp" | jq -r --arg marker "$marker" '[.[] | select(.pull_request == null) | select(.body | contains($marker))][0].number // empty')
+            match=$(echo "$resp" | jq -r --arg marker "$marker" '[.[] | select(.pull_request == null) | select((.body // "") | contains($marker))][0].number // empty')
             if [ -n "$match" ]; then existing_number="$match"; break; fi
             count=$(echo "$resp" | jq 'length' 2>/dev/null || echo 0)
             [ "${count:-0}" -lt 100 ] && break
@@ -1645,7 +1645,7 @@ jobs:
               -H "Authorization: Bearer ${GITHUB_TOKEN}" \
               -H "Accept: application/vnd.github+json" \
               "${api}/repos/${REPO}/issues" \
-              -d "$(jq -n --arg title "Security scan results — scheduled" --argjson body "$issue_body" '{title: $title, body: .body}')" ) || {
+              -d "$(jq -n --arg title "Security scan results — scheduled" --argjson body "$issue_body" '{title: $title, body: $body.body}')" ) || {
               echo "::error::Failed to create new issue"
               exit 1
             }

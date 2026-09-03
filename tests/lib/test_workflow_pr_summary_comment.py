@@ -15,7 +15,9 @@ pull_request-triggered run to fully prove (see the PR description).
 
 from __future__ import annotations
 
+import json
 import re
+import subprocess
 from pathlib import Path
 
 import yaml
@@ -340,3 +342,88 @@ def test_sla_breach_banner_present_in_build_step_and_gated_on_real_report_conten
     # Conditional, not unconditional: the banner echo must be inside an
     # `if` block that checks the report file for that exact string.
     assert 'grep -q "SLA breach — 90-day threshold exceeded"' in run
+
+
+# --- Regression: real jq execution against the issue-step's own filters ----
+#
+# Found live via IG-2's real schedule-triggered dispatch on c3cdao-landing
+# (run 33799427136): a repo issue with body: null crashed the find-loop's
+# jq filter with "null (null) and string (...) cannot have their
+# containment checked", failing the whole export-bundle job — and the
+# null body existed in the first place because the create-branch's own
+# jq invocation bound `.body` against the `-n` flag's null input instead
+# of the `--argjson body` variable, so every created issue had body: null.
+# Both bugs are silent at the string-assertion level above (they only
+# surface when jq actually runs), so these tests execute the real jq
+# filters extracted from the step's own script — not a hand-copied
+# duplicate that could drift from the fix.
+
+
+def _extract_single_quoted(pattern: str, run: str) -> str:
+    match = re.search(pattern, run)
+    assert match, f"pattern not found in issue step run script: {pattern!r}"
+    return match.group(1)
+
+
+def _find_loop_filter() -> str:
+    run = _issue_step()["run"]
+    return _extract_single_quoted(r"jq -r --arg marker \"\$marker\" '([^']+)'", run)
+
+
+def _create_body_filter() -> str:
+    run = _issue_step()["run"]
+    return _extract_single_quoted(
+        r"jq -n --arg title \"Security scan results — scheduled\" --argjson body \"\$issue_body\" '([^']+)'",
+        run,
+    )
+
+
+def test_find_loop_jq_filter_tolerates_a_null_body_issue():
+    """An issue with body: null (exactly what the create-branch bug used
+    to produce) must not crash the marker search — it must be skipped,
+    and a later issue whose body actually contains the marker must still
+    be found."""
+    resp = json.dumps(
+        [
+            {"number": 5, "pull_request": None, "body": None},
+            {
+                "number": 7,
+                "pull_request": None,
+                "body": "stuff <!-- security-export-issue --> more",
+            },
+        ]
+    )
+    result = subprocess.run(
+        ["jq", "-r", "--arg", "marker", ISSUE_MARKER, _find_loop_filter()],
+        input=resp,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "7"
+
+
+def test_create_body_jq_filter_binds_the_argjson_variable_not_null_input():
+    """jq -n sets the implicit input document to null — `.body` on that
+    input is null regardless of what --argjson body carries. The filter
+    must reference the bound variable ($body.body), not the null input,
+    or every created issue silently gets body: null forever."""
+    issue_body = json.dumps({"body": "real tracking-issue content"})
+    result = subprocess.run(
+        [
+            "jq",
+            "-n",
+            "--arg",
+            "title",
+            "Security scan results — scheduled",
+            "--argjson",
+            "body",
+            issue_body,
+            _create_body_filter(),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    created = json.loads(result.stdout)
+    assert created["body"] == "real tracking-issue content"
