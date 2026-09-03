@@ -41,16 +41,6 @@ name: Selftest — Trivy severity un-filter (T-1 / IG-0a gate)
 
 on:
   workflow_dispatch:
-  # Temporary, for this canary only: workflow_dispatch requires a workflow
-  # file to already exist on the default branch before GitHub will
-  # register it as dispatchable — a brand-new file on a feature branch
-  # can't be workflow_dispatch'd yet. pull_request doesn't have that
-  # restriction (GitHub evaluates the PR head ref's own workflow files),
-  # so this triggers a real run via an unmerged PR against main. Removed
-  # once the run is captured; workflow_dispatch is the permanent trigger
-  # for future reruns after this file lands on main for real.
-  pull_request:
-    branches: [main]
 
 permissions:
   contents: read
