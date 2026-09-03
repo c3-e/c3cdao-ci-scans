@@ -363,9 +363,19 @@ runs:
         pull_exit=$?
         set -e
 
-        if [ $pull_exit -eq 0 ]; then
+        if [ $pull_exit -eq 0 ] && [ -f "$prior_doc_dir/vex-tracking.json" ]; then
           echo "prior_doc=$prior_doc_dir/vex-tracking.json" >> "$GITHUB_ENV"
           echo "::notice::Loaded prior vex-tracking record from ${registry_ref}"
+        elif [ $pull_exit -eq 0 ]; then
+          # Verified live: oras pull exiting 0 does not guarantee the file
+          # landed at -o's target — if the pushed artifact's title
+          # annotation was ever an absolute path (a prior bug, fixed at
+          # push time below), oras follows THAT path instead of -o,
+          # silently. Trust the filesystem, not the exit code: if it isn't
+          # where expected, that's a real failure, never a silent
+          # first-run fallback (which would reset every first_issued).
+          echo "::error::oras pull exited 0 but ${prior_doc_dir}/vex-tracking.json does not exist — refusing to treat this as first-run state. Pull output: ${pull_output}"
+          echo "vex_pull_real_failure=true" >> "$GITHUB_ENV"
         elif echo "$pull_output" | grep -q "Error response from registry:.*not found"; then
           # Genuine first-run 404 (registry has no such tag yet) — verified
           # against a real anonymous pull against ghcr.io, this exact message
@@ -444,9 +454,17 @@ runs:
         cp "$merged_doc" "$push_dir/vex-tracking.json"
 
         echo "::notice::Pushing vex-tracking record to ${registry_ref}"
-        oras push "$registry_ref" "$push_dir/vex-tracking.json:application/json" \
-          --disable-path-validation \
-          2>&1 || {
+        # Verified live: pushing with an absolute file path (plus
+        # --disable-path-validation to get past oras's normal refusal of
+        # one) bakes that ABSOLUTE SOURCE PATH into the blob's title
+        # annotation. A later `oras pull -o <dir>` then follows the
+        # recorded title instead of -o — on this runner that happened to
+        # still resolve (same $RUNNER_TEMP layout), but pulling the same
+        # artifact from anywhere else failed outright ("mkdir /home/runner:
+        # operation not supported"). cd into push_dir and reference the
+        # file by its bare relative name so the recorded title is just
+        # "vex-tracking.json" — no path-validation override needed at all.
+        ( cd "$push_dir" && oras push "$registry_ref" vex-tracking.json:application/json ) 2>&1 || {
           code=$?
           echo "::warning::vex-tracking push to ${registry_ref} failed with code $code (advisory; does not fail gate)"
           exit 0
