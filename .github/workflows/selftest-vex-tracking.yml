@@ -8,10 +8,16 @@
 # function directly, but chart-path threading, the oras setup/pull/push
 # steps, and step ordering relative to the Trivy/Grype JSON exports can
 # only be proven by a real dispatch. An initial build of T-3 shipped with
-# five bugs unit tests never caught, because none of them live in
-# merge() — they were all in this untested glue. This selftest is the
-# fix: same "crafted input, real tool invocation, assert on real output"
-# shape as selftest-publish-images.yml, applied to this mechanism.
+# eight bugs unit tests never caught, because none of them live in
+# merge() — they were all in this untested glue (chart-path never wired,
+# step ordering, oras never installed, an unauthenticated pull returning
+# "denied" instead of a clean 404 on a brand-new namespace, oras's
+# path-traversal guard on any absolute -o destination, and a push that
+# baked the absolute source path into the artifact's own title
+# annotation). Every one of them surfaced only once this selftest
+# actually ran for real — this file is the fix: same "crafted input,
+# real tool invocation, assert on real output" shape as
+# selftest-publish-images.yml, applied to this mechanism.
 #
 # Reuses selftest-fixtures/vex-visibility/medium-cve-image/ (an
 # intentionally old, real, publicly-pullable base image with genuine
@@ -31,16 +37,6 @@
 
 on:
   workflow_dispatch:
-  # Temporary, for this canary only: workflow_dispatch requires a workflow
-  # file to already exist on the default branch before GitHub will
-  # register it as dispatchable — a brand-new file on a feature branch
-  # can't be workflow_dispatch'd yet. pull_request doesn't have that
-  # restriction (GitHub evaluates the PR head ref's own workflow files),
-  # so this triggers a real run via an unmerged PR against main. Removed
-  # once the run is captured; workflow_dispatch is the permanent trigger
-  # for future reruns after this file lands on main for real.
-  pull_request:
-    branches: [main]
 
 permissions:
   contents: read
