@@ -102,7 +102,16 @@ jobs:
         run: |
           set -euo pipefail
           CHART_PATH="${{ inputs.chart_path }}"
-          PILOT="$(basename "$CHART_PATH")"
+          if ! [ -f "${CHART_PATH}/Chart.yaml" ]; then
+            echo "::error::Chart.yaml not found at ${CHART_PATH}/Chart.yaml"
+            exit 1
+          fi
+          NAME="$(yq eval '.name' "${CHART_PATH}/Chart.yaml")"
+          if [ "$NAME" = "null" ]; then
+            echo "::error::Chart.yaml at ${CHART_PATH}/Chart.yaml is missing the .name field"
+            exit 1
+          fi
+          PILOT="$NAME"
           PR_NUMBER="${{ github.event.pull_request.number }}"
           SHA="${{ github.event.pull_request.merge_commit_sha }}"
           SHORT_SHA="${SHA:0:7}"
@@ -446,7 +455,17 @@ jobs:
         id: coords
         run: |
           set -euo pipefail
-          PILOT="$(basename "${{ inputs.chart_path }}")"
+          CHART_PATH="${{ inputs.chart_path }}"
+          if ! [ -f "${CHART_PATH}/Chart.yaml" ]; then
+            echo "::error::Chart.yaml not found at ${CHART_PATH}/Chart.yaml"
+            exit 1
+          fi
+          NAME="$(yq eval '.name' "${CHART_PATH}/Chart.yaml")"
+          if [ "$NAME" = "null" ]; then
+            echo "::error::Chart.yaml at ${CHART_PATH}/Chart.yaml is missing the .name field"
+            exit 1
+          fi
+          PILOT="$NAME"
           PR_NUMBER="${{ github.event.pull_request.number }}"
           SHA="${{ github.event.pull_request.merge_commit_sha }}"
           SHORT_SHA="${SHA:0:7}"
