@@ -354,7 +354,12 @@ runs:
         mkdir -p "$prior_doc_dir"
 
         set +e
-        pull_output="$(oras pull "$registry_ref" -o "$prior_doc_dir" 2>&1)"
+        # oras >=1.3 blocks writing outside the current working directory
+        # by default ("path traversal disallowed") — verified live, this
+        # trips on ANY absolute -o destination, not just malicious input.
+        # $RUNNER_TEMP is GitHub Actions' own standard temp dir, not
+        # untrusted; --allow-path-traversal is the documented remedy.
+        pull_output="$(oras pull "$registry_ref" -o "$prior_doc_dir" --allow-path-traversal 2>&1)"
         pull_exit=$?
         set -e
 
