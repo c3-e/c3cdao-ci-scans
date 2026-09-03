@@ -19,7 +19,7 @@
 # output) — this fixture is also IG-0a's planned deliverable
 # (task-sequence.md §2, T-1's gate), built once and reused by both.
 #
-# Destination is ghcr.io/c3-e/vex-tracking/selftest-vex-tracking-pilot —
+# Destination is ghcr.io/c3-e/vex-tracking/selftest-vex-tracking-pilot-v2 —
 # an unmistakably-selftest PILOT name (deliberately different from this
 # fixture's own directory basename, medium-cve-image, proving Chart.yaml's
 # .name field wins over basename() — the exact T-6/ppubs bug shape) that
@@ -86,7 +86,7 @@ jobs:
           mkdir -p /tmp/chart-fixture-dir
           cat > /tmp/chart-fixture-dir/Chart.yaml <<'EOF'
           apiVersion: v2
-          name: selftest-vex-tracking-pilot
+          name: selftest-vex-tracking-pilot-v2
           version: 0.1.0
           EOF
           echo "chart dir basename: $(basename /tmp/chart-fixture-dir)"
@@ -108,7 +108,7 @@ jobs:
           # oras was installed by image-vuln-scan's own "Set up oras CLI"
           # step above (composite-action steps run in this same job/PATH —
           # not a separate job), so it's already on PATH here.
-          oras pull "ghcr.io/c3-e/vex-tracking/selftest-vex-tracking-pilot:latest" -o /tmp/vex-verify --allow-path-traversal
+          oras pull "ghcr.io/c3-e/vex-tracking/selftest-vex-tracking-pilot-v2:latest" -o /tmp/vex-verify --allow-path-traversal
           echo "--- merged vex-tracking record ---"
           cat /tmp/vex-verify/vex-tracking.json
           echo
@@ -124,6 +124,6 @@ jobs:
             echo "## Selftest: vex-tracking (T-3 remediation canary)"
             echo
             echo "- PILOT resolved from Chart.yaml, chart dir basename was deliberately different"
-            echo "- registry ref: \`ghcr.io/c3-e/vex-tracking/selftest-vex-tracking-pilot:latest\`"
+            echo "- registry ref: \`ghcr.io/c3-e/vex-tracking/selftest-vex-tracking-pilot-v2:latest\`"
             echo "- this is a throwaway selftest artifact, never a real pilot's tracking record"
           } >> "$GITHUB_STEP_SUMMARY"
