@@ -71,7 +71,8 @@ def test_covered_ids_empty_on_malformed_json(tmp_path):
 # --- trivy_findings / grype_findings -----------------------------------------
 
 
-def test_trivy_findings_filters_high_critical_only(tmp_path):
+def test_trivy_findings_returns_all_severities(tmp_path):
+    """trivy_findings returns all severities, including severity field."""
     path = tmp_path / "trivy-image.json"
     _write(
         path,
@@ -84,12 +85,16 @@ def test_trivy_findings_filters_high_critical_only(tmp_path):
         ),
     )
     findings = mod.trivy_findings(path)
-    assert {f["id"] for f in findings} == {"CVE-1", "CVE-3"}
+    assert {f["id"] for f in findings} == {"CVE-1", "CVE-2", "CVE-3"}
+    # Check severity field is present
+    assert {f["severity"] for f in findings} == {"HIGH", "MEDIUM", "CRITICAL"}
     fixed = next(f for f in findings if f["id"] == "CVE-3")
     assert fixed["fixed_version"] == "1.2.3"
+    assert fixed["severity"] == "CRITICAL"
 
 
-def test_grype_findings_fixed_state_required_for_fixed_version(tmp_path):
+def test_grype_findings_returns_all_severities(tmp_path):
+    """grype_findings returns all severities, including severity field."""
     path = tmp_path / "grype-image.json"
     _write(
         path,
@@ -111,11 +116,15 @@ def test_grype_findings_fixed_state_required_for_fixed_version(tmp_path):
         ),
     )
     findings = mod.grype_findings(path)
-    assert {f["id"] for f in findings} == {"CVE-1", "CVE-2"}  # CVE-3 filtered (Low)
+    assert {f["id"] for f in findings} == {"CVE-1", "CVE-2", "CVE-3"}  # All returned now
     cve1 = next(f for f in findings if f["id"] == "CVE-1")
     assert cve1["fixed_version"] == ""  # state != "fixed" -> not treated as fixed
+    assert cve1["severity"] == "High"
     cve2 = next(f for f in findings if f["id"] == "CVE-2")
     assert cve2["fixed_version"] == "2.0.0"
+    assert cve2["severity"] == "Critical"
+    cve3 = next(f for f in findings if f["id"] == "CVE-3")
+    assert cve3["severity"] == "Low"
 
 
 # --- pending_for_service: covered exclusion + bucket split -------------------
@@ -127,9 +136,10 @@ def test_pending_for_service_excludes_covered_ids(tmp_path):
     _write(svc / "trivy-image.json", _trivy_doc([{"VulnerabilityID": "CVE-1", "Severity": "HIGH", "PkgName": "a"}]))
     _write(svc / "grype-image.json", _grype_doc([]))
     _write(svc / "vex-applied.openvex.json", _vex_doc(["CVE-1"]))
-    remediate, vex_candidate = mod.pending_for_service(svc)
+    remediate, vex_candidate, medium_low = mod.pending_for_service(svc)
     assert remediate == []
     assert vex_candidate == []
+    assert medium_low == []
 
 
 def test_pending_for_service_splits_by_fix_availability(tmp_path):
@@ -145,9 +155,10 @@ def test_pending_for_service_splits_by_fix_availability(tmp_path):
         ),
     )
     _write(svc / "grype-image.json", _grype_doc([]))
-    remediate, vex_candidate = mod.pending_for_service(svc)
+    remediate, vex_candidate, medium_low = mod.pending_for_service(svc)
     assert [f["id"] for f in remediate] == ["CVE-FIXED"]
     assert [f["id"] for f in vex_candidate] == ["CVE-NOFIX"]
+    assert medium_low == []
 
 
 def test_pending_for_service_dedupes_across_scanners_preferring_fixed(tmp_path):
@@ -170,17 +181,19 @@ def test_pending_for_service_dedupes_across_scanners_preferring_fixed(tmp_path):
             ]
         ),
     )
-    remediate, vex_candidate = mod.pending_for_service(svc)
+    remediate, vex_candidate, medium_low = mod.pending_for_service(svc)
     assert [f["id"] for f in remediate] == ["CVE-SHARED"]
     assert vex_candidate == []
+    assert medium_low == []
 
 
 def test_pending_for_service_missing_files_yield_empty_buckets(tmp_path):
     svc = tmp_path / "security-export-app-abc1234"
     svc.mkdir()
-    remediate, vex_candidate = mod.pending_for_service(svc)
+    remediate, vex_candidate, medium_low = mod.pending_for_service(svc)
     assert remediate == []
     assert vex_candidate == []
+    assert medium_low == []
 
 
 # --- render: markdown shape + never touches .openvex/ ------------------------
@@ -242,3 +255,338 @@ def test_render_never_writes_under_openvex(tmp_path):
 
 def test_service_name_strips_prefix_and_short_sha():
     assert mod._service_name(Path("security-export-my-app-abc1234")) == "my-app"
+
+
+# --- Medium/Low tiering and age tracking (AC-1 through AC-4) ---
+
+
+def _vex_tracking_doc(cve_id: str, first_issued: str) -> dict:
+    """Create a vex-tracking.json doc with a single CVE statement."""
+    return {
+        "@context": "https://openvex.dev/ns/v0.2.0",
+        "@id": "https://openvex.dev/docs/tracking/vex-tracking-2026-09-03",
+        "author": "test",
+        "timestamp": "2026-09-03T14:47:26Z",
+        "version": 1,
+        "statements": [
+            {
+                "vulnerability": {"name": cve_id},
+                "first_issued": first_issued,
+                "last_updated": "2026-09-03T14:47:26Z",
+            }
+        ],
+    }
+
+
+def test_medium_low_tier_worked_example(tmp_path):
+    """AC-1: Worked example with age=32 days, status 'within 90-day SLA'.
+
+    Given:
+      - Grype export with CVE-2026-42533 (High, nginx, dispositioned via not_affected)
+                       and CVE-2026-99999 (Medium, openssl-libs, no VEX statement)
+      - tracking doc with first_issued for CVE-2026-99999 of 2026-08-01
+      - reference date of 2026-09-02
+    When:
+      - render() runs with the fixed clock
+    Then:
+      - CVE-2026-42533 is excluded (already dispositioned)
+      - CVE-2026-99999 appears in "Actively Managed" table with age=32 days,
+        status "within 90-day SLA"
+    """
+    bundle = tmp_path / "security-export-full"
+    svc = bundle / "security-export-app-abc1234"
+    svc.mkdir(parents=True)
+
+    # Grype export with one High (dispositioned) and one Medium (undispositioned)
+    _write(
+        svc / "grype-image.json",
+        _grype_doc(
+            [
+                {
+                    "vulnerability": {
+                        "id": "CVE-2026-42533",
+                        "severity": "High",
+                        "fix": {"state": "not-fixed", "versions": []},
+                    },
+                    "artifact": {"name": "nginx"},
+                },
+                {
+                    "vulnerability": {
+                        "id": "CVE-2026-99999",
+                        "severity": "Medium",
+                        "fix": {"state": "not-fixed", "versions": []},
+                    },
+                    "artifact": {"name": "openssl-libs"},
+                },
+            ]
+        ),
+    )
+    _write(svc / "trivy-image.json", _trivy_doc([]))
+
+    # VEX statement: CVE-2026-42533 is already dispositioned (not_affected)
+    _write(
+        svc / "vex-applied.openvex.json",
+        {
+            "statements": [
+                {
+                    "vulnerability": {"name": "CVE-2026-42533"},
+                    "status": "not_affected",
+                }
+            ]
+        },
+    )
+
+    # Tracking doc: CVE-2026-99999 first_issued on 2026-08-01
+    _write(
+        svc / "vex-tracking.json",
+        _vex_tracking_doc("CVE-2026-99999", "2026-08-01T00:00:00Z"),
+    )
+
+    # Fixed clock: 2026-09-02 00:00:00 UTC (32 days after first_issued)
+    def fixed_clock():
+        return "2026-09-02T00:00:00Z"
+
+    output = mod.render(bundle, clock=fixed_clock)
+
+    # CVE-2026-42533 should NOT appear (already dispositioned)
+    assert "CVE-2026-42533" not in output
+
+    # CVE-2026-99999 should appear in the Medium/Low table
+    assert "CVE-2026-99999" in output
+    assert "Actively Managed" in output
+    assert "32" in output  # age = 32 days
+    assert "within 90-day SLA" in output
+
+
+def test_medium_low_sla_breach(tmp_path):
+    """AC-2: Same finding with age=95 days shows SLA breach status."""
+    bundle = tmp_path / "security-export-full"
+    svc = bundle / "security-export-app-abc1234"
+    svc.mkdir(parents=True)
+
+    _write(
+        svc / "grype-image.json",
+        _grype_doc(
+            [
+                {
+                    "vulnerability": {
+                        "id": "CVE-2026-99999",
+                        "severity": "Medium",
+                        "fix": {"state": "not-fixed", "versions": []},
+                    },
+                    "artifact": {"name": "openssl-libs"},
+                }
+            ]
+        ),
+    )
+    _write(svc / "trivy-image.json", _trivy_doc([]))
+    _write(svc / "vex-applied.openvex.json", {})
+
+    # CVE first_issued on 2026-05-30 (95 days before 2026-09-02)
+    _write(
+        svc / "vex-tracking.json",
+        _vex_tracking_doc("CVE-2026-99999", "2026-05-30T00:00:00Z"),
+    )
+
+    def fixed_clock():
+        return "2026-09-02T00:00:00Z"
+
+    output = mod.render(bundle, clock=fixed_clock)
+
+    assert "CVE-2026-99999" in output
+    assert "95" in output  # age = 95 days
+    assert "SLA breach — 90-day threshold exceeded" in output
+
+
+def test_render_high_critical_unchanged_with_no_medium_low(tmp_path):
+    """AC-3: Regression baseline — High/Critical output is byte-identical when no Medium/Low.
+
+    When there are no Medium/Low findings, the High/Critical tables output must be
+    exactly identical to what was output before this ticket.
+    """
+    bundle = tmp_path / "security-export-full"
+    svc = bundle / "security-export-app-abc1234"
+    svc.mkdir(parents=True)
+
+    # Only High/Critical findings
+    _write(
+        svc / "trivy-image.json",
+        _trivy_doc(
+            [
+                {"VulnerabilityID": "CVE-FIXED", "Severity": "HIGH", "PkgName": "a", "FixedVersion": "1.5.0"},
+                {"VulnerabilityID": "CVE-NOFIX", "Severity": "CRITICAL", "PkgName": "b"},
+            ]
+        ),
+    )
+    _write(svc / "grype-image.json", _grype_doc([]))
+    _write(svc / "vex-applied.openvex.json", {})
+
+    output = mod.render(bundle)
+
+    # Verify High/Critical tables are present
+    assert "Remediation available" in output
+    assert "CVE-FIXED" in output
+    assert "1.5.0" in output
+    assert "VEX-disposition candidates" in output
+    assert "CVE-NOFIX" in output
+
+    # Verify Medium/Low table is NOT present (no findings in that bucket)
+    assert "Actively Managed" not in output
+
+    # Verify exact table format for High/Critical
+    assert "| Service | CVE | Package | Fixed version |" in output
+    assert "| Service | CVE | Package |" in output
+
+
+def test_missing_tracking_doc_degrades_gracefully(tmp_path):
+    """AC-4: Missing/malformed tracking doc shows age 'unknown', doesn't crash.
+
+    When vex-tracking.json is missing or invalid:
+      - Medium/Low findings still render
+      - age_days is None, shows as 'unknown'
+      - status is 'unknown'
+      - render() does not crash
+    """
+    bundle = tmp_path / "security-export-full"
+    svc = bundle / "security-export-app-abc1234"
+    svc.mkdir(parents=True)
+
+    _write(
+        svc / "grype-image.json",
+        _grype_doc(
+            [
+                {
+                    "vulnerability": {
+                        "id": "CVE-2026-99999",
+                        "severity": "Medium",
+                        "fix": {"state": "not-fixed", "versions": []},
+                    },
+                    "artifact": {"name": "openssl-libs"},
+                }
+            ]
+        ),
+    )
+    _write(svc / "trivy-image.json", _trivy_doc([]))
+    _write(svc / "vex-applied.openvex.json", {})
+    # NO vex-tracking.json file
+
+    output = mod.render(bundle)
+
+    # Should not crash, should still show the Medium/Low table
+    assert "CVE-2026-99999" in output
+    assert "Actively Managed" in output
+    assert "unknown" in output  # age_days is None
+
+
+def test_malformed_tracking_doc_degrades_gracefully(tmp_path):
+    """AC-4 variant: malformed JSON in vex-tracking.json still renders Medium/Low."""
+    bundle = tmp_path / "security-export-full"
+    svc = bundle / "security-export-app-abc1234"
+    svc.mkdir(parents=True)
+
+    _write(
+        svc / "grype-image.json",
+        _grype_doc(
+            [
+                {
+                    "vulnerability": {
+                        "id": "CVE-2026-99999",
+                        "severity": "Low",
+                        "fix": {"state": "not-fixed", "versions": []},
+                    },
+                    "artifact": {"name": "openssl-libs"},
+                }
+            ]
+        ),
+    )
+    _write(svc / "trivy-image.json", _trivy_doc([]))
+    _write(svc / "vex-applied.openvex.json", {})
+
+    # Write malformed JSON
+    (svc / "vex-tracking.json").write_text("{not valid json")
+
+    output = mod.render(bundle)
+
+    # Should not crash, should still show the Medium/Low table
+    assert "CVE-2026-99999" in output
+    assert "Actively Managed" in output
+    assert "unknown" in output  # Unable to parse, age_days is None
+
+
+def test_medium_low_multiple_findings(tmp_path):
+    """Multiple Medium/Low findings are all shown with their own age/status."""
+    bundle = tmp_path / "security-export-full"
+    svc = bundle / "security-export-app-abc1234"
+    svc.mkdir(parents=True)
+
+    _write(
+        svc / "grype-image.json",
+        _grype_doc(
+            [
+                {
+                    "vulnerability": {
+                        "id": "CVE-1",
+                        "severity": "Medium",
+                        "fix": {"state": "not-fixed", "versions": []},
+                    },
+                    "artifact": {"name": "pkg-a"},
+                },
+                {
+                    "vulnerability": {
+                        "id": "CVE-2",
+                        "severity": "Low",
+                        "fix": {"state": "not-fixed", "versions": []},
+                    },
+                    "artifact": {"name": "pkg-b"},
+                },
+            ]
+        ),
+    )
+    _write(svc / "trivy-image.json", _trivy_doc([]))
+    _write(svc / "vex-applied.openvex.json", {})
+
+    _write(
+        svc / "vex-tracking.json",
+        {
+            "@context": "https://openvex.dev/ns/v0.2.0",
+            "@id": "test",
+            "author": "test",
+            "timestamp": "2026-09-03T14:47:26Z",
+            "version": 1,
+            "statements": [
+                {
+                    "vulnerability": {"name": "CVE-1"},
+                    "first_issued": "2026-08-20T00:00:00Z",
+                    "last_updated": "2026-09-03T00:00:00Z",
+                },
+                {
+                    "vulnerability": {"name": "CVE-2"},
+                    "first_issued": "2026-07-04T00:00:00Z",
+                    "last_updated": "2026-09-03T00:00:00Z",
+                },
+            ],
+        },
+    )
+
+    def fixed_clock():
+        return "2026-09-03T00:00:00Z"
+
+    output = mod.render(bundle, clock=fixed_clock)
+
+    # Both should be present
+    assert "CVE-1" in output
+    assert "CVE-2" in output
+    assert "Actively Managed" in output
+
+    # CVE-1: 14 days (within SLA)
+    # CVE-2: 61 days (within SLA, but closer to breach)
+    lines = output.split("\n")
+    # Find rows with these CVEs
+    cve1_line = next(line for line in lines if "CVE-1" in line)
+    cve2_line = next(line for line in lines if "CVE-2" in line)
+
+    assert "14" in cve1_line
+    assert "within 90-day SLA" in cve1_line
+
+    assert "61" in cve2_line
+    assert "within 90-day SLA" in cve2_line
