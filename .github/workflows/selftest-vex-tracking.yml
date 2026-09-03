@@ -118,7 +118,7 @@ jobs:
           # oras was installed by image-vuln-scan's own "Set up oras CLI"
           # step above (composite-action steps run in this same job/PATH —
           # not a separate job), so it's already on PATH here.
-          oras pull "ghcr.io/c3-e/vex-tracking/selftest-vex-tracking-pilot:latest" -o /tmp/vex-verify
+          oras pull "ghcr.io/c3-e/vex-tracking/selftest-vex-tracking-pilot:latest" -o /tmp/vex-verify --allow-path-traversal
           echo "--- merged vex-tracking record ---"
           cat /tmp/vex-verify/vex-tracking.json
           echo
