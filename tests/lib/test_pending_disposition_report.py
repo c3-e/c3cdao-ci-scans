@@ -398,6 +398,49 @@ def test_medium_low_sla_breach(tmp_path):
     assert "SLA breach — 90-day threshold exceeded" in output
 
 
+def test_medium_low_sla_boundary_at_exactly_90_days_is_within(tmp_path):
+    """Boundary case flagged by evidence review as untested: age == 90 must
+    be treated as within SLA (code uses `<= 90`), not a breach — the
+    ticket's own wording ("once age exceeds 90 days") means the breach
+    threshold is strictly greater than 90."""
+    bundle = tmp_path / "security-export-full"
+    svc = bundle / "security-export-app-abc1234"
+    svc.mkdir(parents=True)
+
+    _write(
+        svc / "grype-image.json",
+        _grype_doc(
+            [
+                {
+                    "vulnerability": {
+                        "id": "CVE-2026-88888",
+                        "severity": "Medium",
+                        "fix": {"state": "not-fixed", "versions": []},
+                    },
+                    "artifact": {"name": "openssl-libs"},
+                }
+            ]
+        ),
+    )
+    _write(svc / "trivy-image.json", _trivy_doc([]))
+    _write(svc / "vex-applied.openvex.json", {})
+
+    # Exactly 90 days before the reference clock (2026-06-04 -> 2026-09-02).
+    _write(
+        svc / "vex-tracking.json",
+        _vex_tracking_doc("CVE-2026-88888", "2026-06-04T00:00:00Z"),
+    )
+
+    def fixed_clock():
+        return "2026-09-02T00:00:00Z"
+
+    output = mod.render(bundle, clock=fixed_clock)
+
+    assert "CVE-2026-88888" in output
+    assert "| 90 | within 90-day SLA |" in output
+    assert "SLA breach" not in output
+
+
 def test_render_high_critical_unchanged_with_no_medium_low(tmp_path):
     """AC-3: Regression baseline — High/Critical output is byte-identical when no Medium/Low.
 
@@ -423,19 +466,35 @@ def test_render_high_critical_unchanged_with_no_medium_low(tmp_path):
 
     output = mod.render(bundle)
 
-    # Verify High/Critical tables are present
-    assert "Remediation available" in output
-    assert "CVE-FIXED" in output
-    assert "1.5.0" in output
-    assert "VEX-disposition candidates" in output
-    assert "CVE-NOFIX" in output
+    # Full-string equality against the exact pre-T4 output (confirmed via
+    # `git show 496e2e2:scripts/lib/pending_disposition_report.py` for this
+    # identical fixture) — substring checks alone let a real regression
+    # through (T-4's first build unconditionally appended a trailing blank
+    # line after the candidate_rows table even when nothing followed it;
+    # every fixture with candidate_rows but no Medium/Low findings gained
+    # one extra trailing newline that wasn't there before). This is the
+    # byte-for-byte check AC-3 and the ticket's Failure Protocol require.
+    expected = "\n".join(
+        [
+            "**Pending disposition (not covered by any VEX statement):**",
+            "",
+            "Remediation available (1) — bump, don't suppress:",
+            "",
+            "| Service | CVE | Package | Fixed version |",
+            "| --- | --- | --- | --- |",
+            "| app | CVE-FIXED | a | 1.5.0 |",
+            "",
+            "No fix available — VEX-disposition candidates (1):",
+            "",
+            "| Service | CVE | Package |",
+            "| --- | --- | --- |",
+            "| app | CVE-NOFIX | b |",
+        ]
+    )
+    assert output == expected
 
-    # Verify Medium/Low table is NOT present (no findings in that bucket)
+    # Belt-and-suspenders: Medium/Low table must not appear at all.
     assert "Actively Managed" not in output
-
-    # Verify exact table format for High/Critical
-    assert "| Service | CVE | Package | Fixed version |" in output
-    assert "| Service | CVE | Package |" in output
 
 
 def test_missing_tracking_doc_degrades_gracefully(tmp_path):

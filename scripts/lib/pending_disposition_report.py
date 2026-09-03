@@ -251,7 +251,14 @@ def render(bundle_dir: Path, max_rows: int = 15, clock: Optional[Callable[[], st
         lines += [f"| {s} | {c} | {p} |" for s, c, p in candidate_rows[:max_rows]]
         if len(candidate_rows) > max_rows:
             lines.append(f"| _+{len(candidate_rows) - max_rows} more_ | | | |")
-        lines.append("")
+        # Trailing blank only when the Medium/Low table follows — the
+        # pre-T4 code never emitted one here at all (candidate_rows was
+        # always the last section then). Unconditionally appending it
+        # regardless of what follows was a real regression caught by
+        # evidence review: it changed existing output for every fixture
+        # with candidate_rows but no Medium/Low findings.
+        if medium_low_rows:
+            lines.append("")
 
     if medium_low_rows:
         lines += [
