@@ -215,19 +215,6 @@ jobs:
               has_pr_context="false"
               output_channel="summary_only"
               ;;
-            repository_dispatch)
-              # TEMPORARY IG-2 test scaffold (2026-09-03) — repository_dispatch
-              # is a real, on-demand-triggerable GitHub event, used here only
-              # to prove the issue output_channel path for real since schedule
-              # events only ever fire from a repo's default branch (this dev
-              # branch can't be exercised that way) and workflow_dispatch is
-              # deliberately mapped to summary_only, not issue. Remove this
-              # case once IG-2's evidence is captured — it is not part of
-              # T-2's ticketed trigger set (pull_request/schedule/merge_group/
-              # workflow_dispatch only).
-              has_pr_context="false"
-              output_channel="issue"
-              ;;
             *)
               echo "::error::plan: unhandled event type '$event_name' — add explicit case mapping to resolve-event-context step"
               exit 1
