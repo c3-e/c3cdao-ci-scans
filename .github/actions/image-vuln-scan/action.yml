@@ -325,6 +325,22 @@ runs:
       continue-on-error: true
       uses: oras-project/setup-oras@1d808f7d7f6995cc68b7bf507bfe5c5446e1dc9d  # v2.0.1
 
+    # Verified live (selftest-vex-tracking.yml canary run): an
+    # UNAUTHENTICATED oras pull against a package path that has never had
+    # anything pushed to it under this org returns "denied: requested
+    # access to the resource is denied" — NOT a clean 404 — even though an
+    # anonymous pull against an existing-but-empty-tag path (verified
+    # separately, direct oras pull against a real public GHCR package)
+    # does return a proper "not found". Authenticating first makes a
+    # genuinely first-ever pull behave like the tolerable 404 case; skip
+    # this and every real pilot's very first run would misclassify as a
+    # real failure and never populate the tracking doc.
+    - name: Log in to GHCR for oras
+      if: always() && steps.pilot.outputs.skip == 'false'
+      continue-on-error: true
+      shell: bash
+      run: echo "${{ github.token }}" | oras login ghcr.io -u "${{ github.actor }}" --password-stdin
+
     - name: Pull prior vex-tracking record from OCI
       id: vex-pull
       if: always() && steps.pilot.outputs.skip == 'false'
