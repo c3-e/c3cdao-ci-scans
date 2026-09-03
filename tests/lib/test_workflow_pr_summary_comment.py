@@ -61,11 +61,15 @@ def test_pr_summary_steps_exist_in_export_bundle():
 
 
 def test_pr_summary_steps_are_pull_request_gated():
-    # Must run ONLY on pull_request-triggered calls (never
-    # merge_group/schedule/workflow_dispatch/push — the caller template
-    # triggers this reusable workflow on all four).
-    for step in (_build_step(), _post_step()):
-        assert step.get("if") == "github.event_name == 'pull_request'"
+    # Build step runs for both PR comments and issues (output_channel is either).
+    # Post step runs only for PR comments. Neither runs for summary_only.
+    build_step = _build_step()
+    post_step = _post_step()
+    assert (
+        build_step.get("if")
+        == "needs.plan.outputs.output_channel == 'pr_comment' || needs.plan.outputs.output_channel == 'issue'"
+    )
+    assert post_step.get("if") == "needs.plan.outputs.output_channel == 'pr_comment'"
 
 
 def test_pr_summary_steps_are_failure_tolerant():
@@ -187,7 +191,7 @@ def _pending_report_step() -> dict:
 
 def test_pending_disposition_step_exists_and_is_pull_request_gated():
     step = _pending_report_step()
-    assert step.get("if") == "github.event_name == 'pull_request'"
+    assert step.get("if") == "needs.plan.outputs.output_channel == 'pr_comment'"
     assert step.get("continue-on-error") is True
 
 
@@ -236,4 +240,4 @@ def test_pending_disposition_bootstrap_steps_are_pull_request_gated():
     ]
     assert bootstrap, "expected checkout/setup-uv bootstrap steps for the report"
     for step in bootstrap:
-        assert step.get("if") == "github.event_name == 'pull_request'"
+        assert step.get("if") == "needs.plan.outputs.output_channel == 'pr_comment'"
