@@ -260,7 +260,7 @@ def test_pending_disposition_bootstrap_steps_are_pull_request_gated():
         )
 
 
-# --- T-5: persistent tracking Issue path (output_channel == 'issue') ---------
+# --- Persistent tracking Issue path (output_channel == 'issue') -------------
 
 
 def test_issue_step_exists_and_is_issue_channel_gated():
@@ -306,11 +306,11 @@ def test_issue_step_search_is_paginated():
 
 
 def test_issue_step_failures_are_loud_not_swallowed():
-    """AC-6: a permissions problem or transient API error must surface as
-    an explicit ::error:: with a non-zero exit — never complete green
-    with no Issue created. continue-on-error is False (unlike the
-    PR-comment steps) so the step's own failure is visible in the job's
-    conclusion, not just its log."""
+    """A permissions problem or transient API error must surface as an
+    explicit ::error:: with a non-zero exit — never complete green with
+    no Issue created. continue-on-error is False (unlike the PR-comment
+    steps) so the step's own failure is visible in the job's conclusion,
+    not just its log."""
     step = _issue_step()
     assert step.get("continue-on-error") is False
     run = step["run"]
@@ -332,10 +332,10 @@ def test_issue_step_reuses_the_shared_comment_body_not_a_second_report_run():
 
 
 def test_sla_breach_banner_present_in_build_step_and_gated_on_real_report_content():
-    """AC-1: the banner must be conditional on the pending-disposition
-    report actually containing a breach string (T-4's own output), never
-    unconditionally present — and the build step must be the one place
-    this logic lives, since both channels share it."""
+    """The banner must be conditional on the pending-disposition report
+    actually containing a breach string, never unconditionally present —
+    and the build step must be the one place this logic lives, since both
+    channels share it."""
     run = _build_step()["run"]
     assert "SLA breach — 90-day threshold exceeded" in run
     assert "⚠️" in run
@@ -346,15 +346,15 @@ def test_sla_breach_banner_present_in_build_step_and_gated_on_real_report_conten
 
 # --- Regression: real jq execution against the issue-step's own filters ----
 #
-# Found live via IG-2's real schedule-triggered dispatch on c3cdao-landing
-# (run 33799427136): a repo issue with body: null crashed the find-loop's
-# jq filter with "null (null) and string (...) cannot have their
-# containment checked", failing the whole export-bundle job — and the
-# null body existed in the first place because the create-branch's own
-# jq invocation bound `.body` against the `-n` flag's null input instead
-# of the `--argjson body` variable, so every created issue had body: null.
-# Both bugs are silent at the string-assertion level above (they only
-# surface when jq actually runs), so these tests execute the real jq
+# Found live on a real schedule-triggered dispatch: a repo issue with
+# body: null crashed the find-loop's jq filter with "null (null) and
+# string (...) cannot have their containment checked", failing the whole
+# export-bundle job — and the null body existed in the first place
+# because the create-branch's own jq invocation bound `.body` against
+# the `-n` flag's null input instead of the `--argjson body` variable,
+# so every created issue had body: null. Both bugs are silent at the
+# string-assertion level above (they only surface when jq actually
+# runs), so these tests execute the real jq
 # filters extracted from the step's own script — not a hand-copied
 # duplicate that could drift from the fix.
 

@@ -257,7 +257,7 @@ def test_service_name_strips_prefix_and_short_sha():
     assert mod._service_name(Path("security-export-my-app-abc1234")) == "my-app"
 
 
-# --- Medium/Low tiering and age tracking (AC-1 through AC-4) ---
+# --- Medium/Low tiering and age tracking ---
 
 
 def _vex_tracking_doc(cve_id: str, first_issued: str) -> dict:
@@ -279,7 +279,7 @@ def _vex_tracking_doc(cve_id: str, first_issued: str) -> dict:
 
 
 def test_medium_low_tier_worked_example(tmp_path):
-    """AC-1: Worked example with age=32 days, status 'within 90-day SLA'.
+    """Worked example with age=32 days, status 'within 90-day SLA'.
 
     Given:
       - Grype export with CVE-2026-42533 (High, nginx, dispositioned via not_affected)
@@ -359,7 +359,7 @@ def test_medium_low_tier_worked_example(tmp_path):
 
 
 def test_medium_low_sla_breach(tmp_path):
-    """AC-2: Same finding with age=95 days shows SLA breach status."""
+    """Same finding with age=95 days shows SLA breach status."""
     bundle = tmp_path / "security-export-full"
     svc = bundle / "security-export-app-abc1234"
     svc.mkdir(parents=True)
@@ -442,11 +442,9 @@ def test_medium_low_sla_boundary_at_exactly_90_days_is_within(tmp_path):
 
 
 def test_render_high_critical_unchanged_with_no_medium_low(tmp_path):
-    """AC-3: Regression baseline — High/Critical output is byte-identical when no Medium/Low.
-
-    When there are no Medium/Low findings, the High/Critical tables output must be
-    exactly identical to what was output before this ticket.
-    """
+    """Regression baseline — High/Critical output is byte-identical when no
+    Medium/Low findings are present, matching the pre-tiering output
+    exactly."""
     bundle = tmp_path / "security-export-full"
     svc = bundle / "security-export-app-abc1234"
     svc.mkdir(parents=True)
@@ -466,14 +464,12 @@ def test_render_high_critical_unchanged_with_no_medium_low(tmp_path):
 
     output = mod.render(bundle)
 
-    # Full-string equality against the exact pre-T4 output (confirmed via
-    # `git show 496e2e2:scripts/lib/pending_disposition_report.py` for this
-    # identical fixture) — substring checks alone let a real regression
-    # through (T-4's first build unconditionally appended a trailing blank
-    # line after the candidate_rows table even when nothing followed it;
-    # every fixture with candidate_rows but no Medium/Low findings gained
-    # one extra trailing newline that wasn't there before). This is the
-    # byte-for-byte check AC-3 and the ticket's Failure Protocol require.
+    # Full-string equality, not substring checks — those let a real
+    # regression through once: an earlier build unconditionally appended
+    # a trailing blank line after the candidate_rows table even when
+    # nothing followed it, so every fixture with candidate_rows but no
+    # Medium/Low findings gained one extra trailing newline that wasn't
+    # there before.
     expected = "\n".join(
         [
             "**Pending disposition (not covered by any VEX statement):**",
@@ -498,7 +494,7 @@ def test_render_high_critical_unchanged_with_no_medium_low(tmp_path):
 
 
 def test_missing_tracking_doc_degrades_gracefully(tmp_path):
-    """AC-4: Missing/malformed tracking doc shows age 'unknown', doesn't crash.
+    """Missing/malformed tracking doc shows age 'unknown', doesn't crash.
 
     When vex-tracking.json is missing or invalid:
       - Medium/Low findings still render
@@ -538,7 +534,7 @@ def test_missing_tracking_doc_degrades_gracefully(tmp_path):
 
 
 def test_malformed_tracking_doc_degrades_gracefully(tmp_path):
-    """AC-4 variant: malformed JSON in vex-tracking.json still renders Medium/Low."""
+    """Malformed JSON in vex-tracking.json still renders Medium/Low."""
     bundle = tmp_path / "security-export-full"
     svc = bundle / "security-export-app-abc1234"
     svc.mkdir(parents=True)

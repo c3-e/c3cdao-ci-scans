@@ -1423,13 +1423,11 @@ jobs:
       - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e  # v6
         if: needs.plan.outputs.output_channel == 'pr_comment' || needs.plan.outputs.output_channel == 'issue'
 
-      # T-5: this report feeds the shared "Build PR scan-summary comment
-      # body" step below, which now runs for BOTH pr_comment and issue
-      # channels — this bootstrap must match that gate exactly, or an
-      # issue-channel run silently posts a Tracking Issue with no
-      # disposition content and no SLA banner at all (the bug an earlier
-      # build of this ticket shipped: only the shared body-builder step's
-      # own guard was widened, not its prerequisites).
+      # This report feeds the shared "Build PR scan-summary comment body"
+      # step below, which runs for BOTH pr_comment and issue channels —
+      # this bootstrap must match that gate exactly, or an issue-channel
+      # run silently posts a tracking Issue with no disposition content
+      # and no SLA banner at all.
       - name: Build pending-disposition report
         id: pending-disposition
         if: needs.plan.outputs.output_channel == 'pr_comment' || needs.plan.outputs.output_channel == 'issue'
