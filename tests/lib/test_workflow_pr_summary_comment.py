@@ -15,7 +15,9 @@ pull_request-triggered run to fully prove (see the PR description).
 
 from __future__ import annotations
 
+import json
 import re
+import subprocess
 from pathlib import Path
 
 import yaml
@@ -26,6 +28,7 @@ EVALUATOR = ROOT / "scripts/lib/evaluate_security_gate.py"
 
 FULL_SHA_USES = re.compile(r"@[0-9a-f]{40}$")
 MARKER = "<!-- security-export-summary -->"
+ISSUE_MARKER = "<!-- security-export-issue -->"
 
 
 def _workflow() -> dict:
@@ -54,6 +57,10 @@ def _post_step() -> dict:
     return _step("Post or update PR scan-summary comment")
 
 
+def _issue_step() -> dict:
+    return _step("Post or update tracking Issue")
+
+
 def test_pr_summary_steps_exist_in_export_bundle():
     names = {s.get("name") for s in _export_bundle()["steps"]}
     assert "Build PR scan-summary comment body" in names
@@ -61,11 +68,15 @@ def test_pr_summary_steps_exist_in_export_bundle():
 
 
 def test_pr_summary_steps_are_pull_request_gated():
-    # Must run ONLY on pull_request-triggered calls (never
-    # merge_group/schedule/workflow_dispatch/push — the caller template
-    # triggers this reusable workflow on all four).
-    for step in (_build_step(), _post_step()):
-        assert step.get("if") == "github.event_name == 'pull_request'"
+    # Build step runs for both PR comments and issues (output_channel is either).
+    # Post step runs only for PR comments. Neither runs for summary_only.
+    build_step = _build_step()
+    post_step = _post_step()
+    assert (
+        build_step.get("if")
+        == "needs.plan.outputs.output_channel == 'pr_comment' || needs.plan.outputs.output_channel == 'issue'"
+    )
+    assert post_step.get("if") == "needs.plan.outputs.output_channel == 'pr_comment'"
 
 
 def test_pr_summary_steps_are_failure_tolerant():
@@ -185,9 +196,13 @@ def _pending_report_step() -> dict:
     return _step("Build pending-disposition report")
 
 
-def test_pending_disposition_step_exists_and_is_pull_request_gated():
+def test_pending_disposition_step_exists_and_is_gated_to_both_output_channels():
+    # Both channels' comment-body step needs this report's output_file.
     step = _pending_report_step()
-    assert step.get("if") == "github.event_name == 'pull_request'"
+    assert (
+        step.get("if")
+        == "needs.plan.outputs.output_channel == 'pr_comment' || needs.plan.outputs.output_channel == 'issue'"
+    )
     assert step.get("continue-on-error") is True
 
 
@@ -223,9 +238,9 @@ def test_pending_disposition_step_runs_after_bundle_download():
 
 
 def test_pending_disposition_bootstrap_steps_are_pull_request_gated():
-    """The cross-repo checkout + setup-uv steps this report needs must not
-    run on non-PR triggers (merge_group/schedule/workflow_dispatch/push),
-    matching the report step itself. export-bundle carries no other
+    """The cross-repo checkout + setup-uv steps this report needs must run
+    on exactly the same channels as the report step itself — pr_comment
+    AND issue, never summary_only. export-bundle carries no other
     checkout/setup-uv steps, so every match here belongs to this feature."""
     steps = _export_bundle()["steps"]
     bootstrap = [
@@ -236,4 +251,167 @@ def test_pending_disposition_bootstrap_steps_are_pull_request_gated():
     ]
     assert bootstrap, "expected checkout/setup-uv bootstrap steps for the report"
     for step in bootstrap:
-        assert step.get("if") == "github.event_name == 'pull_request'"
+        assert (
+            step.get("if")
+            == "needs.plan.outputs.output_channel == 'pr_comment' || needs.plan.outputs.output_channel == 'issue'"
+        )
+
+
+# --- Persistent tracking Issue path (output_channel == 'issue') -------------
+
+
+def test_issue_step_exists_and_is_issue_channel_gated():
+    step = _issue_step()
+    assert step.get("if") == "needs.plan.outputs.output_channel == 'issue'"
+
+
+def test_issue_step_carries_a_distinct_marker_from_the_pr_comment():
+    """The Issue path must use its own hidden marker, not accidentally
+    reuse the PR-comment's — a shared marker string would make the
+    find-or-create lookups on the two independent surfaces (PR comments
+    vs. repo issues) impossible to tell apart if either API ever returned
+    cross-contaminated results."""
+    run = _issue_step()["run"]
+    assert ISSUE_MARKER in run
+    assert ISSUE_MARKER != MARKER
+
+
+def test_issue_step_finds_existing_open_issue_via_marker_then_patches_or_creates():
+    run = _issue_step()["run"]
+    # Find: GET open issues, filtered by the marker substring, excluding PRs
+    # (GitHub's issues API returns pull requests too unless filtered out).
+    assert "/repos/${REPO}/issues?state=open" in run
+    assert "contains($marker)" in run
+    assert "pull_request == null" in run
+    # Update-in-place: PATCH the matched issue number.
+    assert "-X PATCH" in run
+    assert "/issues/${existing_number}" in run
+    # Create when no match: POST to the issues collection.
+    assert "-X POST" in run
+    assert '"${api}/repos/${REPO}/issues"' in run
+
+
+def test_issue_step_search_is_paginated():
+    """Same requirement as the PR-comment step's own find-or-create loop
+    (per this ticket's Exemplar-Files instruction to mirror it exactly) —
+    a single 100-item page would silently miss the tracking issue on a
+    repo with more than 100 open issues, creating a duplicate every run
+    instead of updating the one that already exists."""
+    run = _issue_step()["run"]
+    assert "page=${page}" in run
+    assert "page=$((page + 1))" in run
+
+
+def test_issue_step_failures_are_loud_not_swallowed():
+    """A permissions problem or transient API error must surface as an
+    explicit ::error:: with a non-zero exit — never complete green with
+    no Issue created. continue-on-error is False (unlike the PR-comment
+    steps) so the step's own failure is visible in the job's conclusion,
+    not just its log."""
+    step = _issue_step()
+    assert step.get("continue-on-error") is False
+    run = step["run"]
+    assert run.count("::error::") >= 3  # missing body, list-failure, create/update-failure
+    assert "exit 1" in run
+
+
+def test_issue_step_uses_github_token_no_new_secret():
+    step = _issue_step()
+    assert step.get("env", {}).get("GITHUB_TOKEN") == "${{ secrets.GITHUB_TOKEN }}"
+
+
+def test_issue_step_reuses_the_shared_comment_body_not_a_second_report_run():
+    """Both output channels must read from the SAME pending-disposition
+    report and the SAME body-builder step's output — never re-run the
+    report or duplicate the SLA-banner logic for the Issue path."""
+    step = _issue_step()
+    assert step.get("env", {}).get("BODY_FILE") == "${{ steps.pr-summary.outputs.body_file }}"
+
+
+def test_sla_breach_banner_present_in_build_step_and_gated_on_real_report_content():
+    """The banner must be conditional on the pending-disposition report
+    actually containing a breach string, never unconditionally present —
+    and the build step must be the one place this logic lives, since both
+    channels share it."""
+    run = _build_step()["run"]
+    assert "SLA breach — 90-day threshold exceeded" in run
+    assert "⚠️" in run
+    # Conditional, not unconditional: the banner echo must be inside an
+    # `if` block that checks the report file for that exact string.
+    assert 'grep -q "SLA breach — 90-day threshold exceeded"' in run
+
+
+# --- Regression: real jq execution against the issue-step's own filters ----
+# A prior jq -n binding gave every created Issue a null body, then
+# crashed the find-loop on it — both silent at the string-assertion
+# level above, so these run the real filters, extracted from the script.
+
+
+def _extract_single_quoted(pattern: str, run: str) -> str:
+    match = re.search(pattern, run)
+    assert match, f"pattern not found in issue step run script: {pattern!r}"
+    return match.group(1)
+
+
+def _find_loop_filter() -> str:
+    run = _issue_step()["run"]
+    return _extract_single_quoted(r"jq -r --arg marker \"\$marker\" '([^']+)'", run)
+
+
+def _create_body_filter() -> str:
+    run = _issue_step()["run"]
+    return _extract_single_quoted(
+        r"jq -n --arg title \"Security scan results — scheduled\" --argjson body \"\$issue_body\" '([^']+)'",
+        run,
+    )
+
+
+def test_find_loop_jq_filter_tolerates_a_null_body_issue():
+    """An issue with body: null (exactly what the create-branch bug used
+    to produce) must not crash the marker search — it must be skipped,
+    and a later issue whose body actually contains the marker must still
+    be found."""
+    resp = json.dumps(
+        [
+            {"number": 5, "pull_request": None, "body": None},
+            {
+                "number": 7,
+                "pull_request": None,
+                "body": "stuff <!-- security-export-issue --> more",
+            },
+        ]
+    )
+    result = subprocess.run(
+        ["jq", "-r", "--arg", "marker", ISSUE_MARKER, _find_loop_filter()],
+        input=resp,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "7"
+
+
+def test_create_body_jq_filter_binds_the_argjson_variable_not_null_input():
+    """jq -n sets the implicit input document to null — `.body` on that
+    input is null regardless of what --argjson body carries. The filter
+    must reference the bound variable ($body.body), not the null input,
+    or every created issue silently gets body: null forever."""
+    issue_body = json.dumps({"body": "real tracking-issue content"})
+    result = subprocess.run(
+        [
+            "jq",
+            "-n",
+            "--arg",
+            "title",
+            "Security scan results — scheduled",
+            "--argjson",
+            "body",
+            issue_body,
+            _create_body_filter(),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    created = json.loads(result.stdout)
+    assert created["body"] == "real tracking-issue content"
