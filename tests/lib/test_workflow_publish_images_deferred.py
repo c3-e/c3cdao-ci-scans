@@ -6,16 +6,14 @@ Covers two files:
   publish_images input plumbing, its job-level packages: write permission,
   and the quarantine-push steps gated on `inputs.publish_images == true`.
 - .github/workflows/publish-staging-chart.yml: the derive-publish-targets
-  job (Issue I: single source of truth for the publish target list,
-  derived from compose_file rather than a hand-typed images[] JSON array)
-  and the publish-images-deferred job's quarantine-verify +
-  imagetools-retag steps replacing the old docker/build-push-action
-  rebuild path.
+  job (the single source of truth for the publish target list, derived
+  from compose_file rather than a hand-typed images[] JSON array) and the
+  publish-images-deferred job's quarantine-verify + imagetools-retag steps
+  replacing the old docker/build-push-action rebuild path.
 
-These are drift guards on the YAML shape only (no cluster, no registry) —
+These are drift guards on the YAML shape only (no cluster, no registry);
 tests/fixtures/hello-image plus the selftest-publish-images.yml workflow
-prove the real round trip (see that workflow's own run history for live
-evidence).
+prove the real round trip.
 """
 
 from __future__ import annotations
@@ -78,12 +76,8 @@ def test_publish_images_input_declared_boolean_default_false():
 
 
 def test_packages_write_lives_at_workflow_level_only():
-    # A real regression (found via live bisection, not this test): a
-    # job-level permissions: block on `build`, coexisting with the
-    # workflow-level block, produced a silent zero-job startup_failure —
-    # scoped to ANY job in this file, not just callers that `uses:` a
-    # reusable workflow. packages: write must live in the single
-    # workflow-level block; `build` must carry no job-level block at all.
+    # Regression guard: a job-level permissions: block coexisting with the
+    # workflow-level one causes a silent zero-job startup_failure.
     workflow_perms = _gate()["permissions"]
     assert workflow_perms == {
         "contents": "read",
@@ -122,13 +116,9 @@ def test_quarantine_ref_formula_present():
 
 
 def test_package_job_resolves_dependencies_before_packaging():
-    """A real, live bug (#34, 8613d62): a pilot chart declaring a
-    file://-referenced local dependency (e.g. a sibling fullstack-template
-    engine chart) with no pre-vendored charts/ subdir made `helm package`
-    fail with "found in Chart.yaml, but missing in charts/ directory".
-    `helm dependency build` fixes this for any pilot (a no-op for pilots
-    that already pre-vendor — helm validates the existing tgz against
-    Chart.lock's digest) but only if it runs before the package step."""
+    """Regression (#34, 8613d62): a file://-referenced local dependency with
+    no pre-vendored charts/ made `helm package` fail. `helm dependency build`
+    must run before the package step."""
     steps = _package_job()["steps"]
     dep_build_idx = next(
         i
@@ -144,14 +134,10 @@ def test_package_job_resolves_dependencies_before_packaging():
 
 
 def test_package_job_oci_dest_has_no_trailing_pilot_segment():
-    """A real, live bug (#33, 44c8ed6): `helm push` always appends the
-    chart's own name (from Chart.yaml) as an extra path component, so a
-    DEST that already includes the pilot segment lands the chart at
-    charts-staging/<pilot>/<pilot> instead of the locked
-    charts-staging/<pilot> shape. DEST must be the bare registry path;
-    the pilot segment must appear only in the human-facing echo/summary
-    text, never inside the coords.dest output `helm push` actually
-    receives."""
+    """Regression (#33, 44c8ed6): `helm push` appends the chart's own name,
+    so a DEST that already includes the pilot segment double-nests the
+    path. DEST must be the bare registry path; the pilot segment appears
+    only in human-facing echo/summary text, never in coords.dest."""
     steps = _package_job()["steps"]
     coords_run = next(
         str(s.get("run", "")) for s in steps if s.get("id") == "coords"
@@ -169,12 +155,12 @@ def test_package_job_oci_dest_has_no_trailing_pilot_segment():
     assert "coords.outputs.dest" in push_run
 
 
-# --- publish-staging-chart.yml: derive-publish-targets (Issue I) ----------------
+# --- publish-staging-chart.yml: derive-publish-targets -------------------------
 
 
 def test_images_input_retired():
-    """The old hand-typed images[] JSON array input is gone -- replaced by
-    compose_file + publish_targets (Issue I)."""
+    """The old hand-typed images[] JSON array input is gone; replaced by
+    compose_file + publish_targets."""
     inputs = _publish()["on"]["workflow_call"]["inputs"]
     assert "images" not in inputs
     assert inputs["compose_file"]["default"] == "docker-compose.yml"
@@ -210,10 +196,8 @@ def test_derive_publish_targets_fails_closed_on_unknown_allow_listed_target():
 
 
 def test_derive_publish_targets_and_gate_share_the_same_ci_scans_ref_resolver_pattern():
-    """Duplicated per job (GitHub Actions jobs can't share steps), but
-    must be the same yq-based, first-match resolver as
-    publish-images-deferred's own copy and reusable-security-gate.yml's
-    plan job -- not a third, divergent implementation."""
+    """Duplicated per job (jobs can't share steps), but must be the same
+    yq-based, first-match resolver as the other two copies, not a third."""
     derive_steps = _derive_job()["steps"]
     resolver = next(
         s for s in derive_steps if s.get("name") == "Resolve callee (ci-scans) ref"

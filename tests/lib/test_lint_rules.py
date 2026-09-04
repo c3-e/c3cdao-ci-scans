@@ -321,9 +321,8 @@ def test_chart_missing_passes_when_chart_yaml_present(tmp_path):
 
 
 def test_chart_undeclared(tmp_path):
-    """image_only: true with a chart anywhere in the repo tree blocks:
-    the repo-wide glob, not chart_path-only (an owned chart at a
-    nonstandard path while declaring image_only: true)."""
+    """image_only: true blocks when a chart exists anywhere in the repo
+    tree (the repo-wide glob), not just at chart_path."""
     nested = tmp_path / "helm" / "resume-screener"
     nested.mkdir(parents=True)
     (nested / "Chart.yaml").write_text("apiVersion: v2\nname: x\nversion: 0.1.0\n")
@@ -346,11 +345,8 @@ def test_chart_undeclared_excludes_vendored_charts_dir(tmp_path):
 
 
 def test_chart_undeclared_excludes_gate_checkout_dir(tmp_path):
-    """The plan job checks out this repo's own tooling into `.ci-scans/`
-    inside the consumer's workspace (--consumer-root); that checkout's
-    test fixtures (this repo's own Chart.yaml fixtures) must never be
-    misattributed to the consumer (an image_only consumer would
-    false-positive on them)."""
+    """The plan job's own `.ci-scans/` checkout (--consumer-root) carries test
+    fixture Chart.yamls that must never be misattributed to the consumer."""
     gate_checkout = tmp_path / ".ci-scans" / "tests" / "fixtures" / "bake" / "n1"
     gate_checkout.mkdir(parents=True)
     (gate_checkout / "Chart.yaml").write_text(
@@ -370,9 +366,8 @@ def test_chart_resolve_wraps_helm_failure_as_named_verdict():
 
 
 def test_chart_resolve_passes_after_dependency_build():
-    """Once `helm dependency build` vendors the file:// dependency (the
-    plan job's dependency-build step), the chart renders with no committed
-    charts/*.tgz required."""
+    """Once `helm dependency build` vendors the file:// dependency, the
+    chart renders with no committed charts/*.tgz required."""
     import shutil
     import subprocess
 
@@ -400,7 +395,7 @@ def test_bake_resolve(monkeypatch):
     """A failing `bake --print` blocks with the rule id and bake's stderr.
 
     The canned stderr is captured output of a real failing bake run
-    against the resolve-error fixture (live path at the plan-job gate run).
+    against the resolve-error fixture.
     """
     import subprocess
 
@@ -781,10 +776,8 @@ def test_gate_ref_pin_accepts_full_sha(tmp_path):
 
 
 def test_decoy_gate_job_blocks_even_when_never_run(tmp_path):
-    """A second gate-calling job — gated behind if: false, never actually
-    executed — must still block. It's a decoy vector against the
-    callee-ref resolver's first-match parse, not a job that needs to run
-    to be dangerous."""
+    """A second gate-calling job, gated behind if: false and never executed,
+    must still block: it's a decoy vector against the resolver's first-match parse."""
     import yaml
 
     decoy_ref = "1" * 40
@@ -794,11 +787,8 @@ def test_decoy_gate_job_blocks_even_when_never_run(tmp_path):
             "name": "Security Scan",
             "on": ["pull_request"],
             "jobs": {
-                # Decoy listed FIRST — the exact shape that made the decoy
-                # job dangerous: the old resolver's head -1 / first-match
-                # parse would have picked this one's ref. secrets mapped on
-                # both jobs so the only verdict distinguishing this fixture
-                # from a clean single-job caller is decoy-gate-job itself.
+                # Decoy listed FIRST: the old resolver's first-match parse
+                # would have picked this one's ref over the real job's.
                 "decoy": {
                     "if": "false",
                     "uses": (
@@ -924,9 +914,8 @@ def test_conforming_n3_fixture_passes_full_rule_set(monkeypatch):
 
 
 def test_convention_verdicts_image_only_skips_chart_render_rules(monkeypatch):
-    """image_only: true skips the chart-rendering rules (chart-readiness,
-    smoke-target, ship-set, built-unscheduled) but still enforces
-    chart-undeclared when a real chart exists in the repo tree."""
+    """image_only: true skips chart-rendering rules (chart-readiness,
+    smoke-target, ship-set, built-unscheduled) but still enforces chart-undeclared."""
     import json
 
     import lint_rules.compose as compose_rules
@@ -946,8 +935,7 @@ def test_convention_verdicts_image_only_passes_with_no_chart_anywhere(
     tmp_path, monkeypatch
 ):
     """image_only: true with no chart anywhere in the repo passes clean;
-    the fixture's chart-rendering rules and its new chart-undeclared check
-    both stay silent (chart-undeclared's non-violation path)."""
+    chart-rendering rules and chart-undeclared both stay silent."""
     import json
     import shutil
 

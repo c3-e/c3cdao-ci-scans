@@ -1,11 +1,7 @@
-"""composed-smoke.yml's per-pilot hook-partitioning step ("Partition
-composed pilots by helm.sh/hook test resources") does its own,
-independent helm.sh/hook detection — it must get the same real-yq-parse
-fix as reusable-security-gate.yml's cluster-smoke hook-detect step (see
-test_hook_detect.py), not stay on the text-grep version. This extracts
-the step's actual run script and executes it against real minimal
-charts rendered by real `helm template` (client-side only, no cluster
-needed), covering the same four cases:
+"""composed-smoke.yml's per-pilot hook-partitioning step needs the same
+real-yq-parse fix as cluster-smoke's hook-detect step (test_hook_detect.py),
+not the old text-grep version. This runs the step's actual script against
+real minimal charts rendered by `helm template`, covering:
 
   - an unquoted annotation key
   - a quoted annotation key (the case the old grep missed)
