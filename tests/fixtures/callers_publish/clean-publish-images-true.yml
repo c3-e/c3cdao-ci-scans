@@ -1,5 +1,5 @@
 # Lint fixture: publish_images: true with the compose_file-derived
-# publish-targets contract (Issue I -- no more hand-typed images[] JSON),
+# publish-targets contract (no more hand-typed images[] JSON),
 # workflow-level-only permissions granting packages: write. Clean.
 name: Publish Staging Chart
 

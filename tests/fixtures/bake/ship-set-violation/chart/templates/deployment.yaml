@@ -1,5 +1,5 @@
 # Static manifests (no templating) so unit tests can parse the rendered
-# shape without helm; IG-1 renders the same chart through real helm template.
+# shape without helm; a separate test renders this same chart via real helm.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
