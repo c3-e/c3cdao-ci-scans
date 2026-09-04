@@ -1,17 +1,12 @@
-"""helm.sh/hook: test detection must be a real YAML parse (yq), not a
-text grep — a `grep -qE 'helm\\.sh/hook:.*test'` misses a quoted
-annotation key (`"helm.sh/hook": test`), a real bug found independently
-twice during pilot onboarding. This extracts the "Detect helm.sh/hook:
-test resources" step's actual run script from
-reusable-security-gate.yml's cluster-smoke job (same pattern as
-test_callee_ref_resolver.py) and executes it against real rendered-chart
-fixtures, covering:
+"""helm.sh/hook: test detection must be a real yq parse, not a text grep —
+a `grep -qE 'helm\\.sh/hook:.*test'` missed a quoted annotation key
+(`"helm.sh/hook": test`), a real bug found twice during pilot onboarding.
+This extracts the step's actual run script and executes it against real
+rendered-chart fixtures, covering:
 
   - an unquoted annotation key (the case the old grep did handle)
   - a quoted annotation key (the case the old grep missed)
-  - a hook value combined with another hook type
-    (`helm.sh/hook: pre-install,test` is valid Helm; must still count as
-    a match)
+  - a hook value combined with another hook type (still a match)
   - no helm.sh/hook annotation anywhere in the rendered chart
 """
 
@@ -137,9 +132,8 @@ metadata:
 
 
 def test_legacy_helm2_test_success_value_does_not_match():
-    """Helm 3 only recognizes the exact value "test"; Helm 2's legacy
-    test-success/test-failure must NOT be treated as a substring match
-    (a naive `contains("test")` would wrongly match "test-success")."""
+    """Helm 3 only recognizes the exact value "test"; a naive substring
+    match would wrongly match Helm 2's legacy "test-success"."""
     rendered = """\
 apiVersion: v1
 kind: Pod

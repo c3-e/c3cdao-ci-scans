@@ -3,7 +3,7 @@
 Plan fixtures are `--print` JSON captured from real `docker buildx bake`
 runs against tests/fixtures/bake/ (buildx v0.29.1, 2026-07-31) — never
 hand-authored. The resolve-error stderr fixture is likewise real bake
-output. The live-bake path is re-exercised at IG-1.
+output.
 """
 
 from __future__ import annotations
@@ -53,10 +53,9 @@ def test_n3_annotation_targets_excluded_dependencies():
 
 
 def test_resolve_error_exits_nonzero_naming_rule_with_bake_stderr(monkeypatch, capsys):
-    """A failing bake resolve surfaces rule id + real bake stderr (AC-3).
+    """A failing bake resolve surfaces the rule id and real bake stderr.
 
-    The canned stderr is the captured output of a real failing
-    `docker buildx bake --print` run against the resolve-error fixture.
+    The canned stderr is captured output of a real failing bake run.
     """
     import subprocess
 
@@ -75,7 +74,7 @@ def test_resolve_error_exits_nonzero_naming_rule_with_bake_stderr(monkeypatch, c
 
 
 def test_hash_identical_for_identical_inputs():
-    """Canonical serialization is deterministic (AC-2)."""
+    """Canonical serialization is deterministic."""
     first = derive_bom(N3 / "docker-compose.yml", _load_plan(N3))
     second = derive_bom(N3 / "docker-compose.yml", _load_plan(N3))
     assert canonical_json(first) == canonical_json(second)
@@ -89,7 +88,7 @@ def test_hash_changes_when_input_changes():
 
 
 def test_unmarked_external_image_neither_target_nor_dependency(tmp_path):
-    """image: without build: and without x-downloaded-dependency (AC-4)."""
+    """image: without build: and without x-downloaded-dependency."""
     compose = tmp_path / "docker-compose.yml"
     compose.write_text(
         (N3 / "docker-compose.yml").read_text()
@@ -129,9 +128,7 @@ def test_unmarked_when_digest_or_chart_tag_missing(tmp_path):
 
 
 def test_target_list_sorted_nonlocal_build_services_only(tmp_path):
-    """Explicit target selection is load-bearing: the list is
-    exactly the sorted non-local build services; local-profile and
-    image-only services never appear."""
+    """Target list is sorted; local-profile and image-only services are excluded."""
     compose = tmp_path / "docker-compose.yml"
     compose.write_text(
         "services:\n"
@@ -151,8 +148,7 @@ def test_target_list_sorted_nonlocal_build_services_only(tmp_path):
 
 
 def test_n1_single_target_empty_annotations_plan_untouched():
-    """N=1 derivation: one target, empty annotation lists, placeholder +
-    provenance present, and the bake plan document is never mutated."""
+    """Single-target plan: annotation lists empty, provenance present, plan untouched."""
     plan = _load_plan(N1)
     before = json.dumps(plan, sort_keys=True)
     bom = derive_bom(N1 / "docker-compose.yml", plan)
@@ -185,8 +181,7 @@ def test_compose_without_services_mapping_fails_closed(tmp_path):
 
 
 def test_plan_target_mismatch_fails_closed():
-    """Plan/derivation parity: the resolved plan must carry exactly the
-    compose-derived non-local targets."""
+    """Resolved plan must carry exactly the compose-derived non-local targets."""
     plan = _load_plan(N3)
     del plan["target"]["svc-c"]
     with pytest.raises(SystemExit) as exc:
@@ -195,8 +190,7 @@ def test_plan_target_mismatch_fails_closed():
 
 
 def test_bake_print_command_carries_execution_overrides():
-    """The published plan must resolve with the SAME --set overrides the
-    build legs execute with (plan/execution parity): gate
+    """Published plan resolves with the same --set overrides the build legs use;
     overrides append after the platform pin, before the targets."""
     from derive_bom import bake_print_command
 
@@ -211,7 +205,6 @@ def test_bake_print_command_carries_execution_overrides():
         overrides[1],
     ]
     assert cmd[-1] == "svc-a"
-    # No overrides: command unchanged from the no-override shape.
     assert bake_print_command(N3 / "docker-compose.yml", ["svc-a"])[-2:] == [
         "*.platform=linux/amd64",
         "svc-a",

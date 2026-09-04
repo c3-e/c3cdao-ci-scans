@@ -1,23 +1,15 @@
 """Fixture tests for the routes contract in publish-staging-chart.yml's
 "Validate chart shape" step.
 
-The step enforces "every pilot must declare a non-empty `routes:` key,
-either at the top level or nested one level under the shared
-`fullstack-template` engine-dependency key" as a JSON Schema, checked by
-`check-jsonschema` (github.com/python-jsonschema/check-jsonschema) — not a
-bespoke jq recursion. The schema is built in the workflow via single-quoted
-shell-string concatenation (a heredoc's closing delimiter can't satisfy both
-YAML's block-scalar indentation rules and bash's "delimiter alone on its
-own line" rule at once, so the workflow avoids heredocs for this).
+The step requires a non-empty `routes:` key (top-level or nested under
+`fullstack-template`), enforced as a JSON Schema via check-jsonschema
+rather than a bespoke jq recursion. The workflow builds the schema via
+string concatenation, not a heredoc, since a heredoc's closing delimiter
+can't satisfy both YAML block-scalar indentation and bash's rules at once.
 
-Same drift-guard shape as test_callee_ref_resolver.py: the schema text is
-extracted from the workflow file itself (not hand-copied), reassembled
-exactly as bash would concatenate it, and then handed to the real
-check-jsonschema CLI — so a future edit to the schema is caught by
-construction, and the test exercises the actual tool the workflow runs, not
-a reimplementation of its logic. Case values.yaml content is inlined below
-rather than kept as separate fixture files: each is a single-purpose,
-one-line synthetic snippet with no reuse outside this module.
+The schema text here is extracted from the workflow file itself and run
+through the real check-jsonschema CLI (same drift-guard shape as
+test_callee_ref_resolver.py), so a schema edit is caught by construction.
 """
 
 from __future__ import annotations
@@ -60,9 +52,8 @@ requires_uvx = pytest.mark.skipif(shutil.which("uvx") is None, reason="uvx not o
 
 
 def _extract_schema_json() -> str:
-    """Reassemble the SCHEMA_JSON literal exactly as bash would: each
-    `SCHEMA_JSON=` / `SCHEMA_JSON+=` line's single-quoted fragment,
-    concatenated in file order."""
+    """Reassemble the SCHEMA_JSON literal exactly as bash would concatenate
+    its `SCHEMA_JSON=` / `SCHEMA_JSON+=` fragments, in file order."""
     jobs = yaml.safe_load(WORKFLOW.read_text())["jobs"]
     steps = jobs["publish-staging-chart"]["steps"]
     matches = [s for s in steps if s.get("name") == STEP_NAME]

@@ -89,9 +89,8 @@ def test_single_job_not_flagged_as_decoy():
 
 
 # --- publish-chart-routes-missing (warn) ------------------------------------
-# Same four cases as test_chart_shape_routes.py's CASES, so the lint-time
-# check and publish-staging-chart.yml's own runtime check-jsonschema check
-# agree on every one.
+# Same four cases as test_chart_shape_routes.py's CASES, so lint-time and
+# runtime check-jsonschema checks agree on every one.
 
 
 def _write_values(tmp_path: Path, values: dict) -> Path:
@@ -139,9 +138,8 @@ def test_routes_missing_file_warns_not_blocks(tmp_path):
 
 
 def test_routes_check_is_warn_never_blocks_the_cli(tmp_path, capsys):
-    """A --consumer-root run whose chart has no routes: key must still
-    exit 0 — warn findings are reported but never block (see main()'s
-    exit logic), unlike every block-level rule above."""
+    """A chart missing routes: must still exit 0; warn findings are reported
+    but never block, unlike every block-level rule above."""
     from lint_caller_publish import main
 
     consumer_root = tmp_path / "consumer"
