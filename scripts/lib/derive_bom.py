@@ -4,19 +4,10 @@
 # ///
 """Derive the annotated Image BOM from a Compose file plus bake's plan.
 
-The plan document is `docker buildx bake --print` JSON, untouched — the
-gate defines no build-plan schema of its own. This module adds the
-sibling annotation document: build targets, `excluded[]` (compose
-services filtered by `profiles: [local]`, with reasons), `dependencies[]`
-(image-only services declaring `x-downloaded-dependency`, each with
-digest pin and chart-facing tag), `unmarked[]` (image-only services
-lacking the declaration — routed to lint, never scanned), a derived
-smoke-target placeholder, and provenance comments. The annotated
-document is canonically serialized and hashed for publication.
-
-Compose parsing, service classification, and bake resolution live in the
-header-less library `compose_facts` (shared with the lint rules); this
-file is the PEP 723 entry point over it.
+Compose parsing, classification, and bake resolution live in
+`compose_facts`; this file is the PEP 723 entry point over it. The
+annotation document's fields are documented in `derive_bom`'s own
+`provenance` dict below.
 """
 
 import argparse

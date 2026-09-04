@@ -4,21 +4,16 @@
 # ///
 """Pending-VEX-disposition report for the PR scan-summary comment.
 
-Read-only enumeration — never writes anything under `.openvex/`, never
-authors a VEX statement. For each per-service export-bundle directory,
-finds High/Critical Trivy+Grype findings not already covered by a
-statement in that leg's `vex-applied.openvex.json` (any status counts as
-covered — this is not re-litigating a disposition, only surfacing what
-has none), and splits the rest using the scanners' own fix metadata:
+Read-only: never writes under `.openvex/` or authors a VEX statement.
+For each service, finds High/Critical Trivy+Grype findings not already
+covered by any statement in that leg's `vex-applied.openvex.json`, and
+splits them by fix availability:
 
-  - remediate: a fixed version already exists (Trivy `FixedVersion` /
-    Grype `fix.state == "fixed"`) — never surfaced as a VEX candidate,
-    since a real fix beats suppression.
-  - vex-candidate: no fix available — the only findings worth a human
-    `vexctl add`.
+  - remediate: a fixed version exists (bump, don't suppress).
+  - vex-candidate: no fix exists — the only findings worth a `vexctl add`.
 
-Both scanners cover the same image; a CVE seen by both is deduplicated by
-id per service, preferring whichever leg reports a fixed version.
+Findings from both scanners are deduplicated by CVE id per service,
+preferring whichever leg reports a fixed version.
 """
 
 from __future__ import annotations

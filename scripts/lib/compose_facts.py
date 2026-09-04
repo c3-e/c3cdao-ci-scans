@@ -1,10 +1,7 @@
 """Compose-file facts shared by the BOM derivation and the lint rules.
 
-Header-less library module (no PEP 723 block): entry-point scripts import
-from here, never the other way around, so uv script-header dependencies
-cannot drift apart from importers. Owns the canonical compose parse, the
-service classification (targets / excluded / dependencies / unmarked),
-and the `docker buildx bake --print` resolution.
+No PEP 723 header: entry points import from here, never the reverse, so
+script-header dependencies can't drift from what this module needs.
 """
 
 from __future__ import annotations
@@ -39,9 +36,8 @@ def load_compose(path: Path) -> dict[str, Any]:
 def classify_services(compose: dict[str, Any]) -> dict[str, Any]:
     """Split compose services into targets / excluded / dependencies / unmarked.
 
-    Explicit target selection is load-bearing: bake ignores `profiles:`
-    when given no targets, so the returned target list must be passed to
-    every `--print` and execution call.
+    Bake ignores `profiles:` when given no targets — callers must pass
+    this target list to every `--print` and execution call.
     """
     targets: list[str] = []
     excluded: list[dict[str, str]] = []
@@ -98,10 +94,8 @@ def bake_print_command(
 ) -> list[str]:
     """The exact bake --print invocation, mirroring execution's overrides.
 
-    `overrides` are extra --set values (e.g. the gate's
-    `*.platform=linux/amd64` pin); plan/execution parity
-    requires the published plan to resolve with the same override set the
-    build legs execute with.
+    The plan must resolve with the same --set overrides the build legs
+    run with, or it won't match what actually gets built.
     """
     set_args: list[str] = []
     for override in overrides or []:
@@ -125,11 +119,9 @@ def run_bake_print(
 ) -> dict[str, Any]:
     """Resolve the plan via `bake --print` with a scrubbed environment.
 
-    Runs from the compose file's directory (compose `context:` resolves
-    against the process cwd) with only PATH/HOME kept, so interpolation
-    from ambient environment variables cannot make two plans differ.
-    Resolve failure exits non-zero naming the `bake-resolve` rule with
-    bake's stderr attached.
+    Runs from the compose file's directory since compose `context:`
+    resolves against cwd; keeps only PATH/HOME so ambient env vars can't
+    skew the plan.
     """
     env = {k: v for k, v in os.environ.items() if k in ("PATH", "HOME")}
     proc = subprocess.run(
