@@ -1,0 +1,118 @@
+# Selftest: exercises image-vuln-scan's vex-tracking OCI chain end to end.
+# pytest covers vex_tracking.py's merge() directly, but chart-path
+# threading, oras setup/pull/push, and step ordering relative to the
+# Trivy/Grype JSON exports can only be proven by a real dispatch — an
+# earlier build shipped five bugs unit tests never caught, because all
+# of them lived in this untested glue, not in merge().
+#
+# Reuses selftest-fixtures/vex-visibility/medium-cve-image/: a real, old,
+# publicly-pullable image with genuine accumulated CVEs, not hand-authored
+# scanner output.
+#
+# Destination PILOT (selftest-vex-tracking-pilot-v2) deliberately differs
+# from the fixture directory's own basename, to prove the PILOT comes from
+# Chart.yaml's name field, not basename(chart_path) — and can never
+# collide with a real pilot's tracking record.
+#
+# Run twice (two separate workflow_dispatch invocations) to prove
+# first_seen is preserved across runs, not reset.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  vex-tracking-canary:
+    name: Build fixture + exercise image-vuln-scan's vex-tracking chain
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+        with:
+          ref: ${{ github.sha }}
+
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f  # v3
+
+      - name: Build fixture image (real, old, genuinely-vulnerable base — not a hand-authored scan result)
+        run: |
+          set -euo pipefail
+          docker buildx build \
+            --load \
+            -t selftest/vex-canary:local \
+            -f selftest-fixtures/vex-visibility/medium-cve-image/Dockerfile \
+            selftest-fixtures/vex-visibility/medium-cve-image
+
+      - name: Generate image SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610  # v0.24.0
+        with:
+          image: selftest/vex-canary:local
+          format: cyclonedx-json
+          output-file: sbom-image-selftest.json
+          artifact-name: sbom-image-selftest
+
+      - name: Save image to tarball
+        run: docker save selftest/vex-canary:local -o image.tar
+
+      - name: Upload image artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        with:
+          name: scan-image-selftest
+          path: image.tar
+          if-no-files-found: error
+          retention-days: 1
+
+      # Chart directory basename is deliberately unrelated to the .name
+      # field below, to prove PILOT is read from Chart.yaml, never
+      # basename(chart_path).
+      - name: Create mismatched-basename chart fixture
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/chart-fixture-dir
+          cat > /tmp/chart-fixture-dir/Chart.yaml <<'EOF'
+          apiVersion: v2
+          name: selftest-vex-tracking-pilot-v2
+          version: 0.1.0
+          EOF
+          echo "chart dir basename: $(basename /tmp/chart-fixture-dir)"
+          echo "Chart.yaml .name:   $(yq eval '.name' /tmp/chart-fixture-dir/Chart.yaml)"
+
+      - name: Run image-vuln-scan (exercises the full vex-tracking chain)
+        uses: ./.github/actions/image-vuln-scan
+        with:
+          image-tag: selftest/vex-canary:local
+          image-artifact-name: scan-image-selftest
+          sbom-artifact-name: sbom-image-selftest
+          trivy-severity: "UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL"
+          blocking: "false"
+          chart-path: /tmp/chart-fixture-dir
+
+      - name: Verify vex-tracking record landed under the Chart.yaml-derived PILOT path
+        run: |
+          set -euo pipefail
+          # oras was installed by image-vuln-scan's own "Set up oras CLI"
+          # step above (composite-action steps run in this same job/PATH —
+          # not a separate job), so it's already on PATH here.
+          oras pull "ghcr.io/c3-e/vex-tracking/selftest-vex-tracking-pilot-v2:latest" -o /tmp/vex-verify --allow-path-traversal
+          echo "--- merged vex-tracking record ---"
+          cat /tmp/vex-verify/vex-tracking.json
+          echo
+          echo "--- finding count ---"
+          jq '.findings | length' /tmp/vex-verify/vex-tracking.json
+          echo "--- confirms both scanners contributed (Trivy + Grype VulnerabilityID/id shapes both present, not just one) ---"
+          jq -r '.findings | keys[]' /tmp/vex-verify/vex-tracking.json | sort -u
+          echo "--- confirms the doc also lands inside security-export/ for the disposition report, not just GHCR ---"
+          test -f "${RUNNER_TEMP}/security-export/vex-tracking.json" && echo "OK: ${RUNNER_TEMP}/security-export/vex-tracking.json exists" || { echo "::error::vex-tracking.json missing from security-export/ — the disposition report would have no local way to read it"; exit 1; }
+          diff <(jq -S . /tmp/vex-verify/vex-tracking.json) <(jq -S . "${RUNNER_TEMP}/security-export/vex-tracking.json") && echo "OK: local copy matches the pushed artifact"
+
+      - name: Job summary
+        if: always()
+        run: |
+          {
+            echo "## Selftest: vex-tracking OCI chain"
+            echo
+            echo "- PILOT resolved from Chart.yaml, chart dir basename was deliberately different"
+            echo "- registry ref: \`ghcr.io/c3-e/vex-tracking/selftest-vex-tracking-pilot-v2:latest\`"
+            echo "- this is a throwaway selftest artifact, never a real pilot's tracking record"
+          } >> "$GITHUB_STEP_SUMMARY"

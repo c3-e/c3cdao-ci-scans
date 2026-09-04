@@ -42,12 +42,18 @@ EXPECTED_INPUTS = {
     "sbom-artifact-name": True,
     "trivy-severity": True,
     "blocking": False,
+    "chart-path": False,
 }
 
 
 def test_action_inputs_unchanged_no_new_required_inputs():
     """VEX onboarding is data-only (.openvex/ in the consumer checkout);
-    adding an input — required especially — breaks existing callers."""
+    adding an input — required especially — breaks existing callers.
+
+    chart-path (feeds vex-tracking's PILOT derivation) is a deliberate,
+    reviewed, non-required addition with a default — existing callers that
+    don't pass it are unaffected. Any input landing here that isn't in
+    EXPECTED_INPUTS should be a reviewed decision, not silent drift."""
     inputs = _action()["inputs"]
     assert {
         name: spec.get("required", False) for name, spec in inputs.items()
