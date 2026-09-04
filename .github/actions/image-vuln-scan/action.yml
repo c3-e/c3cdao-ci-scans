@@ -292,7 +292,7 @@ runs:
     # VEX Tracking: read/merge/write a durable tracking record of unresolved
     # findings, preserving first_issued timestamps across runs. Unsigned OCI
     # artifact stored independently of the app image, combining BOTH Trivy and
-    # Grype JSON exports (never just one) so nothing T-1 un-filtered is
+    # Grype JSON exports (never just one) so no scanner's findings are
     # silently dropped from tracking. Runs after "Assemble security export
     # bundle" so trivy-image.json/grype-image.json are guaranteed to exist —
     # running any earlier would always see empty findings. Every step here is
@@ -314,7 +314,7 @@ runs:
         fi
         NAME="$(yq eval '.name' "${chart_path}/Chart.yaml")"
         if [ "$NAME" = "null" ] || [ -z "$NAME" ]; then
-          echo "::error::Chart.yaml at ${chart_path}/Chart.yaml exists but its .name field is missing or null — cannot derive vex-tracking PILOT (same fail-loud contract as T-6's publish-staging-chart.yml derivation)"
+          echo "::error::Chart.yaml at ${chart_path}/Chart.yaml exists but its .name field is missing or null — cannot derive vex-tracking PILOT"
           exit 1
         fi
         echo "pilot=$NAME" >> "$GITHUB_OUTPUT"
@@ -431,10 +431,9 @@ runs:
           > "$merged_doc_file"
 
         # Also land this doc inside security-export/ (not just push it to
-        # GHCR) — pending_disposition_report.py (T-4) has no network access
-        # and can only ever read from the exported bundle. Without this
-        # copy, T-4's age computation would have no local way to reach
-        # first_issued at all, regardless of anything T-4 itself does right.
+        # GHCR) — the disposition report script has no network access and
+        # can only ever read from the exported bundle; without this copy
+        # it has no way to reach first_issued for age computation.
         cp "$merged_doc_file" "${RUNNER_TEMP}/security-export/vex-tracking.json"
 
         echo "merged_doc=$merged_doc_file" >> "$GITHUB_ENV"

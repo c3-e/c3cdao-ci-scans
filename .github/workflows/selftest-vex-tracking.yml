@@ -1,33 +1,21 @@
-# Selftest — vex-tracking OCI read/merge/write (T-3 remediation canary)
+# Selftest: exercises image-vuln-scan's vex-tracking OCI chain end to end.
+# pytest covers vex_tracking.py's merge() directly, but chart-path
+# threading, oras setup/pull/push, and step ordering relative to the
+# Trivy/Grype JSON exports can only be proven by a real dispatch — an
+# earlier build shipped five bugs unit tests never caught, because all
+# of them lived in this untested glue, not in merge().
 #
-# WHY THIS FILE EXISTS:
+# Reuses selftest-fixtures/vex-visibility/medium-cve-image/: a real, old,
+# publicly-pullable image with genuine accumulated CVEs, not hand-authored
+# scanner output.
 #
-# T-3 adds a mechanism (image-vuln-scan/action.yml's new steps +
-# scripts/lib/vex_tracking.py) with no local test harness for its own
-# GitHub Actions wiring — pytest can exercise vex_tracking.py's merge()
-# function directly, but chart-path threading, the oras setup/pull/push
-# steps, and step ordering relative to the Trivy/Grype JSON exports can
-# only be proven by a real dispatch. An initial build of T-3 shipped with
-# five bugs unit tests never caught, because none of them live in
-# merge() — they were all in this untested glue. This selftest is the
-# fix: same "crafted input, real tool invocation, assert on real output"
-# shape as selftest-publish-images.yml, applied to this mechanism.
-#
-# Reuses selftest-fixtures/vex-visibility/medium-cve-image/ (an
-# intentionally old, real, publicly-pullable base image with genuine
-# accumulated CVEs — no hand-authored JSON standing in for scanner
-# output) — this fixture is also IG-0a's planned deliverable
-# (task-sequence.md §2, T-1's gate), built once and reused by both.
-#
-# Destination is ghcr.io/c3-e/vex-tracking/selftest-vex-tracking-pilot-v2 —
-# an unmistakably-selftest PILOT name (deliberately different from this
-# fixture's own directory basename, medium-cve-image, proving Chart.yaml's
-# .name field wins over basename() — the exact T-6/ppubs bug shape) that
-# can never collide with a real pilot's tracking record.
+# Destination PILOT (selftest-vex-tracking-pilot-v2) deliberately differs
+# from the fixture directory's own basename, to prove the PILOT comes from
+# Chart.yaml's name field, not basename(chart_path) — and can never
+# collide with a real pilot's tracking record.
 #
 # Run twice (two separate workflow_dispatch invocations) to prove
-# first_issued preservation across runs — the same two-real-runs shape
-# IG-0b (task-sequence.md §2) requires before trusting T-3.
+# first_issued is preserved across runs, not reset.
 
 on:
   workflow_dispatch:
@@ -75,11 +63,9 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-      # Chart directory basename is deliberately "chart-fixture-dir",
-      # unrelated to the .name field below — proves the PILOT the
-      # vex-tracking mechanism derives is read from Chart.yaml's own
-      # declared name, never from basename(chart_path) (T-6's bug, fixed
-      # independently here per T-3's own Technical Notes).
+      # Chart directory basename is deliberately unrelated to the .name
+      # field below, to prove PILOT is read from Chart.yaml, never
+      # basename(chart_path).
       - name: Create mismatched-basename chart fixture
         run: |
           set -euo pipefail
@@ -116,15 +102,15 @@ jobs:
           jq '.statements | length' /tmp/vex-verify/vex-tracking.json
           echo "--- confirms both scanners contributed (Trivy + Grype VulnerabilityID/name shapes both present, not just one) ---"
           jq -r '.statements[].vulnerability.name' /tmp/vex-verify/vex-tracking.json | sort -u
-          echo "--- confirms the doc also lands inside security-export/ for pending_disposition_report.py (T-4), not just GHCR ---"
-          test -f "${RUNNER_TEMP}/security-export/vex-tracking.json" && echo "OK: ${RUNNER_TEMP}/security-export/vex-tracking.json exists" || { echo "::error::vex-tracking.json missing from security-export/ — T-4 would have no local way to read it"; exit 1; }
+          echo "--- confirms the doc also lands inside security-export/ for the disposition report, not just GHCR ---"
+          test -f "${RUNNER_TEMP}/security-export/vex-tracking.json" && echo "OK: ${RUNNER_TEMP}/security-export/vex-tracking.json exists" || { echo "::error::vex-tracking.json missing from security-export/ — the disposition report would have no local way to read it"; exit 1; }
           diff <(jq -S . /tmp/vex-verify/vex-tracking.json) <(jq -S . "${RUNNER_TEMP}/security-export/vex-tracking.json") && echo "OK: local copy matches the pushed artifact"
 
       - name: Job summary
         if: always()
         run: |
           {
-            echo "## Selftest: vex-tracking (T-3 remediation canary)"
+            echo "## Selftest: vex-tracking OCI chain"
             echo
             echo "- PILOT resolved from Chart.yaml, chart dir basename was deliberately different"
             echo "- registry ref: \`ghcr.io/c3-e/vex-tracking/selftest-vex-tracking-pilot-v2:latest\`"

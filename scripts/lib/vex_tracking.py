@@ -25,11 +25,9 @@ def _get_cve_id(finding: Dict[str, Any]) -> Optional[str]:
       same key `scripts/lib/pending_disposition_report.py`'s own
       pre-existing grype_findings() already reads correctly.
     """
-    # Try Trivy format
     if "VulnerabilityID" in finding:
         return finding["VulnerabilityID"]
 
-    # Try Grype format
     if "vulnerability" in finding and isinstance(finding["vulnerability"], dict):
         vuln_id = finding["vulnerability"].get("id")
         if vuln_id:
@@ -51,7 +49,7 @@ def _extract_human_dispositions(vex_doc: Optional[Dict[str, Any]]) -> set:
     statements = vex_doc.get("statements", [])
 
     for statement in statements:
-        # Only count statements with human verdicts (non-investigational)
+        # Excludes "under_investigation" — that's not a verdict yet.
         status = statement.get("status", "").lower()
         if status in ("not_affected", "affected", "fixed"):
             vuln = statement.get("vulnerability", {})
@@ -96,7 +94,6 @@ def merge(
 
     now_str = clock() if callable(clock) else str(clock)
 
-    # Build map of prior findings by CVE ID
     prior_by_cve = {}
     if prior_doc and isinstance(prior_doc, dict):
         for stmt in prior_doc.get("statements", []):
@@ -106,50 +103,40 @@ def merge(
                 if cve_id:
                     prior_by_cve[cve_id] = stmt
 
-    # Get the set of human-dispositioned CVEs to exclude
     human_dispositioned = _extract_human_dispositions(human_disposition_doc)
 
-    # Build the merged statements
     merged_statements = []
     seen_cves = set()
 
     for finding in current_findings:
         cve_id = _get_cve_id(finding)
         if not cve_id:
-            # Skip findings without a CVE ID
             continue
 
-        # Skip if already seen (dedup)
         if cve_id in seen_cves:
             continue
         seen_cves.add(cve_id)
 
-        # Skip if already covered by human disposition
         if cve_id in human_dispositioned:
             continue
 
-        # Build the tracking statement
         stmt: Dict[str, Any] = {
             "vulnerability": {"name": cve_id},
         }
 
-        # Preserve first_issued if this finding was in the prior doc
         if cve_id in prior_by_cve:
             prior_stmt = prior_by_cve[cve_id]
             if "first_issued" in prior_stmt:
                 stmt["first_issued"] = prior_stmt["first_issued"]
 
-        # Set first_issued to now if we didn't preserve it from prior
         if "first_issued" not in stmt:
             stmt["first_issued"] = now_str
 
-        # Always update last_updated to now
         stmt["last_updated"] = now_str
 
         merged_statements.append(stmt)
 
-    # Return unsigned OpenVEX document
-    now_date = now_str.split("T")[0]  # Extract date for timestamp
+    now_date = now_str.split("T")[0]
     output_doc: Dict[str, Any] = {
         "@context": "https://openvex.dev/ns/v0.2.0",
         "@id": f"https://openvex.dev/docs/tracking/vex-tracking-{now_date}",
@@ -175,8 +162,7 @@ def _load_findings_file(path: str) -> List[Dict[str, Any]]:
     with open(path) as f:
         findings_json = json.load(f)
 
-    # Trivy exports as {"Results": [...]} with each result's "Vulnerabilities"
-    # Grype exports as {"matches": [...]}
+    # Trivy: {"Results": [{"Vulnerabilities": [...]}]}. Grype: {"matches": [...]}.
     if isinstance(findings_json, dict):
         if "Results" in findings_json:
             out: List[Dict[str, Any]] = []
@@ -223,7 +209,6 @@ def main():
 
     prior_path, trivy_path, grype_path, disposition_path = sys.argv[1:]
 
-    # Load prior doc
     prior_doc = None
     if prior_path != "-":
         try:
@@ -239,7 +224,6 @@ def main():
         print(f"Error loading current findings (trivy={trivy_path}, grype={grype_path}): {e}", file=sys.stderr)
         sys.exit(1)
 
-    # Load human disposition doc
     disposition_doc = None
     if disposition_path != "-":
         try:
@@ -248,10 +232,7 @@ def main():
         except FileNotFoundError:
             pass
 
-    # Perform merge
     merged_doc = merge(prior_doc, current_findings, disposition_doc)
-
-    # Write merged doc to stdout
     print(json.dumps(merged_doc, indent=2))
 
 
