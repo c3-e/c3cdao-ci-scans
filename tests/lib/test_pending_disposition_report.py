@@ -279,25 +279,11 @@ def _vex_tracking_doc(cve_id: str, first_issued: str) -> dict:
 
 
 def test_medium_low_tier_worked_example(tmp_path):
-    """Worked example with age=32 days, status 'within 90-day SLA'.
-
-    Given:
-      - Grype export with CVE-2026-42533 (High, nginx, dispositioned via not_affected)
-                       and CVE-2026-99999 (Medium, openssl-libs, no VEX statement)
-      - tracking doc with first_issued for CVE-2026-99999 of 2026-08-01
-      - reference date of 2026-09-02
-    When:
-      - render() runs with the fixed clock
-    Then:
-      - CVE-2026-42533 is excluded (already dispositioned)
-      - CVE-2026-99999 appears in "Actively Managed" table with age=32 days,
-        status "within 90-day SLA"
-    """
+    """age=32 days renders as 'within 90-day SLA'; a dispositioned High is excluded."""
     bundle = tmp_path / "security-export-full"
     svc = bundle / "security-export-app-abc1234"
     svc.mkdir(parents=True)
 
-    # Grype export with one High (dispositioned) and one Medium (undispositioned)
     _write(
         svc / "grype-image.json",
         _grype_doc(
@@ -323,7 +309,6 @@ def test_medium_low_tier_worked_example(tmp_path):
     )
     _write(svc / "trivy-image.json", _trivy_doc([]))
 
-    # VEX statement: CVE-2026-42533 is already dispositioned (not_affected)
     _write(
         svc / "vex-applied.openvex.json",
         {
@@ -336,25 +321,20 @@ def test_medium_low_tier_worked_example(tmp_path):
         },
     )
 
-    # Tracking doc: CVE-2026-99999 first_issued on 2026-08-01
     _write(
         svc / "vex-tracking.json",
         _vex_tracking_doc("CVE-2026-99999", "2026-08-01T00:00:00Z"),
     )
 
-    # Fixed clock: 2026-09-02 00:00:00 UTC (32 days after first_issued)
     def fixed_clock():
-        return "2026-09-02T00:00:00Z"
+        return "2026-09-02T00:00:00Z"  # 32 days after first_issued
 
     output = mod.render(bundle, clock=fixed_clock)
 
-    # CVE-2026-42533 should NOT appear (already dispositioned)
     assert "CVE-2026-42533" not in output
-
-    # CVE-2026-99999 should appear in the Medium/Low table
     assert "CVE-2026-99999" in output
     assert "Actively Managed" in output
-    assert "32" in output  # age = 32 days
+    assert "32" in output
     assert "within 90-day SLA" in output
 
 
