@@ -1,9 +1,5 @@
-# Image-side vulnerability scanning shared by every image-scan matrix leg:
-# default scanner configs, docker-load the built image artifact, Trivy image
-# scan, Grype image scan, Grype image-SBOM scan. Source-SBOM generation and
-# source scans stay in the primary image-scan leg (whole-repo, run once).
-# Same SECURITY_SCAN_BLOCKING exit-code semantics in every consumer — the
-# caller passes vars.SECURITY_SCAN_BLOCKING through blocking.
+# Source-SBOM generation and source scans stay in the primary image-scan leg
+# (run once); this action only covers the per-image Trivy/Grype/SBOM scans.
 name: Image vulnerability scan (Trivy + Grype)
 description: >-
   Default .trivyignore/.grype.yaml when the consumer lacks them, download and
@@ -30,18 +26,8 @@ inputs:
 runs:
   using: composite
   steps:
-    # Consumers aren't required to carry scanner config files — default to
-    # empty ones so Trivy/Grype don't error on a missing path. plan's
-    # suppression-format lint already blocks a non-empty .trivyignore/
-    # .grype.yaml before this job can run, so "honor if present" only ever
-    # sees an empty file here — OpenVEX is the one real suppression
-    # surface. Same no-op-when-absent pattern for OpenVEX: consumers opt in by committing
-    # .openvex/templates/main.openvex.json (data-only onboarding, resolved
-    # against the caller checkout cwd like .trivyignore); absent that, an
-    # empty-statements doc is written to RUNNER_TEMP so the scan steps can
-    # reference one unconditionally. Verified against the pinned CLIs: an
-    # empty-statements doc produces bit-identical findings to no VEX doc
-    # at all.
+    # .trivyignore/.grype.yaml default to empty (lint blocks real entries) — OpenVEX is
+    # the real suppression surface; an absent consumer VEX doc gets an empty stand-in.
     - name: Default scanner configs when consumer lacks them
       shell: bash
       run: |
@@ -65,11 +51,7 @@ runs:
         # The pinned trivy-action does not forward ambient env to its inner
         # step; trivy-config: -> TRIVY_CONFIG is its explicitly wired route.
         printf 'vulnerability:\n  vex:\n    - %s\n' "$vex_doc" > "${RUNNER_TEMP}/trivy-vex.yaml"
-        # Precompute what the export-bundle steps below need and publish it
-        # via GITHUB_ENV: the resolved VEX doc + generated Trivy config, and
-        # the artifact-name parts — leg name from the scan-image-<name>
-        # artifact convention, short sha for per-run uniqueness. The export
-        # dir must exist before the JSON export scans write into it.
+        # mkdir here since the later JSON export steps need this dir to already exist.
         mkdir -p "${RUNNER_TEMP}/security-export"
         leg="${IMAGE_ARTIFACT_NAME#scan-image-}"
         {
@@ -90,25 +72,16 @@ runs:
       shell: bash
       run: docker load -i image.tar
 
-    # Grype derives OpenVEX product identity exclusively from the image's
-    # repoDigests; a docker-load'ed local build has none, so every committed
-    # product PURL is a silent no-op on the Grype image leg (F-T6-2,
-    # discovered on the petegpt VEX canary). A job-local registry gives the
-    # image a real, deterministic, digest-backed identity: consumers author
-    # statements against repository_url=localhost:5000/<name> (Trivy form)
-    # and repository_url=localhost:5000 (Grype form) — stable across builds,
-    # per-build digest recorded in the export bundle's metadata.json.
+    # Grype matches VEX by repoDigest; a docker-load'ed image has none, so committed
+    # VEX statements would silently no-op — push here to give the image a real digest.
     - name: Publish image to job-local registry (VEX product identity)
       shell: bash
       env:
         IMAGE_TAG: ${{ inputs.image-tag }}
       run: |
         set -euo pipefail
-        # docker inspect alone only proves the name is taken, not that the
-        # registry is serving — a leftover *stopped* container (e.g. a
-        # reused/self-hosted runner) would pass that check, then the loop
-        # below spins for 30s against a dead endpoint. Check running state
-        # and clear a stale container before recreating it.
+        # Check Running state, not just existence — a stopped leftover container
+        # (e.g. a reused self-hosted runner) would pass an existence check and hang the poll below.
         if ! docker inspect -f '{{.State.Running}}' vex-registry 2>/dev/null | grep -q true; then
           docker rm -f vex-registry >/dev/null 2>&1 || true
           docker run -d --name vex-registry -p 127.0.0.1:5000:5000 \
@@ -121,18 +94,15 @@ runs:
         scan_ref="localhost:5000/${IMAGE_TAG}"
         docker tag "$IMAGE_TAG" "$scan_ref"
         docker push -q "$scan_ref"
-        # Re-pull so the daemon records the registry repoDigest (push alone
-        # is not guaranteed to on every storage driver); layers are cached,
-        # this is metadata-cheap.
+        # Re-pull to force the daemon to record repoDigest — push alone doesn't
+        # guarantee it on every storage driver (layers are cached, so this is cheap).
         docker rmi "$scan_ref" >/dev/null
         docker pull -q "$scan_ref"
-        # Fail-closed even for report-only consumers: a missing repoDigest
-        # means committed VEX statements silently stop matching on Grype —
-        # an infrastructure fault, not a scan finding, so it fails the job
-        # regardless of the blocking input.
+        # Fail closed regardless of `blocking`: a missing repoDigest means VEX
+        # silently stops matching — that's an infrastructure fault, not a scan finding.
         docker image inspect --format '{{join .RepoDigests "\n"}}' "$scan_ref" \
           | grep -q '^localhost:5000/' \
-          || { echo "::error::job-local registry repoDigest missing — Grype VEX product identity would silently no-op (F-T6-2)"; exit 1; }
+          || { echo "::error::job-local registry repoDigest missing — Grype VEX product identity would silently no-op"; exit 1; }
         echo "SCAN_REF=${scan_ref}" >> "$GITHUB_ENV"
 
     - name: Download image SBOM
@@ -169,12 +139,8 @@ runs:
         output-format: table
         config: .grype.yaml
 
-    # Deliberately NO VEX wiring on the SBOM leg: at the current pin,
-    # anchore/sbom-action's CycloneDX root metadata.component carries no
-    # purl, so there is no product identity for GRYPE_VEX_DOCUMENTS to
-    # match against — VEX here would be a silent no-op that looks wired
-    # but isn't. Revisit only if the sbom-action pin changes its CycloneDX
-    # output shape.
+    # No VEX wiring on the SBOM leg: sbom-action's CycloneDX root metadata.component
+    # carries no purl, so GRYPE_VEX_DOCUMENTS would have nothing to match against.
     - name: Grype scan — image SBOM
       uses: anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2  # v7.4.0
       with:
@@ -184,24 +150,13 @@ runs:
         output-format: table
         config: .grype.yaml
 
-    # ------------------------------------------------------------------------
-    # Per-run security export bundle. Machine-readable evidence for one
-    # image-scan leg, downloadable via `gh run download`: both scan JSONs
-    # (tables above stay for logs), the image SBOM, the VEX doc exactly as
-    # applied (real consumer template or the empty default), and
-    # metadata.json. Every step is `if: always()` so the bundle uploads even
-    # when blocking=true fails the table scans above. JSON re-scans reuse
-    # JSON re-scans reuse the DBs the table scans already downloaded and
-    # the same VEX doc (.trivyignore/.grype.yaml are always empty by
-    # construction — plan's suppression-format lint blocks any real
-    # entry), so the JSONs mirror what gated.
+    # Per-run security export bundle (JSON scans + SBOM + VEX + metadata.json); every
+    # step is if: always() so it uploads even when blocking=true fails the scans above.
     - name: Trivy scan — image (JSON for export)
       if: always()
       uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1  # v0.35.0
       with:
-        # Fallback: if the registry publish failed, this always() step still
-        # captures evidence against the load tag (VEX identity degraded but
-        # the bundle survives, which is when it matters).
+        # Fallback to the load tag if the registry publish failed, so the bundle still survives.
         image-ref: ${{ env.SCAN_REF || inputs.image-tag }}
         format: json
         output: ${{ runner.temp }}/security-export/trivy-image.json
@@ -233,14 +188,8 @@ runs:
         BLOCKING: ${{ inputs.blocking }}
         GRYPE_JSON: ${{ steps.grype-export.outputs.json }}
         VEX_APPLIED: ${{ env.VEX_DOC }}
-        # github.job_workflow_sha never populates for a job invoked from a
-        # reusable workflow — long-open runner bug, never fixed on that
-        # field: https://github.com/actions/runner/issues/2417. Likewise
-        # github.workflow_ref (and its $GITHUB_WORKFLOW_REF env mirror) is
-        # caller-scoped: it resolves to the consumer's own workflow file,
-        # not this gate's. job.workflow_sha / job.workflow_ref are GitHub's
-        # shipped replacement for exactly this reusable-workflow case — map
-        # both explicitly, same as everything else in this env: block.
+        # github.job_workflow_sha/workflow_ref don't work for a reusable workflow
+        # (runner bug: actions/runner#2417) — job.workflow_sha/ref are the replacement.
         GATE_WORKFLOW_SHA: ${{ job.workflow_sha }}
         GATE_WORKFLOW_REF: ${{ job.workflow_ref }}
       run: |
@@ -252,9 +201,8 @@ runs:
         cp "$VEX_APPLIED" "$export_dir/vex-applied.openvex.json"
         vex_source="consumer"
         case "$VEX_APPLIED" in "${RUNNER_TEMP}"/*) vex_source="empty-default" ;; esac
-        # Digest from the registry-backed reference the scanners actually
-        # scanned (localhost:5000 repoDigest) — per-build precise even
-        # though the committed VEX product forms are version-less.
+        # Digest from the registry-backed ref actually scanned (localhost:5000 repoDigest),
+        # per-build precise even though committed VEX product forms are version-less.
         image_digest="$(docker image inspect --format '{{if .RepoDigests}}{{index .RepoDigests 0}}{{else}}{{.Id}}{{end}}' "${SCAN_REF:-$IMAGE_TAG}")"
         # trivy-action leaves the pinned CLI on PATH; version + DB metadata
         # come from `trivy version -f json` (grype's from its own report).
