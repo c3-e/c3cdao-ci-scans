@@ -15,7 +15,7 @@
 # collide with a real pilot's tracking record.
 #
 # Run twice (two separate workflow_dispatch invocations) to prove
-# first_issued is preserved across runs, not reset.
+# first_seen is preserved across runs, not reset.
 
 on:
   workflow_dispatch:
@@ -98,10 +98,10 @@ jobs:
           echo "--- merged vex-tracking record ---"
           cat /tmp/vex-verify/vex-tracking.json
           echo
-          echo "--- statement count ---"
-          jq '.statements | length' /tmp/vex-verify/vex-tracking.json
-          echo "--- confirms both scanners contributed (Trivy + Grype VulnerabilityID/name shapes both present, not just one) ---"
-          jq -r '.statements[].vulnerability.name' /tmp/vex-verify/vex-tracking.json | sort -u
+          echo "--- finding count ---"
+          jq '.findings | length' /tmp/vex-verify/vex-tracking.json
+          echo "--- confirms both scanners contributed (Trivy + Grype VulnerabilityID/id shapes both present, not just one) ---"
+          jq -r '.findings | keys[]' /tmp/vex-verify/vex-tracking.json | sort -u
           echo "--- confirms the doc also lands inside security-export/ for the disposition report, not just GHCR ---"
           test -f "${RUNNER_TEMP}/security-export/vex-tracking.json" && echo "OK: ${RUNNER_TEMP}/security-export/vex-tracking.json exists" || { echo "::error::vex-tracking.json missing from security-export/ — the disposition report would have no local way to read it"; exit 1; }
           diff <(jq -S . /tmp/vex-verify/vex-tracking.json) <(jq -S . "${RUNNER_TEMP}/security-export/vex-tracking.json") && echo "OK: local copy matches the pushed artifact"
