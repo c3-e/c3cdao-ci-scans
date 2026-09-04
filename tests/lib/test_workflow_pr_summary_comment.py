@@ -196,11 +196,8 @@ def _pending_report_step() -> dict:
     return _step("Build pending-disposition report")
 
 
-def test_pending_disposition_step_exists_and_is_pull_request_gated():
-    # Runs for both pr_comment and issue — both channels' shared
-    # "Build PR scan-summary comment body" step needs this report's
-    # output_file; gating it to pr_comment-only would silently leave
-    # scheduled/issue-channel runs with an empty report body.
+def test_pending_disposition_step_exists_and_is_gated_to_both_output_channels():
+    # Both channels' comment-body step needs this report's output_file.
     step = _pending_report_step()
     assert (
         step.get("if")
@@ -345,18 +342,9 @@ def test_sla_breach_banner_present_in_build_step_and_gated_on_real_report_conten
 
 
 # --- Regression: real jq execution against the issue-step's own filters ----
-#
-# Found live on a real schedule-triggered dispatch: a repo issue with
-# body: null crashed the find-loop's jq filter with "null (null) and
-# string (...) cannot have their containment checked", failing the whole
-# export-bundle job — and the null body existed in the first place
-# because the create-branch's own jq invocation bound `.body` against
-# the `-n` flag's null input instead of the `--argjson body` variable,
-# so every created issue had body: null. Both bugs are silent at the
-# string-assertion level above (they only surface when jq actually
-# runs), so these tests execute the real jq
-# filters extracted from the step's own script — not a hand-copied
-# duplicate that could drift from the fix.
+# A prior jq -n binding gave every created Issue a null body, then
+# crashed the find-loop on it — both silent at the string-assertion
+# level above, so these run the real filters, extracted from the script.
 
 
 def _extract_single_quoted(pattern: str, run: str) -> str:
