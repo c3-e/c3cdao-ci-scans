@@ -178,21 +178,15 @@ jobs:
       # needs.plan.outputs.callee_ref — a single resolver site instead of
       # one duplicated copy per job.
       callee_ref: ${{ steps.calleeref.outputs.ref }}
-      # Event context: whether the trigger is a pull_request (has PR context
-      # for PR comment output) or a background trigger (schedule/merge_group/
-      # workflow_dispatch). Resolved once here, passed to downstream jobs
-      # to route results to the correct channel without re-reading event_name.
+      # Routes each downstream job's output without re-reading event_name.
       has_pr_context: ${{ steps.event-context.outputs.has_pr_context }}
       output_channel: ${{ steps.event-context.outputs.output_channel }}
     steps:
       # Consumer repo (github.repository = the caller's repo).
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
 
-      # Resolve event context once: map github.event_name to has_pr_context
-      # and output_channel. Consumed by downstream jobs to route results to
-      # the correct output channel (PR comment vs. issue vs. summary only).
-      # Fail-closed: unhandled event types cause an explicit error, not a
-      # silent fallback to the wrong channel.
+      # Single resolver site, one output per event, instead of five
+      # scattered event_name checks across downstream jobs.
       - name: Resolve event context
         id: event-context
         run: |
@@ -1423,11 +1417,8 @@ jobs:
       - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e  # v6
         if: needs.plan.outputs.output_channel == 'pr_comment' || needs.plan.outputs.output_channel == 'issue'
 
-      # This report feeds the shared "Build PR scan-summary comment body"
-      # step below, which runs for BOTH pr_comment and issue channels —
-      # this bootstrap must match that gate exactly, or an issue-channel
-      # run silently posts a tracking Issue with no disposition content
-      # and no SLA banner at all.
+      # Must match the body-builder step's own if: below, or the issue
+      # channel posts with no disposition content and no SLA banner.
       - name: Build pending-disposition report
         id: pending-disposition
         if: needs.plan.outputs.output_channel == 'pr_comment' || needs.plan.outputs.output_channel == 'issue'
@@ -1571,10 +1562,8 @@ jobs:
               -d "$payload" >/dev/null
           fi
 
-      # Find-or-create persistent tracking Issue for scheduled/manual dispatch runs
-      # (output_channel == 'issue'). Uses the same find-by-hidden-marker pattern
-      # as the PR-comment step, applied to the repository's open issues instead of
-      # a specific PR's comments. Posts the same pending-disposition report body.
+      # Same find-by-hidden-marker pattern as the PR-comment step, applied
+      # to open Issues instead of a specific PR's comments.
       - name: Post or update tracking Issue
         if: needs.plan.outputs.output_channel == 'issue'
         continue-on-error: false
@@ -1599,14 +1588,8 @@ jobs:
             cat "$BODY_FILE"
           } > "${BODY_FILE}.issue"
 
-          # Find existing open Issue with the marker. Paginated (mirrors
-          # the PR-comment step's own find-or-create loop exactly) — a
-          # single unpaginated 100-item page would miss the tracking issue
-          # entirely on a repo with more than 100 open issues, silently
-          # creating a duplicate every run instead of updating the one
-          # that already exists. Excludes pull requests: GitHub's issues
-          # API returns PRs too unless filtered — a PR whose body happens
-          # to contain this marker text must never be mistaken for it.
+          # Paginated: a single 100-item page would miss the tracking
+          # issue and silently create a duplicate on a busy repo.
           existing_number=""
           page=1
           while :; do
@@ -1617,6 +1600,7 @@ jobs:
               echo "::error::Failed to list issues"
               exit 1
             }
+            # GitHub's issues endpoint returns PRs too; pull_request == null excludes them.
             match=$(echo "$resp" | jq -r --arg marker "$marker" '[.[] | select(.pull_request == null) | select((.body // "") | contains($marker))][0].number // empty')
             if [ -n "$match" ]; then existing_number="$match"; break; fi
             count=$(echo "$resp" | jq 'length' 2>/dev/null || echo 0)
