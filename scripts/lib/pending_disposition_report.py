@@ -44,7 +44,7 @@ def _get_cve_age_days(
     clock: Optional[Callable[[], str]] = None,
 ) -> Optional[int]:
     """
-    Compute age in days from vex-tracking.json's first_issued timestamp.
+    Compute age in days from vex-tracking.json's first_seen timestamp.
 
     Returns None if the tracking doc is missing/malformed or CVE not found.
     Uses the provided clock callable for "now" (default: real UTC now).
@@ -54,32 +54,21 @@ def _get_cve_age_days(
     if not tracking_doc:
         return None
 
-    # Find the statement for this CVE
-    for stmt in tracking_doc.get("statements") or []:
-        if isinstance(stmt, dict):
-            vuln = stmt.get("vulnerability") or {}
-            if vuln.get("name") == cve_id:
-                first_issued_str = stmt.get("first_issued")
-                if first_issued_str:
-                    try:
-                        # Parse ISO8601 timestamp
-                        first_issued = datetime.fromisoformat(
-                            first_issued_str.replace("Z", "+00:00")
-                        )
-                        # Get reference time (now)
-                        if clock is None:
-                            now = datetime.now(timezone.utc)
-                        else:
-                            now_str = clock()
-                            now = datetime.fromisoformat(
-                                now_str.replace("Z", "+00:00")
-                            )
-                        # Compute days
-                        delta = now - first_issued
-                        return delta.days
-                    except (ValueError, AttributeError):
-                        return None
-    return None
+    entry = (tracking_doc.get("findings") or {}).get(cve_id)
+    if not isinstance(entry, dict):
+        return None
+    first_seen_str = entry.get("first_seen")
+    if not first_seen_str:
+        return None
+    try:
+        first_seen = datetime.fromisoformat(first_seen_str.replace("Z", "+00:00"))
+        if clock is None:
+            now = datetime.now(timezone.utc)
+        else:
+            now = datetime.fromisoformat(clock().replace("Z", "+00:00"))
+        return (now - first_seen).days
+    except (ValueError, AttributeError):
+        return None
 
 
 def covered_ids(vex_applied_path: Path) -> set[str]:

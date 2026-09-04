@@ -260,21 +260,15 @@ def test_service_name_strips_prefix_and_short_sha():
 # --- Medium/Low tiering and age tracking ---
 
 
-def _vex_tracking_doc(cve_id: str, first_issued: str) -> dict:
-    """Create a vex-tracking.json doc with a single CVE statement."""
+def _vex_tracking_doc(cve_id: str, first_seen: str) -> dict:
+    """Create a vex-tracking.json doc with a single CVE finding."""
     return {
-        "@context": "https://openvex.dev/ns/v0.2.0",
-        "@id": "https://openvex.dev/docs/tracking/vex-tracking-2026-09-03",
-        "author": "test",
-        "timestamp": "2026-09-03T14:47:26Z",
-        "version": 1,
-        "statements": [
-            {
-                "vulnerability": {"name": cve_id},
-                "first_issued": first_issued,
-                "last_updated": "2026-09-03T14:47:26Z",
-            }
-        ],
+        "schemaVersion": 1,
+        "kind": "c3cdao-ci-scans/pending-disposition-tracking",
+        "generated": "2026-09-03T14:47:26Z",
+        "findings": {
+            cve_id: {"first_seen": first_seen, "last_seen": "2026-09-03T14:47:26Z"},
+        },
     }
 
 
@@ -327,7 +321,7 @@ def test_medium_low_tier_worked_example(tmp_path):
     )
 
     def fixed_clock():
-        return "2026-09-02T00:00:00Z"  # 32 days after first_issued
+        return "2026-09-02T00:00:00Z"  # 32 days after first_seen
 
     output = mod.render(bundle, clock=fixed_clock)
 
@@ -362,7 +356,7 @@ def test_medium_low_sla_breach(tmp_path):
     _write(svc / "trivy-image.json", _trivy_doc([]))
     _write(svc / "vex-applied.openvex.json", {})
 
-    # CVE first_issued on 2026-05-30 (95 days before 2026-09-02)
+    # CVE first_seen on 2026-05-30 (95 days before 2026-09-02)
     _write(
         svc / "vex-tracking.json",
         _vex_tracking_doc("CVE-2026-99999", "2026-05-30T00:00:00Z"),
@@ -583,23 +577,13 @@ def test_medium_low_multiple_findings(tmp_path):
     _write(
         svc / "vex-tracking.json",
         {
-            "@context": "https://openvex.dev/ns/v0.2.0",
-            "@id": "test",
-            "author": "test",
-            "timestamp": "2026-09-03T14:47:26Z",
-            "version": 1,
-            "statements": [
-                {
-                    "vulnerability": {"name": "CVE-1"},
-                    "first_issued": "2026-08-20T00:00:00Z",
-                    "last_updated": "2026-09-03T00:00:00Z",
-                },
-                {
-                    "vulnerability": {"name": "CVE-2"},
-                    "first_issued": "2026-07-04T00:00:00Z",
-                    "last_updated": "2026-09-03T00:00:00Z",
-                },
-            ],
+            "schemaVersion": 1,
+            "kind": "c3cdao-ci-scans/pending-disposition-tracking",
+            "generated": "2026-09-03T14:47:26Z",
+            "findings": {
+                "CVE-1": {"first_seen": "2026-08-20T00:00:00Z", "last_seen": "2026-09-03T00:00:00Z"},
+                "CVE-2": {"first_seen": "2026-07-04T00:00:00Z", "last_seen": "2026-09-03T00:00:00Z"},
+            },
         },
     )
 
