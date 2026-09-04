@@ -122,9 +122,8 @@ target names. `publish-images-deferred`'s matrix is populated directly
 from that list (optionally narrowed by `publish_targets`) — never
 hand-typed, so it cannot drift from the gate's own build matrix by
 construction (a real config file drift, e.g. a compose service added on
-one side but not reflected on the other, is a separate, already-tracked
-concern — see Issue H, chart/build-identity verification — not something
-this reintroduces).
+one side but not reflected on the other, is a separate chart/build-identity
+verification concern, not something this reintroduces).
 
 This is a **local re-derivation from the checked-out compose file**, not
 a fetch of `reusable-security-gate.yml`'s own `plan-bom` artifact:

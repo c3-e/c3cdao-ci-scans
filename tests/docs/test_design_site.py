@@ -143,18 +143,16 @@ _RETIRED_INSTRUCTIONS = (
     r"templates/consumer/",
 )
 
-# `require_hardened_bases:` is retired ONLY as a reusable-security-gate.yml
-# input (removed at v0.6). publish-staging-chart.yml has its own, currently
-# live, differently-scoped `require_hardened_bases` boolean — legitimately
-# documented in PUBLISH-STAGING-CHART.md, which this pattern would otherwise
-# false-positive on since the two workflows share the name.
+# require_hardened_bases: is retired only on reusable-security-gate.yml;
+# publish-staging-chart.yml's own live, differently-scoped boolean of the
+# same name would otherwise false-positive here.
 _RETIRED_INSTRUCTIONS_EXCLUDE = {
     r"require_hardened_bases:": {"PUBLISH-STAGING-CHART.md"},
 }
 
 
 def test_drift_guard_docs_never_instruct_retired_machinery() -> None:
-    """AC-2: a doc reintroducing Makefile.ci/contract_file instructions fails."""
+    """A doc reintroducing Makefile.ci/contract_file instructions fails."""
     violations = []
     for path in _published_docs():
         rel = path.relative_to(ROOT)
@@ -188,7 +186,7 @@ def _emitted_remediation_anchors() -> set[str]:
 
 
 def test_lint_remediation_anchors_resolve() -> None:
-    """AC-3: every remediation_ref anchor resolves to a CI-CONTRACT heading."""
+    """Every remediation_ref anchor resolves to a CI-CONTRACT heading."""
     contract = (DOCS / "CI-CONTRACT.md").read_text()
     heading_slugs = {
         _slugify(m.group(1)) for m in re.finditer(r"^#{1,6}\s+(.+)$", contract, re.MULTILINE)
@@ -198,14 +196,8 @@ def test_lint_remediation_anchors_resolve() -> None:
 
 
 def test_site_lint_grid_in_sync() -> None:
-    """The design site's lint catalog stays a valid subset with a true count.
-
-    The rule catalog exists in three places: the rule sources, the
-    CI-CONTRACT rule table (anchor-guarded above), and the hand-maintained
-    grid in index.html. This guard keeps the third copy honest: every
-    <code> entry must be a rule id the lint actually emits, and the
-    "<N> design rules" label must match the number of grid entries.
-    """
+    """The hand-maintained lint grid in index.html stays a true subset:
+    every <code> entry is a real rule id, and the count label matches."""
     html = (DOCS / "index.html").read_text()
     grid_match = re.search(
         r'<small>(\d+) design rules</small>.*?<div class="lint-grid">(.*?)</div>',
@@ -224,7 +216,7 @@ def test_site_lint_grid_in_sync() -> None:
 
 
 def test_consumer_shape_assumptions_published() -> None:
-    """AC-4: every consumer-shape convention row is documented for onboarding."""
+    """Every consumer-shape convention row is documented for onboarding."""
     text = (DOCS / "CI-CONTRACT.md").read_text() + (DOCS / "RUNBOOK.md").read_text()
     for convention in (
         "profiles: [local]",       # C3 local-only exclusion, exact spelling
