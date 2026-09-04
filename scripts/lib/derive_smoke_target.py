@@ -4,17 +4,11 @@
 # ///
 """Derive the single Service-backed HTTP smoke target from a rendered chart.
 
-cluster-smoke's post-deploy probe needs one unambiguous target: the
-container with an httpGet readinessProbe whose probe port a Service
-routes to (the same semantics the `smoke-target` lint rule enforces —
-both consume lint_rules.chart.smoke_candidates, so a chart that passes
-lint always derives, and a chart that cannot derive was already blocked
-in the plan job).
+Consumes the same `lint_rules.chart.smoke_candidates` as the
+`smoke-target` lint rule, so a chart that passes lint always derives here.
 
 Output (stdout, single-line JSON): {"workload", "container", "service",
-"port", "path"} — the Service name/port to port-forward and the probe
-path to curl. Zero or multiple candidates exit non-zero naming every
-candidate (AC-2).
+"port", "path"}. Zero or multiple candidates exit non-zero naming them.
 """
 
 from __future__ import annotations

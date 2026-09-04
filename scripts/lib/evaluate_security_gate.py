@@ -39,9 +39,8 @@ def warn_if_advisory() -> None:
 
 
 def blocking_jobs(image_only: bool) -> list[str]:
-    # build and image-scan are matrixed (one leg per plan-derived build
-    # target): the job fails when any leg fails, so every leg is covered
-    # without per-leg job entries. 'plan' is the v0.6 rename of caller-lint.
+    # build/image-scan are matrixed; one entry covers every leg since the
+    # job fails if any leg fails. 'plan' is the renamed caller-lint job.
     blocking = ["plan", "build", "secrets-scan", "image-scan"]
     if not image_only:
         blocking[3:3] = ["helm-check", "cluster-smoke"]
@@ -60,11 +59,9 @@ def evaluate(
     if bad:
         print("Blocking jobs not successful:", bad)
         return 1
-    # smoke_ok reflects the real probe outcome regardless of the job's own
-    # continue-on-error masking; only fail the gate on it once
-    # SECURITY_SCAN_BLOCKING=true — same ramp rule as secrets-scan/image-scan,
-    # so cluster-smoke doesn't silently block merges during the verification
-    # ramp while every other advisory job stays advisory.
+    # smoke_ok reflects the real probe outcome despite the job's own
+    # continue-on-error masking; gated behind SECURITY_SCAN_BLOCKING like
+    # the other advisory scans so it doesn't block merges during the ramp.
     if security_scan_blocking and "cluster-smoke" in blocking:
         smoke = needs.get("cluster-smoke") or {}
         smoke_ok = (smoke.get("outputs") or {}).get("smoke_ok")

@@ -3,14 +3,11 @@
 # ///
 """Derive the GitHub Actions build matrix from a published bake plan.
 
-The plan job's derivation step (derive_bom.py) publishes `bake-plan.json`
-(untouched `docker buildx bake --print` JSON); this module maps that plan
-into the `[{target, tag, dockerfile, context}]` matrix the `build` and
-`image-scan` jobs fan out over via `fromJSON(...)`, plus the single
-`source_sbom_target` leg. It was previously an inline Python heredoc in
-the workflow YAML; that location put it outside `scripts/lib/`'s ruff/mypy
-coverage and its own pytest suite. Pure stdlib: no PyYAML dependency, since
-its only input is already-parsed JSON.
+Maps derive_bom.py's `bake-plan.json` (untouched bake --print JSON) into
+the `[{target, tag, dockerfile, context}]` matrix `build`/`image-scan`
+consume via `fromJSON(...)`, plus the `source_sbom_target` leg.
+
+No PyYAML: the only input is already-parsed JSON.
 """
 
 from __future__ import annotations

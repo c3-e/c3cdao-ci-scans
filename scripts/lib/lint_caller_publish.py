@@ -4,91 +4,18 @@
 # ///
 """Fail-closed convention lint for the publish-staging-chart caller.
 
-`lint_caller.py` gates the `reusable-security-gate.yml` caller's shape
-(ref-pin discipline, required secrets, known inputs, decoy-job
-detection). There was no equivalent for `publish-staging-chart.yml`'s
-caller — every real bug found onboarding Phase 2 pilots (a missing
-`target` field on the old hand-typed `images[]` tuple, a missing
-caller-side `packages: write` permission, a missing `routes:` key in the
-chart's `values.yaml`) was discovered ad hoc, per pilot, at merge time
-instead of caught mechanically at lint time. This module is that
-equivalent, scoped to `publish-staging-chart.yml`'s own actual shape
-rather than a generalization of `lint_caller.py`'s security-gate-specific
-internals (GATE_WORKFLOW_BASENAME, the four registry secrets, the
-compose/Dockerfile/chart-render convention pipeline) — this workflow has
-none of that: no build matrix, no image_only mode. The shared verdict
-infrastructure (`lint_rules.verdict`/`load_gha_workflow`) is reused; the
-rule set below is independent.
-
-NOTE on the retired `images[]` rules: Issue I (single source of truth
-for the publish target list) replaced the caller's hand-typed
-`images[]` JSON array entirely with a `derive-publish-targets` job that
-re-derives the target list from `compose_file` at merge time — so the
-two rules this module originally had for that shape
-(`publish-images-target-required`, `publish-images-unparseable`) no
-longer apply to anything a caller declares and have been removed. A
-caller-side `compose_file`/`publish_targets` mismatch is now caught by
-`derive-publish-targets`' own fail-closed runtime check (see
-docs/PUBLISH-STAGING-CHART.md), not by this lint — there is no
-consumer-repo-independent way to validate a CSV of target names against
-a compose file's actual build targets without checking out that repo,
-which is exactly what `--consumer-root` plus a real `docker buildx bake
---print` would require; not worth duplicating plan's own derivation here
-for a lint-time nice-to-have.
+Mirrors `lint_caller.py`'s shape checks (ref-pin discipline, decoy-job
+detection, required permissions) but scoped to
+`publish-staging-chart.yml`, which has no build matrix or image_only
+mode. Reuses the shared verdict infrastructure
+(`lint_rules.verdict`/`load_gha_workflow`); the rule set is independent.
 
 Every finding is a verdict object:
 
     {"rule_id": ..., "level": "block" | "warn", "message": ...,
      "remediation_ref": "docs/PUBLISH-STAGING-CHART.md#rule-<rule-id>"}
 
-Any block verdict fails the run (exit 1); warn verdicts are reported and
-never block.
-
-Rule ids:
-  publish-ref-pin        block  uses: not pinned by a full 40-hex SHA
-                                 (mirrors lint_caller.py's gate-ref-pin)
-  publish-decoy-job       block  more than one job in the caller calls
-                                 publish-staging-chart.yml (mirrors
-                                 lint_caller.py's decoy-gate-job — this
-                                 workflow's own "Resolve callee (ci-scans)
-                                 ref" step does the identical first-match
-                                 uses: parse the gate's resolver does, so
-                                 it is equally exposed to a second,
-                                 differently-pinned decoy job)
-  publish-packages-write-missing
-                          block  publish_images: true is set but neither
-                                 the caller's workflow-level nor
-                                 job-level permissions: block grants
-                                 packages: write — the exact bug that
-                                 caused a real, hard-to-diagnose failure
-                                 in production onboarding (a missing
-                                 grant, not a missing declaration: GitHub
-                                 Actions caps a reusable workflow's
-                                 granted permissions at whatever the
-                                 caller itself grants, independent of the
-                                 callee's own permissions)
-  publish-permissions-both-levels
-                          block  permissions: declared at BOTH the
-                                 workflow level and the calling job level
-                                 — confirmed live (see
-                                 docs/PUBLISH-STAGING-CHART.md's "Caller
-                                 gotcha") to silently produce
-                                 'conclusion: startup_failure' with zero
-                                 jobs allocated and no error message
-                                 anywhere
-  publish-chart-routes-missing
-                          warn   the consumer chart's values.yaml has no
-                                 non-empty routes: key (top-level or
-                                 nested under fullstack-template.routes:)
-                                 — currently only discovered at actual
-                                 merge time by publish-staging-chart.yml's
-                                 own runtime chart-shape check, not at
-                                 lint time; warn, not block, since the
-                                 --consumer-root chart_path may not exist
-                                 yet at lint time for a brand-new pilot
-  unreadable-caller       block  the caller workflow cannot be parsed, or
-                                 no job's uses: matches
-                                 publish-staging-chart.yml
+A block verdict fails the run; warn verdicts are reported but never block.
 """
 
 from __future__ import annotations
@@ -145,6 +72,8 @@ def _permissions_verdicts(
     job_perms = _permissions_map(job.get("permissions"))
     verdicts: list[Verdict] = []
     if publish_images:
+        # GitHub Actions caps a reusable workflow's granted permissions at
+        # whatever the caller grants, independent of the callee's own asks.
         has_write = (
             workflow_perms.get("packages") == "write"
             or job_perms.get("packages") == "write"
@@ -164,6 +93,8 @@ def _permissions_verdicts(
                 )
             )
     if workflow_perms and job_perms:
+        # Declaring permissions at both levels silently produces
+        # 'startup_failure' with zero jobs allocated and no error shown.
         verdicts.append(
             _v(
                 "publish-permissions-both-levels",
@@ -197,12 +128,9 @@ def lint_caller_workflow(caller_path: Path) -> list[Verdict]:
 
     verdicts: list[Verdict] = []
     if len(matches) > 1:
-        # Same decoy-vector rationale as lint_caller.py's decoy-gate-job:
-        # this workflow's own "Resolve callee (ci-scans) ref" step takes
-        # the FIRST uses: match in the caller file (see
-        # publish-staging-chart.yml), so a second, differently-pinned job
-        # calling this workflow can hijack which ci-scans ref the real
-        # run resolves its own tooling from.
+        # Same decoy-vector risk as lint_caller.py's decoy-gate-job: the
+        # resolver takes the FIRST uses: match, so a second, differently-
+        # pinned job could hijack which ci-scans ref the real run resolves.
         verdicts.append(
             _v(
                 "publish-decoy-job",
@@ -221,13 +149,11 @@ def lint_caller_workflow(caller_path: Path) -> list[Verdict]:
 
 
 def chart_routes_missing(values_path: Path) -> list[Verdict]:
-    """Warn-level: mirrors publish-staging-chart.yml's own runtime
-    check-jsonschema routes-contract validation (its "Validate chart
-    shape" step), but at lint time instead of merge time. Warn, not
-    block: a brand-new pilot's chart may not exist yet at lint time
-    (chart_path is caller-repo-relative, and lint runs against a
-    checkout that may predate the chart), so this can't fail closed the
-    way the real merge-time check does.
+    """Warn-level mirror of publish-staging-chart.yml's runtime
+    chart-shape check, run at lint time instead of merge time.
+
+    Warn, not block: a brand-new pilot's chart may not exist yet at lint
+    time, so this can't fail closed the way the merge-time check does.
     """
     if not values_path.is_file():
         return [

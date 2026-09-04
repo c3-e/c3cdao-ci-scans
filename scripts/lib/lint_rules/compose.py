@@ -74,12 +74,9 @@ def compose_image_tag(
 ) -> list[Verdict]:
     """Every non-local build service declares an explicit `image:` tag.
 
-    An untagged reference and `:latest` are indistinguishable after bake's
-    normalization, so neither counts as explicit. An interpolated reference
-    (`image: app:${TAG}`) blocks first: the gate
-    runs bake with a scrubbed environment, so `${TAG}` resolves empty and
-    would fail downstream as a malformed reference instead of a named
-    verdict.
+    `:latest` and untagged are indistinguishable after bake's normalization.
+    An interpolated tag (`image: app:${TAG}`) blocks first: the gate runs
+    bake with a scrubbed environment, so `${TAG}` would resolve empty.
     """
     verdicts = []
     for name, svc in _target_services(compose, classified):
@@ -199,11 +196,8 @@ def build_input_explicit(
 ) -> list[Verdict]:
     """Build inputs are committed literals; nothing flows in from the host.
 
-    Rejected per build: non-mapping `args` (bare pass-through list), null
-    arg values, environment interpolation in build-affecting fields,
-    secret-like arg names, `build.secrets`, and `build.ssh`. The gate
-    supplies no arg values of its own; the only execution-time override
-    is the platform pin.
+    The gate supplies no arg values of its own; the only execution-time
+    override is the platform pin.
     """
 
     def block(name: str, detail: str) -> Verdict:
