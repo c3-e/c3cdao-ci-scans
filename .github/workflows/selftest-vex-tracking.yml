@@ -1,20 +1,5 @@
-# Selftest: exercises image-vuln-scan's vex-tracking OCI chain end to end.
-# pytest covers vex_tracking.py's merge() directly, but chart-path
-# threading, oras setup/pull/push, and step ordering relative to the
-# Trivy/Grype JSON exports can only be proven by a real dispatch — an
-# earlier build shipped five bugs unit tests never caught, because all
-# of them lived in this untested glue, not in merge().
-#
-# Reuses selftest-fixtures/vex-visibility/medium-cve-image/: a real, old,
-# publicly-pullable image with genuine accumulated CVEs, not hand-authored
-# scanner output.
-#
-# Destination PILOT (selftest-vex-tracking-pilot-v2) deliberately differs
-# from the fixture directory's own basename, to prove the PILOT comes from
-# Chart.yaml's name field, not basename(chart_path) — and can never
-# collide with a real pilot's tracking record.
-#
-# Run twice (two separate workflow_dispatch invocations) to prove
+# Exercises the vex-tracking OCI chain against a real registry — oras/
+# chart-path glue can't be proven by pytest alone. Run twice to prove
 # first_seen is preserved across runs, not reset.
 
 on:
@@ -102,6 +87,8 @@ jobs:
           jq '.findings | length' /tmp/vex-verify/vex-tracking.json
           echo "--- confirms both scanners contributed (Trivy + Grype VulnerabilityID/id shapes both present, not just one) ---"
           jq -r '.findings | keys[]' /tmp/vex-verify/vex-tracking.json | sort -u
+          echo "--- Grype-only regression check: CVE-2021-4160 is absent from a real local Trivy scan of alpine:3.12.0 but present in a real local Grype scan — its presence here proves Grype's own findings survive extraction, not just that the Grype file was read ---"
+          jq -e '.findings["CVE-2021-4160"]' /tmp/vex-verify/vex-tracking.json || { echo "::error::CVE-2021-4160 (Grype-only finding) missing from tracking doc — Grype extraction is still broken"; exit 1; }
           echo "--- confirms the doc also lands inside security-export/ for the disposition report, not just GHCR ---"
           test -f "${RUNNER_TEMP}/security-export/vex-tracking.json" && echo "OK: ${RUNNER_TEMP}/security-export/vex-tracking.json exists" || { echo "::error::vex-tracking.json missing from security-export/ — the disposition report would have no local way to read it"; exit 1; }
           diff <(jq -S . /tmp/vex-verify/vex-tracking.json) <(jq -S . "${RUNNER_TEMP}/security-export/vex-tracking.json") && echo "OK: local copy matches the pushed artifact"
