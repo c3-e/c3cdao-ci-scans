@@ -1,9 +1,5 @@
-"""DOC-3 acceptance tests for docs/RUNBOOK.md and docs/REQUIREMENTS-MAP.md.
-
-The drift guard (test_every_job_mapped) parses the job ids out of the reusable
-workflow and asserts each has a row in the requirements map, so a new gate job
-can't ship unmapped.
-"""
+"""Drift guard: every reusable-workflow job id has a row in
+docs/REQUIREMENTS-MAP.md, so a new gate job can't ship unmapped."""
 
 import re
 from pathlib import Path
@@ -14,10 +10,8 @@ REQ_MAP = REPO_ROOT / "docs" / "REQUIREMENTS-MAP.md"
 WORKFLOW = REPO_ROOT / ".github" / "workflows" / "reusable-security-gate.yml"
 LINT = REPO_ROOT / "scripts" / "lib" / "lint_caller.py"
 
-# Job ids are the only keys at exactly two-space indent after the `jobs:` line;
-# deeper keys (name/runs-on/steps) are indented 4+, so `^  [a-z0-9-]+:` matches
-# ids only. Top-level blocks before `jobs:` (permissions/concurrency) also have
-# two-space lowercase children, hence the scoping to after the `jobs:` line.
+# Job ids sit at exactly 2-space indent; matched only after `jobs:` since
+# permissions/concurrency blocks above it also have 2-space children.
 JOB_ID_RE = re.compile(r"^  ([a-z0-9-]+):")
 
 
