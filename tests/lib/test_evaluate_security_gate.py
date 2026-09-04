@@ -188,3 +188,12 @@ def test_no_step_summary_write_when_blocking(monkeypatch, tmp_path):
 def test_exit_code_unchanged_on_failure(monkeypatch, blocking):
     failing = dict(_PASSING_IMAGE_ONLY, **{"image-scan": "failure"})
     assert _run_main(monkeypatch, failing, blocking) == 1
+
+
+def test_evaluate_source_has_no_severity_references():
+    """evaluate() takes only job conclusions and two flags — never scanner
+    config. A future change wiring severity into the gate verdict would
+    silently couple export filtering to pass/fail; this keeps that coupling
+    from being introduced unnoticed."""
+    source = MOD_PATH.read_text(encoding="utf-8")
+    assert "severity" not in source.lower()
