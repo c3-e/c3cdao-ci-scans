@@ -1,24 +1,5 @@
-# Hardened-base login: authenticate to Chainguard (cgr.dev) when
-# hardened-base-registry allows it (chainguard|both) AND CGR_PULL_* is set,
-# AND to Iron Bank (registry1.dso.mil) when hardened-base-registry allows it
-# (ironbank|both) AND IRONBANK_* is set — with the default "both", the two
-# sessions can be active at once, so a repo whose images span both registries
-# (e.g. a Chainguard primary with Iron Bank extras in the manifest) builds in
-# a single run. A caller that declares a single tier (chainguard or ironbank)
-# skips the other registry's login attempt entirely — no credential check, no
-# docker login call — so a pilot pinned to exactly one hardened registry never
-# burns retry/backoff time against one it doesn't use. If only Iron Bank is
-# configured (or the tier is ironbank-only), the primary's builder/runtime
-# optionally swap to the ironbank_* image inputs. With no attempted registry
-# authenticated, require_hardened_bases decides: fail (default) or warn and
-# build on the consumer-specified bases.
-#
-# FAILOVER SEMANTICS (must stay identical across every build matrix leg):
-# extras legs intentionally inherit the primary's failover behavior
-# bit-for-bit — they resolve builder_image/runtime_image outputs with the
-# exact same CGR-absent/Iron-Bank-present swap as the primary leg, even
-# though extras carry their own base args via matrix build_args. Do not
-# specialize this action per leg.
+# Extras legs must inherit the primary leg's failover behavior bit-for-bit —
+# never specialize this action per build-matrix leg.
 name: Login to hardened base registries
 description: >-
   Docker-login to Chainguard (cgr.dev) and/or Iron Bank, scoped to the
@@ -108,9 +89,7 @@ runs:
         builder="$BUILDER_IMAGE_IN"
         runtime="$RUNTIME_IMAGE_IN"
         cgr_ok=0; ib_ok=0
-        # Caller-declared tier gates which registry login(s) are even
-        # attempted — an unattempted registry never runs login_retry (no
-        # point risking rate-limit/lockout on one the pilot doesn't use).
+        # Skip login_retry for a registry the caller didn't declare (avoids rate-limit risk).
         attempt_cgr=0; attempt_ib=0
         case "$HARDENED_BASE_REGISTRY" in
           chainguard) attempt_cgr=1 ;;
@@ -134,11 +113,8 @@ runs:
             echo "::error::Iron Bank (${IRONBANK_REGISTRY}) login failed"
           fi
         fi
-        # Primary base failover: only swap the primary's builder/runtime to the
-        # ironbank_* images when Chainguard is absent but Iron Bank is present
-        # (preserves the original single-tier behavior). With both authenticated,
-        # the primary keeps its Chainguard bases and extra images pull their own
-        # Iron Bank bases from the now-logged-in registry.
+        # Swap primary to Iron Bank bases only when Chainguard is absent but Iron Bank
+        # succeeded; with both authenticated, primary keeps Chainguard and extras pull Iron Bank.
         if [ "$cgr_ok" = 0 ] && [ "$ib_ok" = 1 ]; then
           [ -n "$IB_BUILDER_IMAGE" ] && builder="$IB_BUILDER_IMAGE"
           [ -n "$IB_RUNTIME_IMAGE" ] && runtime="$IB_RUNTIME_IMAGE"
