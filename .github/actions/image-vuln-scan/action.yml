@@ -310,7 +310,6 @@ runs:
           echo "::error::Chart.yaml at ${chart_path}/Chart.yaml exists but its .name field is missing or null — cannot derive vex-tracking PILOT"
           exit 1
         fi
-        echo "pilot=$NAME" >> "$GITHUB_OUTPUT"
         echo "registry_ref=ghcr.io/c3-e/vex-tracking/${NAME}:latest" >> "$GITHUB_OUTPUT"
         echo "skip=false" >> "$GITHUB_OUTPUT"
 
