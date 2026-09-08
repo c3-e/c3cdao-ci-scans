@@ -310,7 +310,7 @@ runs:
           echo "::error::Chart.yaml at ${chart_path}/Chart.yaml exists but its .name field is missing or null — cannot derive vex-tracking PILOT"
           exit 1
         fi
-        echo "pilot=$NAME" >> "$GITHUB_OUTPUT"
+        echo "registry_ref=ghcr.io/c3-e/vex-tracking/${NAME}:latest" >> "$GITHUB_OUTPUT"
         echo "skip=false" >> "$GITHUB_OUTPUT"
 
     - name: Set up oras CLI
@@ -333,14 +333,15 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        pilot="${{ steps.pilot.outputs.pilot }}"
-        registry_ref="ghcr.io/c3-e/vex-tracking/${pilot}:latest"
+        registry_ref="${{ steps.pilot.outputs.registry_ref }}"
         prior_doc_dir="${RUNNER_TEMP}/vex-prior"
         mkdir -p "$prior_doc_dir"
 
         set +e
-        # oras >=1.3 blocks any absolute -o path by default; $RUNNER_TEMP is trusted.
-        pull_output="$(oras pull "$registry_ref" -o "$prior_doc_dir" --allow-path-traversal 2>&1)"
+        # No --allow-path-traversal: the push step below always pushes a bare
+        # relative filename (see its own comment), so the artifact's title
+        # annotation is never an absolute/escaping path for -o to follow.
+        pull_output="$(oras pull "$registry_ref" -o "$prior_doc_dir" 2>&1)"
         pull_exit=$?
         set -e
 
@@ -423,8 +424,7 @@ runs:
           exit 0
         fi
 
-        pilot="${{ steps.pilot.outputs.pilot }}"
-        registry_ref="ghcr.io/c3-e/vex-tracking/${pilot}:latest"
+        registry_ref="${{ steps.pilot.outputs.registry_ref }}"
         push_dir="${RUNNER_TEMP}/vex-push"
         mkdir -p "$push_dir"
         cp "$merged_doc" "$push_dir/vex-tracking.json"
