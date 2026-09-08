@@ -1295,6 +1295,7 @@ jobs:
           sbom-artifact-name: sbom-image-${{ matrix.target }}
           trivy-severity: ${{ env.TRIVY_SEVERITY }}
           blocking: ${{ vars.SECURITY_SCAN_BLOCKING }}
+          chart-path: ${{ inputs.chart_path }}
 
       - name: Trivy scan (source SBOM)
         if: ${{ matrix.target == needs.plan.outputs.source_sbom_target }}
