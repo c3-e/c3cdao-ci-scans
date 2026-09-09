@@ -21,6 +21,7 @@ permissions:
   contents: read
   pull-requests: write
   actions: write
+  issues: write  # tracking Issue for Medium/Low findings on schedule-triggered runs
 
 jobs:
   security-scan:  # renaming this job id silently un-gates merges — it is half of the required check context `security-scan / Security Gate`
@@ -28,6 +29,7 @@ jobs:
       contents: read
       pull-requests: write
       actions: write
+      issues: write
     uses: c3-e/c3cdao-ci-scans/.github/workflows/reusable-security-gate.yml@main  # ← pin a full commit SHA (record the release tag as a trailing comment, e.g. # v0.6.0); @main only during pilot migration
     # Explicit mapping, never the inherit form — inherit only works when caller
     # and callee share an org/enterprise; across owners it silently passes
