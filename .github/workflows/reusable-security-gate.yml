@@ -572,13 +572,14 @@ jobs:
     continue-on-error: true
     services:
       sonarqube:
-        # Hardened base (Iron Bank, not public). Forks without the IRONBANK
-        # pull secrets can't pull it; this warn-only job errors without
-        # blocking the gate.
-        image: registry1.dso.mil/ironbank/sonarsource/sonarqube/sonarqube:9.9-community
-        credentials:
-          username: ${{ secrets.IRONBANK_USERNAME }}
-          password: ${{ secrets.IRONBANK_TOKEN }}
+        # Public image, not Iron Bank: this is ephemeral CI-only tooling, never
+        # shipped/deployed, so the fleet's hardened-base posture doesn't apply
+        # to it (confirmed against org docs -- the DSA ConOps's own base-image
+        # pedigree table lists this exact image with "public image is the
+        # fallback"). Was previously registry1.dso.mil/ironbank/..., which
+        # went down fleet-wide (401 Unauthorized) and broke this warn-only job
+        # for every caller, with no compliance reason to prefer Iron Bank here.
+        image: sonarqube:9.9-community
         ports:
           - 9000:9000
         env:
