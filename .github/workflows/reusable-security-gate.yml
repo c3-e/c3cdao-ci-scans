@@ -191,6 +191,39 @@ jobs:
           uv run .ci-scans/scripts/lib/lint_caller.py "$caller" \
             --consumer-root "$GITHUB_WORKSPACE"
 
+      # Optional: unlike the gate caller above (guaranteed to exist — this
+      # job IS that caller's own workflow_call), a publish-staging-chart
+      # caller is opt-in, so this repo's own .github/workflows/ is searched
+      # for one instead of trusting a fixed filename. publish-staging-chart.yml
+      # itself only runs post-merge (pull_request/closed), so its
+      # chart-shape/routes-contract check never blocked a PR — this step
+      # runs lint_caller_publish.py's same rule set here, pre-merge, so a
+      # caller-shape bug or a chart with no non-empty routes: (the warn-only
+      # publish-chart-routes-missing rule) surfaces on the PR instead of at
+      # merge time. First match wins, sorted glob order, mirroring every
+      # other first-match resolver in this fleet.
+      - name: Lint publish-staging-chart caller, if present
+        run: |
+          set -uo pipefail
+          publish_caller=""
+          if [ -d .github/workflows ]; then
+            for f in .github/workflows/*.yml .github/workflows/*.yaml; do
+              [ -f "$f" ] || continue
+              matches="$(yq '[.. | select(has("uses")) | .uses | select(test("publish-staging-chart\.yml@"))] | length' "$f" 2>/dev/null)"
+              if [ "${matches:-0}" -gt 0 ] 2>/dev/null; then
+                publish_caller="$f"
+                break
+              fi
+            done
+          fi
+          if [ -z "$publish_caller" ]; then
+            echo "plan: no publish-staging-chart caller found under .github/workflows/; skipping publish-caller lint"
+            exit 0
+          fi
+          echo "::notice::plan: linting publish-staging-chart caller '$publish_caller'"
+          uv run .ci-scans/scripts/lib/lint_caller_publish.py "$publish_caller" \
+            --consumer-root "$GITHUB_WORKSPACE"
+
       # Each build leg re-prints its target and diffs against this artifact.
       - name: Derive bake plan + annotated BOM
         env:
