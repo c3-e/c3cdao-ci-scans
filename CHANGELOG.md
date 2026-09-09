@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.9.0](https://github.com/c3-e/c3cdao-ci-scans/compare/v0.8.0...v0.9.0) (2026-09-09)
+
+
+### Features
+
+* **gate:** support evaluate as a standing ruleset enforcement state ([0a31e96](https://github.com/c3-e/c3cdao-ci-scans/commit/0a31e96e815a3550b5b7dfede45705d1d0b45c65))
+* wire lint_caller_publish.py into the every-PR security gate ([a498607](https://github.com/c3-e/c3cdao-ci-scans/commit/a4986075c151f9fd0ea1383266b31e5843f1aed1))
+* wire lint_caller_publish.py into the every-PR security gate ([00f3e10](https://github.com/c3-e/c3cdao-ci-scans/commit/00f3e10d6e5a12aeae07e3ee29ea2ad864d39c29))
+
+
+### Bug Fixes
+
+* **gate:** cluster-smoke install failures always block, never advisory ([4821c0e](https://github.com/c3-e/c3cdao-ci-scans/commit/4821c0e4dd0f9799c5bc55e2fb3627cbdeca286d))
+* **gate:** make cluster-smoke install failures always block, never advisory ([90f154f](https://github.com/c3-e/c3cdao-ci-scans/commit/90f154f9edbf48a0647c09d2ef5fec7b2fee3a43))
+* **gate:** swap sast-sonarqube's service image off Iron Bank ([1ce5a0d](https://github.com/c3-e/c3cdao-ci-scans/commit/1ce5a0dab6bf88696fa7fa6d4559f20637890baa))
+* **gate:** swap sast-sonarqube's service image off Iron Bank ([982238e](https://github.com/c3-e/c3cdao-ci-scans/commit/982238eaa34c49e5afe057d0c0a49ae493f68b28))
+
 ## [0.8.0](https://github.com/c3-e/c3cdao-ci-scans/compare/v0.7.4...v0.8.0) (2026-09-09)
 
 
