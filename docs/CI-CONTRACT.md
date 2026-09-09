@@ -188,6 +188,7 @@ else blocks the run before any build starts.
 | [`chart-undeclared`](#rule-chart-undeclared) | block | `image_only` is true but a Helm chart exists anywhere in the repo |
 | [`chart-resolve`](#rule-chart-resolve) | block | `helm template` fails on the declared chart (e.g. unresolved dependency) |
 | [`chart-readiness`](#rule-chart-readiness) | block | a rendered workload container lacks readiness |
+| [`chart-networkpolicy-missing`](#rule-chart-networkpolicy-missing) | warn | a rendered workload has no matching NetworkPolicy |
 | [`smoke-target`](#rule-smoke-target) | block | no single Service-backed HTTP readiness target (exempt when the chart carries a `helm.sh/hook: test` resource; see the rule's own note below) |
 | [`ship-set`](#rule-ship-set) | block | a rendered image is neither built nor a declared dependency |
 | [`built-unscheduled`](#rule-built-unscheduled) | warn | a built tag is never scheduled by the chart |
@@ -313,6 +314,20 @@ time.
 Every container of every rendered `Deployment`/`StatefulSet`/`DaemonSet`
 declares a `readinessProbe`, sidecars too. Remediation: add the probe to
 the named container.
+
+### Rule: chart-networkpolicy-missing
+
+**Warn only** — this is a new, incomplete convention; making it blocking
+today would fail-closed the entire fleet's next gate run (at least one
+real consumer chart currently ships no `NetworkPolicy` template at all).
+Every rendered deployable workload (`Deployment`/`StatefulSet`/`DaemonSet`,
+deduped once per workload — NetworkPolicy is pod-selector-scoped, not
+container-scoped) must be selected by at least one rendered
+`NetworkPolicy`'s `spec.podSelector.matchLabels` against the workload's
+pod template labels. Remediation: add a `NetworkPolicy` template whose
+`podSelector.matchLabels` matches the workload's pod labels. Follow-up:
+promote to block once the fleet has closed this gap (tracked separately;
+not decided by this rule's introduction).
 
 ### Rule: smoke-target
 

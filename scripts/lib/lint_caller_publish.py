@@ -28,6 +28,7 @@ from typing import Any
 
 import yaml
 from lint_rules import Verdict, load_gha_workflow, verdict
+from lint_rules.chart import render_chart
 
 PUBLISH_WORKFLOW_BASENAME = "publish-staging-chart.yml"
 ONBOARDING_DOC = "docs/PUBLISH-STAGING-CHART.md"
@@ -196,10 +197,59 @@ def chart_routes_missing(values_path: Path) -> list[Verdict]:
     ]
 
 
+def chart_routes_unrendered(chart_path: Path, values_path: Path) -> list[Verdict]:
+    """Warn-level sibling of `chart_routes_missing`: a chart can declare a
+    non-empty `routes:` in `values.yaml` yet ship no template that renders
+    an `HTTPRoute`, leaving it unreachable via the umbrella's real Gateway
+    routing despite passing the routes-declared check.
+
+    Warn, not block, for the same reason `chart_routes_missing` is warn:
+    this is a new/incomplete convention, not yet enforced fleet-wide.
+    """
+    if not values_path.is_file():
+        return []
+    try:
+        values = yaml.safe_load(values_path.read_text()) or {}
+    except yaml.YAMLError:
+        return []
+    if not isinstance(values, dict):
+        values = {}
+    top = values.get("routes")
+    engine = values.get("fullstack-template")
+    nested = engine.get("routes") if isinstance(engine, dict) else None
+    declares_routes = (isinstance(top, list) and top) or (
+        isinstance(nested, list) and nested
+    )
+    if not declares_routes:
+        return []
+    if not (chart_path / "Chart.yaml").is_file():
+        # Chart doesn't fully exist yet (e.g. brand-new pilot mid-onboarding)
+        # -- chart-missing/chart-resolve territory, not this rule's job.
+        return []
+    rendered = render_chart(chart_path)
+    if any(
+        isinstance(doc, dict) and doc.get("kind") == "HTTPRoute" for doc in rendered
+    ):
+        return []
+    return [
+        _v(
+            "publish-chart-routes-unrendered",
+            f"'{values_path}' declares a non-empty 'routes:' key but "
+            f"'{chart_path}' renders no HTTPRoute template; the chart is "
+            "unreachable via the umbrella's real Gateway routing despite "
+            "passing the routes-declared check",
+            level="warn",
+        )
+    ]
+
+
 def convention_verdicts(consumer_root: Path, chart_path: Path | None) -> list[Verdict]:
     if chart_path is None:
         return []
-    return chart_routes_missing(chart_path / "values.yaml")
+    values_path = chart_path / "values.yaml"
+    return chart_routes_missing(values_path) + chart_routes_unrendered(
+        chart_path, values_path
+    )
 
 
 def main(argv: list[str]) -> int:
