@@ -1,58 +1,7 @@
 name: Selftest — Publish Images (quarantine round trip)
 
-# WHY THIS FILE EXISTS (dry-run prerequisite for the real publish job):
-#
-# publish-staging-chart.yml's publish-images-deferred job only has a
-# workflow_call trigger, and its own `if:` condition hard-requires
-# `github.event.pull_request.merged == true` (plus `inputs.publish_images ==
-# true` and a base-branch check). A workflow_dispatch event can NEVER
-# satisfy that condition — `github.event.pull_request` simply does not
-# exist under workflow_dispatch, there is no pull_request event context to
-# read `.merged` off of. There is no supported way to fake or force that
-# condition from a manual dispatch without either:
-#
-#   (a) editing the real job's own `if:` to special-case a dry-run mode —
-#       rejected: that would permanently weaken the real job's fail-closed
-#       trigger guard just to make manual testing more convenient, exactly
-#       backwards from this repo's own fail-closed posture ("never a green
-#       run with a missing artifact," extended here to "never a loosened
-#       gate for convenience"); or
-#   (b) synthesizing a fake merged-PR event context — GitHub Actions does
-#       not support this for workflow_dispatch, and it would be fragile/
-#       unsupported even if some hack could approximate it.
-#
-# So this is a SEPARATE, workflow_dispatch-only workflow that exercises the
-# FULL round trip of the digest-verified quarantine publish mechanism (see
-# docs/PUBLISH-STAGING-CHART.md "Digest-verified quarantine publish"):
-#
-#   1. quarantine-push: builds the fixture image (tests/fixtures/hello-image/
-#      Dockerfile) and tags+pushes it to images-quarantine, the identical
-#      "docker tag <tag> $QUARANTINE_REF && docker push $QUARANTINE_REF"
-#      mechanic reusable-security-gate.yml's build job performs when
-#      inputs.publish_images is true.
-#   2. retag: reconstructs the SAME quarantine ref from the SAME formula
-#      publish-images-deferred uses, runs `docker buildx imagetools
-#      inspect` against it (the identical fail-closed existence check —
-#      exercising the missing-image failure path is out of scope for a
-#      green selftest, but the success path here IS the real code, not a
-#      simulation of it), then `docker buildx imagetools create --tag`
-#      to retag it into images-staging by digest — no rebuild.
-#   3. verify: independently inspects the final images-staging digest and
-#      asserts it is byte-for-byte identical to the quarantine digest
-#      captured in step 1 — the actual claim this whole mechanism makes.
-#
-# The destination tags are deliberately throwaway, unmistakably-selftest
-# paths (images-quarantine/selftest/hello-image:... and
-# images-staging/selftest/hello-image:... keyed by this run's run_id) so
-# they can never be confused with, or collide with, a real pilot's
-# quarantine or staging artifact.
-#
-# Note: the real jobs' hardened-registry-login steps (require_hardened_bases)
-# are intentionally NOT exercised here — the fixture Dockerfile is FROM
-# scratch (no hardened base to pull), so there is nothing for that step to
-# prove that isn't already proven by the identical docker/login-action-style
-# mechanics already exercised for the GHCR login below (same credential-pair
-# pattern, just a different registry endpoint).
+# publish-images-deferred only triggers on a real merged PR, which workflow_dispatch
+# can never satisfy — this exercises the same quarantine-push/retag/verify round trip manually.
 
 on:
   workflow_dispatch:
@@ -82,11 +31,8 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Local build + load: this selftest builds the fixture directly with
-      # docker buildx (not docker/bake-action) since the round trip under
-      # test starts AFTER a local tag exists — how that local tag was
-      # produced (bake vs. plain buildx build) is orthogonal to the
-      # quarantine-push/retag/verify mechanics this workflow proves.
+      # Plain buildx build, not bake — the round trip under test starts after a local
+      # tag exists, so how that tag was produced is orthogonal to what this proves.
       - name: Build fixture image (local, GREETING build arg exercises the same jq passthrough shape)
         run: |
           set -euo pipefail
@@ -97,9 +43,7 @@ jobs:
             -f tests/fixtures/hello-image/Dockerfile \
             tests/fixtures/hello-image
 
-      # Identical mechanic to reusable-security-gate.yml build job's own
-      # "Push scan-verified image to quarantine" step: tag the locally-built
-      # image into the quarantine ref, push it, then capture its digest.
+      # Mirrors reusable-security-gate.yml's own "Push scan-verified image to quarantine" step.
       - name: Tag + push to quarantine, capture digest
         id: push
         run: |
@@ -144,9 +88,8 @@ jobs:
           DIGEST="$(docker buildx imagetools inspect "$QUARANTINE_REF" --format '{{json .Manifest.Digest}}' | tr -d '"')"
           echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
 
-      # Identical retag mechanic to publish-images-deferred's own "Retag
-      # quarantine image into images-staging" step — registry-side
-      # manifest/blob copy, no rebuild.
+      # Mirrors publish-images-deferred's own retag step — registry-side manifest/blob
+      # copy, no rebuild.
       - name: Retag into images-staging by digest
         id: retag
         env:
@@ -173,21 +116,8 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # The actual claim under test: the image landing in images-staging is
-      # byte-for-byte the SAME manifest that was quarantined and scanned —
-      # not a rebuild, not a re-derivation.
-      #
-      # `docker buildx imagetools create --tag DEST SRC@DIGEST` does NOT
-      # push DIGEST itself as DEST's top-level manifest — confirmed live on
-      # this selftest's own first run (see the run this comment's PR
-      # cites): for a single-platform source it wraps that source manifest
-      # in a NEW single-entry image index (manifest list) and tags THAT.
-      # The wrapped child manifest is copied unmodified and keeps its
-      # original digest — nothing is rebuilt or re-derived — but the
-      # OUTER index has its own, different digest (the index's own bytes
-      # are new). So the correct equality check is against the child
-      # manifest digest recorded inside DEST's index
-      # (`.manifests[].digest`), not DEST's own top-level digest.
+      # `imagetools create` wraps the source in a NEW image index, so the equality check
+      # must use the child digest inside DEST's index (`.manifests[].digest`), not DEST's own.
       - name: Assert digests match
         env:
           QUARANTINE_DIGEST: ${{ needs.quarantine-push.outputs.quarantine_digest }}

@@ -1,12 +1,5 @@
-# Security Gate caller — copied from c3cdao-ci-scans; you own this file.
-# Edit the `with:` values below per each line's provenance comment for your repo.
-# Keep the structure: explicit secrets map, no concurrency:, job id `security-scan`.
-#
-# The gate derives everything else (v0.6): build targets, tags, and args come
-# from your Compose file via `docker buildx bake --print`; the deployable
-# surface comes from your Helm chart. No contract makefile, no consumer
-# scripts — nonconforming shapes are blocked in the plan job by named
-# fail-closed lint rules. See docs/CI-CONTRACT.md.
+# Security Gate caller — copied from c3cdao-ci-scans; you own this file. Edit the
+# `with:` values below; build targets/tags/args derive from your Compose file (docs/CI-CONTRACT.md).
 name: Security Scan
 
 on:
@@ -23,27 +16,28 @@ permissions:
   actions: write
 
 jobs:
-  security-scan:  # renaming this job id silently un-gates merges — it is half of the required check context `security-scan / Security Gate`
+  security-scan:  # renaming this job id un-gates merges (half of the required check context)
     permissions:
       contents: read
       pull-requests: write
       actions: write
-    uses: c3-e/c3cdao-ci-scans/.github/workflows/reusable-security-gate.yml@main  # ← pin a full commit SHA (record the release tag as a trailing comment, e.g. # v0.6.0); @main only during pilot migration
-    # Explicit mapping, never the inherit form — inherit only works when caller
-    # and callee share an org/enterprise; across owners it silently passes
-    # nothing. Explicit values evaluate in the caller's context and always work.
+    uses: c3-e/c3cdao-ci-scans/.github/workflows/reusable-security-gate.yml@main  # pin a full commit SHA (trailing comment = release tag, e.g. v0.6.0); @main is pilot-only
+    # Explicit secrets mapping, not `secrets: inherit` — inherit silently passes nothing
+    # across org/enterprise boundaries; explicit values always evaluate correctly.
     secrets:
       CGR_PULL_TOKEN: ${{ secrets.CGR_PULL_TOKEN }}
       CGR_PULL_USERNAME: ${{ secrets.CGR_PULL_USERNAME }}
       IRONBANK_TOKEN: ${{ secrets.IRONBANK_TOKEN }}
       IRONBANK_USERNAME: ${{ secrets.IRONBANK_USERNAME }}
     with:
-      compose_file: docker-compose.yml  # canonical Compose file the gate derives build facts from; every non-local build service becomes a build+scan leg
-      chart_path: chart  # your deployable Helm chart directory; helm-check lints/templates it and cluster-smoke installs it
-      values_local: chart/values-local.yaml  # chart values for local/CI installs (locally-built image tags, pullPolicy: Never)
+      compose_file: docker-compose.yml  # gate derives its build+scan legs from this Compose file's non-local services
+      chart_path: chart  # helm-check lints/templates this chart; cluster-smoke installs it
+      values_local: chart/values-local.yaml  # CI-only values: locally-built image tags, pullPolicy: Never
       release: app  # Helm release name for template/install
       namespace: app-ci  # Kubernetes namespace cluster-smoke installs into
-      smoke_resources: ""  # CSV of gate-owned smoke catalog module ids provisioned before helm install (e.g. postgres-pgvector,gateway-crds); "" = none
-      image_only: false  # true: skip helm-check + cluster-smoke (image build/scan only); keep false for deployable apps
-      hardened_base_registry: both  # chainguard | ironbank | both; declare the single tier your Dockerfile pins to (both is safe default, matches prior behavior)
-      publish_images: false  # true: push each scan-verified target to the images-quarantine namespace for a later publish-staging-chart.yml digest retag; see docs/PUBLISH-STAGING-CHART.md
+      smoke_resources: ""  # CSV of smoke catalog ids provisioned pre-install (e.g. postgres-pgvector); "" = none
+      image_only: false  # true: image build/scan only (skips helm-check + cluster-smoke)
+      hardened_base_registry: both  # chainguard | ironbank | both — declare the tier your Dockerfile pins to
+      # true: push each scan-verified target to images-quarantine for a later
+      # publish-staging-chart.yml digest retag (see docs/PUBLISH-STAGING-CHART.md).
+      publish_images: false
