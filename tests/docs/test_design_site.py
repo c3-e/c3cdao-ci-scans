@@ -109,6 +109,17 @@ def test_design_site_avoids_marketing_and_ai_prose_patterns() -> None:
     assert re.search(r"\bnot\b.{0,80}\bbut\b", text, re.IGNORECASE) is None
 
 
+def test_design_site_carries_inline_prose_guard_comment() -> None:
+    """The HTML comment near the top is the only warning a human editing
+    this file by hand (no skill, no test run) ever sees before shipping
+    prose that regresses this test. Keep it present."""
+    text = INDEX.read_text()
+    head = text[: text.index("<html")]
+    assert "<!--" in head and "-->" in head
+    assert "em dash" in head
+    assert "test_design_site.py" in head
+
+
 def test_published_docs_do_not_name_pilot_repositories() -> None:
     forbidden = (
         "petegpt",
