@@ -1,11 +1,6 @@
-# Forced-timeout smoke catalog module fixture.
-#
-# NOT a catalog module: this file is copied into the catalog only on the
-# throwaway spike branch (as timeout_module.yaml + a SMOKE_CATALOG entry)
-# to drive the AC-5 failure-path run — cluster-smoke must fail naming
-# `timeout-module` BEFORE any helm install. Unsatisfiable readiness by
-# design: the pod runs (PSS-clean, schedulable) but its probe checks a
-# file that never exists, so the workflow's Ready gate times out.
+# Deliberately unsatisfiable readiness: the pod runs (PSS-clean,
+# schedulable) but its probe checks a file that never exists, forcing
+# cluster-smoke to fail naming `timeout-module` before any helm install.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
