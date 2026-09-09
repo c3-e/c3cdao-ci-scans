@@ -1,6 +1,14 @@
 # Single required PR status check: derives build facts from the consumer's
-# Compose file and runs every build/scan/smoke job itself.
-# Full job structure and blocking policy: docs/CI-CONTRACT.md.
+# Compose file and runs every build/scan/smoke job itself. Job order/fail-fast:
+# docs/RUNBOOK.md Appendix E. Consumer contract (inputs, lint rules):
+# docs/CI-CONTRACT.md.
+#
+# Blocking: plan, build, secrets-scan always block. helm-check and cluster-smoke
+# block unless image_only. cluster-smoke and image-scan hard-fail only when the
+# SECURITY_SCAN_BLOCKING repo variable is true, but a skipped/cancelled/errored
+# run of either still fails the gate regardless — a broken build can never sign
+# off green. sast-semgrep and sast-sonarqube are continue-on-error (warn-only)
+# until the harden baseline lands.
 
 name: Reusable Security Gate
 
@@ -234,10 +242,13 @@ jobs:
     name: build (${{ matrix.target }})
     runs-on: ubuntu-latest
     needs: [plan]
-    # No job-level permissions: block here — coexisting with the
-    # workflow-level block above produces startup_failure with zero jobs
-    # allocated and no error message. build needs packages: write (quarantine
-    # push) from that single workflow-level grant.
+    # No job-level permissions: block here — confirmed via bisection against a
+    # real dispatch run, coexisting with the workflow-level block above produces
+    # startup_failure with zero jobs allocated and no error message (the same
+    # GitHub Actions behavior docs/PUBLISH-STAGING-CHART.md's "Caller gotcha"
+    # documents for callers — it binds this file too, not just caller jobs).
+    # build needs packages: write (quarantine push) from that single
+    # workflow-level grant.
     strategy:
       fail-fast: false
       matrix:
