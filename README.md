@@ -84,7 +84,7 @@ squash-merged commit is picked up automatically.
 - [docs/RUNBOOK.md](docs/RUNBOOK.md): full onboarding, ruleset provenance, enforcement
   model, lint remediation flow, reading the BOM, registry login matrix, smoke
   catalog, and maintenance.
-- [docs/INPUTS.md](docs/INPUTS.md): the seven `with:` fields + four secrets, and the
+- [docs/INPUTS.md](docs/INPUTS.md): the nine `with:` fields + four secrets, and the
   removed-inputs migration table.
 - [docs/CI-CONTRACT.md](docs/CI-CONTRACT.md): the derived consumer contract: Compose,
   Dockerfile, and chart conventions, plus the full lint rule table.

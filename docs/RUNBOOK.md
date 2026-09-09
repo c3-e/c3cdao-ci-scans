@@ -56,7 +56,13 @@ blocks when the bullet is false.
 - The chart renders with your local values; every workload container has
   a `readinessProbe` (`chart-readiness`); exactly one container exposes an
   HTTP readiness target through a Service whose `targetPort` matches the
-  probe port (`smoke-target`); every scheduled image is built or a
+  probe port (`smoke-target`) — **or** the chart carries a
+  `helm.sh/hook: test` resource, in which case cluster-smoke health-checks
+  it via a real `helm test` run instead of deriving and curling a probe
+  target (temporary fleet-migration state: see `CI-CONTRACT.md`'s
+  `smoke-target` rule for the full hook-exemption detail, and prefer
+  adding a hook to your chart over relying on the derived-probe fallback
+  for any new onboarding); every scheduled image is built or a
   declared dependency (`ship-set`; unscheduled built tags warn via
   `built-unscheduled`).
 - Databases follow the decoupled standard (ADR-08): the app reads

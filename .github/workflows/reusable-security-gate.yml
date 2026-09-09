@@ -145,7 +145,7 @@ env:
   GATE_RUNTIME_IMAGE: cgr.dev/chainguard/python:latest
   GATE_IRONBANK_REGISTRY: registry1.dso.mil
   GATE_REQUIRE_HARDENED_BASES: 'true'
-  TRIVY_SEVERITY: HIGH,CRITICAL
+  TRIVY_SEVERITY: "CRITICAL,HIGH,MEDIUM,LOW,UNKNOWN"
 
 jobs:
   # --------------------------------------------------------------------------

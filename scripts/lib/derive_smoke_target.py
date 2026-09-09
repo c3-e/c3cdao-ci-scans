@@ -4,18 +4,11 @@
 # ///
 """Derive the single Service-backed HTTP smoke target from a rendered chart.
 
-cluster-smoke's post-deploy probe needs one unambiguous target: the
-container with an httpGet readinessProbe whose probe port a Service
-routes to (the same semantics the `smoke-target` lint rule enforces —
-both consume lint_rules.chart.smoke_candidates, so a chart that passes
-lint always derives, and a chart that cannot derive was already blocked
-in the plan job).
+Consumes the same `lint_rules.chart.smoke_candidates` as the
+`smoke-target` lint rule, so a chart that passes lint always derives here.
 
 Output (stdout, single-line JSON): {"workload", "container", "service",
-"port", "path"} — the Service name/port to port-forward and the probe
-path to curl. Zero or multiple candidates exit non-zero naming every
-candidate (AC-2). `--image-only` skips derivation: image-only consumers
-have no rendered chart claim (prints a skip marker, exits 0).
+"port", "path"}. Zero or multiple candidates exit non-zero naming them.
 """
 
 from __future__ import annotations
@@ -63,15 +56,7 @@ def main(argv: list[str]) -> int:
     parser.add_argument(
         "rendered", type=Path, help="multi-doc YAML rendered by helm template"
     )
-    parser.add_argument(
-        "--image-only",
-        action="store_true",
-        help="image_only consumer: no chart claim, skip derivation",
-    )
     args = parser.parse_args(argv)
-    if args.image_only:
-        print(json.dumps({"skipped": "image_only"}))
-        return 0
     try:
         docs = [
             d

@@ -11,10 +11,10 @@ built this run. It exists as its own workflow rather than a
 pilots' previously-published artifacts together, not a single pilot's
 from-source build.
 
-For the umbrella (`c3-e/c3cdao-apps`) consumer-side wiring, including the
+For an umbrella repo's consumer-side wiring, including the
 `composed-smoke-caller.yml` caller file, how the `pilots:` JSON input
-derives from `Chart.yaml`, and the full onboarding sequence, see
-`PILOT-ONBOARDING-RUNBOOK.md` in that repo.
+derives from `Chart.yaml`, and the full onboarding sequence, see that
+umbrella's own onboarding runbook.
 
 ## Trigger
 
