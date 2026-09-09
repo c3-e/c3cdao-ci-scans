@@ -136,8 +136,11 @@ Compose/Dockerfile/chart convention pipeline runs (chart rules need
 [appendix C](#c-lint-rule-ids-and-remediation).
 
 Your caller must also grant the permissions the reusable workflow needs,
-`pull-requests: write`, `actions: write` (the caller is the ceiling),
-and must not set `concurrency:` (the reusable workflow owns the group).
+`pull-requests: write`, `actions: write`, `issues: write` (the tracking
+Issue schedule-triggered runs post Medium/Low findings to; the caller is
+the ceiling — a reusable workflow can only downgrade, never elevate,
+whatever permission the caller itself grants), and must not set
+`concurrency:` (the reusable workflow owns the group).
 
 **You should see:** `OK: <caller>: caller lint clean`.
 
@@ -661,37 +664,47 @@ convenience-only: not a required check, excluded from `security-gate`'s
 block the gate, and it changes nothing about the per-service bundles
 themselves.
 
-**PR comment.** On `pull_request`-triggered runs only (never
-`merge_group`/`schedule`/`workflow_dispatch`), `export-bundle` also
-posts a comment on the triggering PR summarizing, per built service, the
-Trivy and Grype High+Critical finding counts (read straight from the
-bundle's `trivy-image.json`/`grype-image.json`) and the VEX source
-(`consumer` / `empty-default`, from `metadata.json`), plus a link to the
-run page (`.../actions/runs/<run_id>` — the Artifacts list, including the
-consolidated bundle, lives there; there is no standalone
-authenticated-free download link for an individual artifact) and the
-consolidated artifact's name with a copy-paste
-`gh run download <run_id> -n security-export-full-<short-sha>` line. A
-hidden `<!-- security-export-summary -->` marker lets the job find its
-own prior comment on the same PR and `PATCH` it instead of posting a new
-one on every push. This is commentary only: both the comment-body and
-comment-posting steps are `continue-on-error: true`, gated on
-`github.event_name == 'pull_request'`, and live in the same non-blocking
-`export-bundle` job described above — a posting failure (e.g. a
-permissions edge case) can never affect `Security Gate`.
+**PR comment / tracking Issue.** The shared summary-plus-disposition body
+(next paragraph) is built once per run and posted through one of two
+channels, resolved by the plan job's single `needs.plan.outputs.output_channel`
+(one event-context step, not a `github.event_name` check per gate) instead
+of a per-step check. On `pull_request` runs (`output_channel: pr_comment`)
+it's posted/updated as a comment on the triggering PR, summarizing per
+built service the Trivy and Grype High+Critical finding counts (read
+straight from the bundle's `trivy-image.json`/`grype-image.json`) and the
+VEX source (`consumer` / `empty-default`, from `metadata.json`), plus a
+link to the run page and the consolidated artifact's `gh run download`
+line; a hidden `<!-- security-export-summary -->` marker lets the job
+find its own prior comment and `PATCH` it instead of posting a new one on
+every push — `continue-on-error: true`, so a posting failure (e.g. a
+permissions edge case) can never affect `Security Gate`. On `schedule`
+runs (`output_channel: issue`) the same body is instead posted/updated as
+a persistent tracking Issue: a hidden `<!-- security-export-issue -->`
+marker drives the same find-or-update pattern, paginated and excluding
+PRs from the issues-API search; unlike the PR-comment path this step is
+`continue-on-error: false` — Medium/Low findings would otherwise have no
+durable home, so a failure here surfaces as a red run instead of
+silently losing the tracking record. `merge_group` and `workflow_dispatch`
+runs (`output_channel: summary_only`) skip both channels entirely. All of
+this lives in the same non-blocking `export-bundle` job described above.
 
-**Pending-VEX-disposition report.** Appended to the same PR comment.
-Read-only enumeration (`scripts/lib/pending_disposition_report.py`):
-diffs each service's `trivy-image.json`/`grype-image.json` against that
-service's own `vex-applied.openvex.json` (any statement covering a CVE
-excludes it, regardless of status) and splits what's left by the
-scanners' own fix metadata (Trivy `FixedVersion`, Grype `fix.state`)
-into two tables — **remediate** (a fix already exists; bump the
-dependency, don't disposition it) and **VEX-disposition candidates**
-(no fix available; the only findings worth a human `vexctl add`). The
-report never writes anything under `.openvex/` and never authors a
-statement — it only reads bundle JSON already produced by the scan and
-renders markdown. Same non-blocking posture as the rest of
-`export-bundle`: `continue-on-error: true`, `pull_request`-gated only,
-outside `security-gate`'s `needs:`.
+**Pending-VEX-disposition report.** Feeds the shared body above (both
+channels, not just the PR comment). Read-only enumeration
+(`scripts/lib/pending_disposition_report.py`): diffs each service's
+`trivy-image.json`/`grype-image.json` against that service's own
+`vex-applied.openvex.json` (any statement covering a CVE excludes it,
+regardless of status). High/Critical findings split by the scanners' own
+fix metadata (Trivy `FixedVersion`, Grype `fix.state`) into two tables —
+**remediate** (a fix already exists; bump the dependency, don't
+disposition it) and **VEX-disposition candidates** (no fix available;
+the only findings worth a human `vexctl add`). Medium/Low findings get a
+third, **Actively Managed** table instead, with each CVE's age (from
+`vex-tracking.json`'s `first_seen`) and SLA status; any finding past the
+90-day SLA prepends a breach banner to the shared body. The report never
+writes anything under `.openvex/` and never authors a statement — it
+only reads bundle JSON and `vex-tracking.json` already produced
+upstream, and renders markdown. `continue-on-error: true`; gated on
+`output_channel` in (`pr_comment`, `issue`) — same as the body-builder
+above, so it also runs (and its content also lands) on `schedule` runs
+now, not `pull_request`-only — and outside `security-gate`'s `needs:`.
 
