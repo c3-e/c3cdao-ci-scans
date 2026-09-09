@@ -23,6 +23,7 @@ from lint_caller import (  # noqa: E402
     build_input_explicit,
     built_unscheduled,
     chart_missing,
+    chart_networkpolicy,
     chart_readiness,
     chart_resolve,
     chart_undeclared,
@@ -525,6 +526,49 @@ def test_chart_readiness_passes_and_ignores_non_workloads():
         deployment("web", [http_container("web"), exec_container("worker")]),
     ]
     assert chart_readiness(rendered) == []
+
+
+# --- chart-networkpolicy-missing (warn) -----------------------------------------
+
+
+def network_policy(name: str, match_labels: dict) -> dict:
+    return {
+        "apiVersion": "networking.k8s.io/v1",
+        "kind": "NetworkPolicy",
+        "metadata": {"name": name},
+        "spec": {"podSelector": {"matchLabels": match_labels}},
+    }
+
+
+def test_chart_networkpolicy_passes_with_matching_policy():
+    rendered = [
+        deployment("web", [http_container("web")]),
+        network_policy("web-netpol", {"app": "web"}),
+    ]
+    assert chart_networkpolicy(rendered) == []
+
+
+def test_chart_networkpolicy_flags_workload_with_no_policy_at_all():
+    rendered = [deployment("web", [http_container("web")])]
+    verdicts = chart_networkpolicy(rendered)
+    assert len(verdicts) == 1
+    v = verdicts[0]
+    assert v["rule_id"] == "chart-networkpolicy-missing"
+    assert v["level"] == "warn"
+    assert "web" in v["message"]
+
+
+def test_chart_networkpolicy_flags_workload_when_only_policy_selector_mismatches():
+    rendered = [
+        deployment("web", [http_container("web")]),
+        network_policy("other-netpol", {"app": "other"}),
+    ]
+    verdicts = chart_networkpolicy(rendered)
+    assert len(verdicts) == 1
+    v = verdicts[0]
+    assert v["rule_id"] == "chart-networkpolicy-missing"
+    assert v["level"] == "warn"
+    assert "web" in v["message"]
 
 
 def test_smoke_target():

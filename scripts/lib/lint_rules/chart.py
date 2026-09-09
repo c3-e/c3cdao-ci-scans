@@ -1,9 +1,10 @@
 """Rendered-chart convention rules and the smoke-resource catalog rule.
 
-Rule ids here: chart-readiness, smoke-target, ship-set, built-unscheduled
-(warn only), smoke-resource-unknown. Chart rules are pure functions over
-parsed rendered documents; `render_chart` owns the helm template
-invocation. Non-image_only paths only.
+Rule ids here: chart-readiness, chart-networkpolicy-missing (warn only),
+smoke-target, ship-set, built-unscheduled (warn only),
+smoke-resource-unknown. Chart rules are pure functions over parsed
+rendered documents; `render_chart` owns the helm template invocation.
+Non-image_only paths only.
 """
 
 from __future__ import annotations
@@ -96,6 +97,51 @@ def _service_route(
         if port.get("targetPort", port.get("port")) == probe_port:
             return port
     return None
+
+
+def _selector_matches(selector: dict[str, Any], labels: dict[str, Any]) -> bool:
+    """True if every selector key:value is present in labels (subset match,
+    same semantics as `_service_route`'s Service-selector check)."""
+    return bool(selector) and all(labels.get(k) == v for k, v in selector.items())
+
+
+def chart_networkpolicy(rendered: list[dict[str, Any]]) -> list[Verdict]:
+    """Warn per deployable workload with no rendered NetworkPolicy whose
+    `spec.podSelector.matchLabels` selects its pod template labels.
+
+    Deduped by workload (not container): NetworkPolicy is pod-selector
+    scoped, so every container of a workload shares the same verdict.
+    Warn only: this is a new/incomplete convention, not enforced fleet-wide
+    yet (see the rule's own doc note on rollout order).
+    """
+    policies = [
+        d for d in rendered if isinstance(d, dict) and d.get("kind") == "NetworkPolicy"
+    ]
+    seen: set[int] = set()
+    verdicts = []
+    for workload, _, _ in _workload_containers(rendered):
+        if id(workload) in seen:
+            continue
+        seen.add(id(workload))
+        labels = _pod_labels(workload)
+        selectors = [
+            (policy.get("spec") or {}).get("podSelector") or {} for policy in policies
+        ]
+        matched = any(
+            _selector_matches(selector.get("matchLabels") or {}, labels)
+            for selector in selectors
+        )
+        if not matched:
+            verdicts.append(
+                verdict(
+                    "chart-networkpolicy-missing",
+                    f"{workload['kind']} '{_name(workload)}' has no rendered "
+                    "NetworkPolicy whose podSelector.matchLabels selects its "
+                    "pod template labels",
+                    level="warn",
+                )
+            )
+    return verdicts
 
 
 def smoke_candidates(

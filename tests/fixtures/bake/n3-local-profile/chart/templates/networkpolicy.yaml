@@ -1,0 +1,12 @@
+# Keeps this fixture fully conforming under chart-networkpolicy-missing
+# (warn-only): every container in the Deployment shares this pod's
+# labels, so one NetworkPolicy selecting them covers the whole workload.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: bake-spike-n3
+spec:
+  podSelector:
+    matchLabels:
+      app: bake-spike-n3
+  policyTypes: ["Ingress", "Egress"]

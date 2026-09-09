@@ -17,8 +17,9 @@ Rule ids: compose-missing, compose-no-builds, matrix-cap, compose-image-tag,
 compose-healthcheck, dependency-shape, build-input-explicit,
 build-context-excludes, compose-platform, bake-resolve,
 chart-missing, chart-undeclared, chart-resolve, chart-readiness,
-smoke-target, ship-set, smoke-resource-unknown, built-unscheduled,
-suppression-format, gate-job-id.
+chart-networkpolicy-missing, smoke-target, ship-set,
+smoke-resource-unknown, built-unscheduled, suppression-format,
+gate-job-id.
 """
 
 from __future__ import annotations
@@ -35,6 +36,7 @@ from compose_facts import classify_services, load_compose
 from lint_rules import Verdict, load_gha_workflow, verdict
 from lint_rules.chart import (
     built_unscheduled,
+    chart_networkpolicy,
     chart_readiness,
     render_chart,
     ship_set,
@@ -357,6 +359,7 @@ def convention_verdicts(
         if rendered is not None:
             verdicts += [
                 *chart_readiness(rendered),
+                *chart_networkpolicy(rendered),
                 *smoke_target(rendered),
                 *ship_set(compose, classified, rendered),
                 *built_unscheduled(compose, classified, rendered),
