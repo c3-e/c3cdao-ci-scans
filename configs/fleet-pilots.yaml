@@ -1,0 +1,24 @@
+# Canonical pilot list for scripts/fleet_status.py (Issue K). Add a new
+# pilot here when it's onboarded; nothing else needs to know about it.
+owner: c3-e
+pilots:
+  - repo: c3cdao-petegpt
+    branches: [main, ci-scans]
+  - repo: c3cdao-rescreen
+    branches: [main, ci-scans]
+  - repo: c3cdao-ppubs
+    branches: [ci-scans]
+  - repo: c3cdao-geoint
+    branches: [main, ci-scans]
+  - repo: c3cdao-cra
+    branches: [ci-scans]
+  - repo: c3cdao-dsa
+    branches: [ci-scans]
+  - repo: c3cdao-cyberopa
+    branches: [ci-scans]
+  - repo: c3cdao-dtic
+    branches: [ci-scans]
+  - repo: c3cdao-pipeassist
+    branches: [ci-scans]
+  - repo: c3cdao-landing
+    branches: [main, ci-scans]
