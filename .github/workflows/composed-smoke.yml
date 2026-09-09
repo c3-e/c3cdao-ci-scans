@@ -121,7 +121,11 @@ jobs:
           jq -r '.name' /tmp/pilots.jsonl > /tmp/pilot-names.txt
           echo "pilot count: $(wc -l < /tmp/pilots.jsonl | tr -d ' ')"
 
-      # Not `helm dependency build .`: that fails closed on this repo's local/packaged deps.
+      # Runs BEFORE the pilots[] pull below overwrites the deps actually under test —
+      # Helm's chart loader resolves dependencies at LOAD time, before any
+      # `condition:` is evaluated, so a missing charts/<dep> fails `helm install`
+      # regardless of its condition. Not `helm dependency build .`: that fails
+      # closed on this repo's local/packaged deps.
       - name: Pull every OTHER OCI-pinned dependency
         run: |
           set -euo pipefail
@@ -321,8 +325,11 @@ jobs:
               exit 1
             }
 
-      # TEMPORARY migration scaffolding (tracked for deletion once every pilot adopts a
-      # hook): hook-bearing pilots run through helm test instead of the per-target curl loop.
+      # TEMPORARY migration scaffolding (tracked for deletion, together with
+      # reusable-security-gate.yml's hook-detect step and its lint_rules/chart.py
+      # smoke_target exemption, once every pilot adopts a hook): hook-bearing pilots
+      # run through helm test instead of the per-target curl loop. See
+      # docs/CI-CONTRACT.md and docs/COMPOSED-SMOKE.md.
       - name: Partition composed pilots by helm.sh/hook test resources
         id: partition
         env:

@@ -1,5 +1,6 @@
 # Publish Staging Chart caller — copied from c3cdao-ci-scans; you own this file. Edit
-# the `with:` values below; separate from security-gate.yml (merge-only trigger).
+# the `with:` values below; separate from security-gate.yml (merge-only trigger, see
+# docs/CI-CONTRACT.md for why). Full contract: docs/PUBLISH-STAGING-CHART.md.
 name: Publish Staging Chart
 
 on:
@@ -7,7 +8,8 @@ on:
     types: [closed]  # merged-only gate lives in the job's own `if:` below
 
 # permissions: must stay at workflow level only — duplicating it on the job below
-# silently produces a zero-jobs startup_failure with no error message.
+# silently produces a zero-jobs startup_failure with no error message. Full
+# writeup: docs/PUBLISH-STAGING-CHART.md's "Caller gotcha".
 permissions:
   contents: read
   packages: write  # required whenever publish_images: true is set below; omit only if publish_images stays false
