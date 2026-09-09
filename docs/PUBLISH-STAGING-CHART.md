@@ -388,7 +388,25 @@ found onboarding Phase 2 pilots — a missing `target` field on an
 `images[]` tuple, a missing caller-side `packages: write` permission, a
 missing `routes:` key in the chart's `values.yaml` — was previously
 discovered ad hoc, per pilot, at merge time; this catches the first two
-mechanically at lint time and the third as an early warning. Run it via:
+mechanically at lint time and the third as an early warning.
+
+**Wired into the every-PR gate.** `reusable-security-gate.yml`'s `plan`
+job runs this lint automatically on every PR, right after its own
+`lint_caller.py` step: it searches the consumer's `.github/workflows/*.yml`
+for the first file whose `jobs.*.uses:` matches `publish-staging-chart.yml`
+(no fixed filename assumed — matched by `uses:`, the same way the ref
+resolvers above match it) and, if found, lints it with `--consumer-root`
+set to the checkout root, so the `publish-chart-routes-missing` warn rule
+also runs. No caller present is not an error — it just skips. This closes
+the exact gap that let a chart with `routes: []` merge silently: before
+this, `publish-staging-chart.yml`'s own runtime chart-shape check (and
+this same lint) only ever ran post-merge, so a caller-shape bug or an
+empty `routes:` was discovered only once the merge had already happened,
+never on the PR itself. See the `security-scan / Security Gate` job
+summary or its Checks-tab log for this step's `plan` output.
+
+Run it standalone (e.g. against a caller not yet wired into the gate, or
+to test a fix before pushing) via:
 
 ```sh
 uv run scripts/lib/lint_caller_publish.py <caller.yml> [--consumer-root <path>]
