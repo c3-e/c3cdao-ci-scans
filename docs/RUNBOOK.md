@@ -156,7 +156,7 @@ Settings → Secrets and variables → Actions → New repository secret.
 | Secret | Job |
 |--------|-----|
 | `CGR_PULL_TOKEN`, `CGR_PULL_USERNAME` | plan + build legs: Chainguard (`cgr.dev`) login (skipped if your caller declares `hardened_base_registry: ironbank`) |
-| `IRONBANK_TOKEN`, `IRONBANK_USERNAME` | SonarQube ephemeral + plan/build Iron Bank (`registry1.dso.mil`) login (skipped if your caller declares `hardened_base_registry: chainguard`); runs **alongside** Chainguard when both are set and `hardened_base_registry: both` (default) |
+| `IRONBANK_TOKEN`, `IRONBANK_USERNAME` | plan/build Iron Bank (`registry1.dso.mil`) login (skipped if your caller declares `hardened_base_registry: chainguard`); runs **alongside** Chainguard when both are set and `hardened_base_registry: both` (default) |
 
 How the two logins interact, and how to declare the single registry tier
 your Dockerfile actually pins to, is reference material:

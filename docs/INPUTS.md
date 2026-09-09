@@ -35,7 +35,7 @@ explicitly; `secrets: inherit` only works within one org/enterprise
 | Secret | Used by |
 | --- | --- |
 | `CGR_PULL_TOKEN`, `CGR_PULL_USERNAME` | plan + every build leg: Chainguard (`cgr.dev`) login (skipped when `hardened_base_registry: ironbank`) |
-| `IRONBANK_TOKEN`, `IRONBANK_USERNAME` | SonarQube ephemeral + plan/build Iron Bank (`registry1.dso.mil`) login (skipped when `hardened_base_registry: chainguard`); runs alongside Chainguard when both are set and `hardened_base_registry: both` |
+| `IRONBANK_TOKEN`, `IRONBANK_USERNAME` | plan/build Iron Bank (`registry1.dso.mil`) login (skipped when `hardened_base_registry: chainguard`); runs alongside Chainguard when both are set and `hardened_base_registry: both` |
 
 Base images, the Iron Bank registry host, and the hardened-base posture
 are gate-owned configuration (workflow `env`), not inputs: the gate is
