@@ -1,14 +1,12 @@
 """Contract tests for the consolidated security-export-full bundle job.
 
 Static drift guards on .github/workflows/reusable-security-gate.yml: the
-export-bundle job runs after image-scan (`if: always()`, same "run even if
-some legs failed" pattern as the fan-in job), pattern-downloads the
-documented export-bundle artifacts (per-service security-export-*,
-sbom-source, plan-bom) with merge-multiple: false so services can't
-filename-collide, and re-uploads them as ONE security-export-full-<sha>
-artifact. It is purely additive convenience: it must never appear in
-security-gate's needs: (evaluate_security_gate.py's NEEDS_JSON contract),
-so an assembly failure can never fail the required check.
+export-bundle job runs after image-scan (`if: always()`), pattern-downloads
+the per-service security-export-*, sbom-source, and plan-bom artifacts
+(merge-multiple: false so services can't collide), and re-uploads them as
+one security-export-full-<sha> artifact. It is purely additive: it must
+never appear in security-gate's needs:, so an assembly failure can never
+fail the required check.
 """
 
 from __future__ import annotations
@@ -44,19 +42,14 @@ def test_export_bundle_job_exists():
 def test_export_bundle_runs_always_and_needs_image_scan():
     job = _export_bundle()
     assert job["if"] == "always()"
-    # Same "run even if some legs failed" needs: shape as the fan-in job:
-    # depend on the jobs that actually produce the bundled artifacts
-    # (plan -> plan-bom, image-scan -> per-service security-export-* +
-    # sbom-source), not on their success.
+    # Depends on jobs that produce the bundled artifacts (plan -> plan-bom,
+    # image-scan -> security-export-* + sbom-source), not on their success.
     assert set(job["needs"]) == {"plan", "image-scan"}
 
 
 def test_export_bundle_is_excluded_from_the_blocking_fan_in():
-    """The job must not be able to influence evaluate_security_gate.py's
-    NEEDS_JSON contract. Read the evaluator to confirm what it evaluates:
-    blocking_jobs() only ever draws from a fixed literal list, so keeping
-    'export-bundle' out of security-gate's needs: is sufficient — the
-    evaluator can't see a job's result unless the fan-in job needs: it."""
+    """export-bundle must never influence evaluate_security_gate.py's NEEDS_JSON:
+    the evaluator can't see a job's result unless security-gate needs: it."""
     gate = _jobs()["security-gate"]
     assert "export-bundle" not in gate["needs"]
 
@@ -128,9 +121,8 @@ def test_export_bundle_remote_actions_pinned_by_full_sha():
 
 
 def test_per_service_export_artifact_upload_is_unchanged():
-    """Non-goal guard: the per-service security-export-<service>-<sha>
-    upload (in image-vuln-scan/action.yml) must be untouched by this
-    addition — this job only ever reads/re-packages, never replaces it."""
+    """Non-goal guard: the per-service security-export upload in
+    image-vuln-scan/action.yml is untouched; this job only reads/re-packages."""
     action = ROOT / ".github/actions/image-vuln-scan/action.yml"
     steps = yaml.safe_load(action.read_text())["runs"]["steps"]
     upload = next(s for s in steps if s.get("name") == "Upload security export bundle")

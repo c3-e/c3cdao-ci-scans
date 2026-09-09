@@ -1,38 +1,11 @@
-"""The callee-ref resolver is a single site per workflow file (the first
-job that needs the ci-scans checkout), consumed by later jobs via
-needs.<job>.outputs.<ref-output> — not duplicated per job. This guard
-extracts each workflow's "Resolve callee (ci-scans) ref" step in full
-(not just its yq line, since the fail-closed logic below it spans several
-lines) and executes it against fixture callers with real env vars,
-exactly as the step itself runs.
+"""Executes each workflow's "Resolve callee (ci-scans) ref" step verbatim
+against fixture callers, parametrized across all three copies (kept as
+one shared, hardened script so a fix to one can't drift from the others).
 
-Parametrized over all three copies of this resolver
-(reusable-security-gate.yml, publish-staging-chart.yml,
-composed-smoke.yml) — kept as one shared, hardened script across all
-three so a fix to one can't silently drift from the others. Was two
-separate modules (this file, only covering reusable-security-gate.yml;
-test_callee_ref_resolver_publish.py, covering the other two with a
-weaker, line-only extraction, because those two copies predated the
-fail-closed hardening below). Folded into one now that all three copies
-carry the same hardening.
-
-Covers three properties of each resolver:
-  A decoy job can't hijack which ref it resolves from: out of scope for
-    THIS test module — enforced by lint_caller.py's decoy-gate-job rule
-    (reusable-security-gate.yml callers) and lint_caller_publish.py's
-    publish-decoy-job rule (publish-staging-chart.yml callers), not by
-    the resolver itself. There is no reliable runtime signal here for
-    "which caller job is actually executing", so the fix is structural
-    (at most one candidate can ever exist in a passing caller) rather
-    than a smarter parse. composed-smoke.yml callers have no equivalent
-    lint rule yet — a separate, not-yet-built gap, not covered here.
-  Fail-closed: an external caller with an unresolvable pin and no
-    job_workflow_sha fails the run with a named error instead of silently
-    defaulting to main. ci-scans' own fixture callers keep the main
-    fallback (gated on GITHUB_REPOSITORY) since they intentionally
-    exercise these workflows against themselves.
-  Single site: asserted directly — exactly one resolver step exists per
-    workflow file.
+Covers: single resolver site per workflow, fail-closed on an unresolvable
+pin (no silent default to main), and quote/comment/sha parsing. Decoy-job
+protection is enforced by lint_caller.py / lint_caller_publish.py, not
+tested here.
 """
 
 from __future__ import annotations
@@ -87,9 +60,8 @@ def _run(
         "WORKFLOW_REF": workflow_ref,
         "JOB_WF_SHA": job_wf_sha,
     }
-    # The real caller path is derived from WORKFLOW_REF relative to CWD
-    # (see `caller="${WORKFLOW_REF#...}"`), so run with the fixture's own
-    # directory as cwd and a bare filename in WORKFLOW_REF.
+    # caller path is derived from WORKFLOW_REF relative to CWD, so run with
+    # the fixture's own directory as cwd and a bare filename in WORKFLOW_REF.
     return subprocess.run(
         ["bash", "-c", _resolver_script(workflow_filename)],
         cwd=caller.parent,
@@ -176,9 +148,8 @@ def test_resolver_prefers_job_workflow_sha_over_parse(workflow_filename, tmp_pat
 def test_resolver_fails_closed_for_external_caller_with_no_signal(
     workflow_filename, tmp_path
 ):
-    """An external pilot whose pin can't be parsed and has no
-    job_workflow_sha must fail the run with a named error, never
-    silently default to main."""
+    """External caller with unparseable pin and no job_workflow_sha must fail
+    closed with a named error, never silently default to main."""
     stem = workflow_filename.removesuffix(".yml")
     caller = tmp_path / "caller.yml"
     caller.write_text(
@@ -198,9 +169,8 @@ def test_resolver_fails_closed_for_external_caller_with_no_signal(
 def test_resolver_falls_back_to_main_only_for_ci_scans_itself(
     workflow_filename, tmp_path
 ):
-    """The fail-closed carve-out: ci-scans' own fixture/selftest callers
-    may still resolve to main when nothing else is available — everyone
-    else fails closed (see test above)."""
+    """ci-scans' own fixture/selftest callers may still resolve to main;
+    everyone else fails closed (see test above)."""
     stem = workflow_filename.removesuffix(".yml")
     caller = tmp_path / "caller.yml"
     caller.write_text(
@@ -221,10 +191,8 @@ def test_resolver_falls_back_to_main_only_for_ci_scans_itself(
 def test_resolver_ignores_non_uses_text_mentioning_the_filename(
     workflow_filename, tmp_path
 ):
-    """A job/step name that happens to mention the filename must not be
-    mistaken for a real pin — only a uses: value counts. job_wf_sha is
-    deliberately empty so the yq parse fallback actually runs; otherwise
-    job_workflow_sha would short-circuit before the parse ever executes."""
+    """A name field mentioning the filename must not be mistaken for a pin;
+    only uses: counts. job_wf_sha is empty to force the parse fallback."""
     caller = tmp_path / "caller.yml"
     caller.write_text(
         "jobs:\n"

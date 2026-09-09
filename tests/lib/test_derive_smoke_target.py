@@ -1,9 +1,9 @@
 """Unit tests for the chart-derived smoke target (scripts/lib/derive_smoke_target.py).
 
-Zero/two-candidate failure paths (each names the candidates) plus the
-ticket's test-file spec: happy path, non-HTTP probe, no Service backing.
-Rendered-chart inputs are authored inline as parsed documents (same
-convention as tests/lib/test_lint_rules.py).
+Covers the happy path, non-HTTP probes, no-Service backing, and the
+zero/two-candidate failure paths (each names the candidates). Rendered-chart
+inputs are authored inline as parsed documents (same convention as
+tests/lib/test_lint_rules.py).
 """
 
 from __future__ import annotations

@@ -4,7 +4,7 @@ scripts/lib/smoke_catalog/*.yaml are idempotent k8s manifests applied
 into the smoke namespace before helm install: fixture credentials only,
 digest-pinned images, a readiness gate, restricted-PSS posture (the
 gate's own helm-check bar applies to gate-owned pods too), and the
-ADR-08 secret convention (`app-database-url` -> `DATABASE_URL`).
+secret-naming convention (`app-database-url` -> `DATABASE_URL`).
 """
 
 from __future__ import annotations
@@ -36,9 +36,8 @@ def by_kind(path: Path, kind: str) -> list[dict]:
 
 
 def test_smoke_catalog_whitelist_maps_one_to_one_onto_module_files():
-    """Every SMOKE_CATALOG id has a manifest (dash -> underscore, the
-    workflow's mapping) and every manifest is whitelisted — a drift in
-    either direction ships a module consumers cannot actually use."""
+    """Every SMOKE_CATALOG id has a manifest and every manifest is
+    whitelisted; drift in either direction ships an unusable module."""
     from lint_rules.chart import SMOKE_CATALOG
 
     files = {p.stem for p in CATALOG.glob("*.yaml")}
@@ -137,10 +136,9 @@ def test_gateway_module_contains_only_crds():
 
 
 def test_gateway_crds_carry_protected_group_approval_annotation():
-    """gateway.networking.k8s.io is a protected API group: the API server
-    rejects CRDs without api-approved.kubernetes.io (KEP-1111). The gate's
-    minimal copies declare themselves unapproved rather than borrowing the
-    upstream approval URL."""
+    """gateway.networking.k8s.io is protected: the API server rejects CRDs
+    without api-approved.kubernetes.io (KEP-1111); these copies declare
+    themselves unapproved rather than borrowing the upstream approval URL."""
     for doc in docs(GATEWAY):
         annotation = doc["metadata"]["annotations"]["api-approved.kubernetes.io"]
         assert annotation.startswith("unapproved"), doc["metadata"]["name"]

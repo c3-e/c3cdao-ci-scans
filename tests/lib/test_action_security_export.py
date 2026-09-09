@@ -1,12 +1,11 @@
 """Structural drift guards for the per-run security export bundle.
 
-Each image-scan matrix leg must upload a self-contained evidence bundle —
-security-export-<leg>-<short-sha> — holding the image SBOM, machine-readable
-Trivy/Grype scan JSONs, the VEX doc exactly as applied (consumer template or
-the empty default), and metadata.json. Export steps run `if: always()` so
-the bundle survives a blocking-scan failure, and the JSON re-scans carry the
-same suppression surface as the gating table scans so the export mirrors
-what actually gated.
+Each image-scan matrix leg uploads a self-contained evidence bundle
+(SBOM, Trivy/Grype JSON, VEX doc, metadata.json) named
+security-export-<leg>-<short-sha>. Export steps run `if: always()` so the
+bundle survives a blocking-scan failure, and the JSON re-scans carry the
+same suppression surface as the gating scans so the export mirrors what
+actually gated.
 """
 
 from __future__ import annotations
@@ -109,8 +108,7 @@ def test_upload_uses_matrix_safe_per_run_artifact_name():
 
 
 def test_gating_table_scans_unchanged_by_export():
-    """The export is additive: the three original scan steps keep table
-    output and their blocking semantics."""
+    """Export is additive: original scan steps keep table output and blocking semantics."""
     trivy = _step("Trivy scan — image")["with"]
     assert trivy["format"] == "table"
     assert trivy["exit-code"] == "${{ inputs.blocking == 'true' && '1' || '0' }}"

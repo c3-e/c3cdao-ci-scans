@@ -1,13 +1,10 @@
-"""Contract tests for the v0.6 cluster-smoke rewiring.
+"""Contract tests for the cluster-smoke job's helm-based rewiring.
 
 Static drift guards on .github/workflows/reusable-security-gate.yml:
-cluster-smoke consumes the per-leg scan-image-<target> tars, provisions
-the declared smoke_resources catalog modules (Ready gate, failure names
-the module) BEFORE helm install, installs with --wait, and probes the
-chart-derived HTTP target (scripts/lib/derive_smoke_target.py). The v0.5
-scan-image artifact and the plan job's `health` bridge output are
-retired. Build-matrix and scan/fan-in surface guards live in test_workflow_build_matrix.py /
-test_workflow_scan_fanin.py.
+cluster-smoke consumes per-leg image tars, provisions smoke resources
+before helm install, installs with --wait, and probes the chart-derived
+HTTP target. The old single-artifact download and health-output bridge
+are retired.
 """
 
 from __future__ import annotations
@@ -52,9 +49,8 @@ def test_v05_image_artifact_retired():
 
 def test_cluster_smoke_needs_build_and_helm_check():
     smoke = _smoke()
-    # plan added directly so needs.plan.outputs.callee_ref is
-    # accessible (it was already an implicit, transitive dependency via
-    # build/helm-check — this doesn't change scheduling).
+    # plan is added directly for needs.plan.outputs.callee_ref; this was
+    # already an implicit, transitive dependency, so scheduling is unchanged.
     assert set(smoke["needs"]) == {"plan", "build", "helm-check"}
     condition = str(smoke["if"])
     assert "always()" in condition
@@ -118,7 +114,7 @@ def test_probe_target_is_chart_derived():
     text = _smoke_run_text()
     assert "derive_smoke_target.py" in text
     assert "helm template" in text
-    # greppable AC-1 evidence markers
+    # markers double as greppable evidence in live CI logs
     assert "module ready" in text
     assert "probe 200" in text
 

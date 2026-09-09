@@ -165,10 +165,8 @@ def test_containers_bridge_outputs_retired():
 
 
 def test_plan_builds_chart_dependencies_before_lint():
-    """The plan job runs `helm dependency build` before lint_caller.py so a
-    chart with a file://-or-remote dependency and no committed charts/
-    renders normally in plan lint (without it, consumers must commit a
-    vendored tgz to work around the gap)."""
+    """helm dependency build must run before lint_caller.py so a chart with a
+    file://-or-remote dependency and no committed charts/ still lints."""
     plan = _workflow()["jobs"]["plan"]
     steps = plan["steps"]
     dep_build_idx = next(
@@ -192,12 +190,9 @@ def test_plan_builds_chart_dependencies_before_lint():
 
 
 def test_sonarqube_sources_resolved_dynamically_not_hardcoded():
-    """`sonar.sources` must not hardcode `packages/,apps/` directly in the
-    scan step. A flat single-app repo (source directories at the root,
-    no packages/ or apps/) has neither, and sonar-scanner exits 2 before
-    ever scanning. A preceding step resolves sonar.sources dynamically
-    (whichever of packages/,apps/ exist; '.' when neither does), and the
-    scan step consumes that resolved output instead of a literal."""
+    """sonar.sources must not hardcode packages/,apps/; a flat repo with
+    neither directory would make sonar-scanner exit 2. A preceding step
+    resolves sonar.sources dynamically instead."""
     scan = _workflow()["jobs"]["sast-sonarqube"]
     scanner_steps = [
         s
@@ -228,9 +223,8 @@ def test_sonarqube_sources_resolved_dynamically_not_hardcoded():
 
 
 def test_caller_template_is_thin_surface_and_lint_clean(tmp_path):
-    """The template (with only the placeholder gate ref pinned to a SHA,
-    a repo-specific value) must pass the v0.6 caller structure
-    lint: known inputs only, four secrets mapped, no removed v0.5 inputs."""
+    """The template, with its placeholder gate ref pinned to a SHA, must pass
+    the v0.6 caller structure lint verbatim."""
     import importlib.util
     import sys
 

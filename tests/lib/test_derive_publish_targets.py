@@ -1,16 +1,12 @@
 """Behavioral tests for publish-staging-chart.yml's derive-publish-targets
-job (Issue I: single source of truth for the publish target list).
+job, the single source of truth for the publish target list.
 
-Same extraction pattern as test_callee_ref_resolver.py: pull the job's
-"Derive publish targets from compose_file (no hand-typed images:)" step's
-real run script out of the workflow YAML and execute it against real
-compose fixtures under tests/fixtures/bake/ via a real `docker buildx
-bake --print` + derive_bom.py invocation (no mocking) -- the same
-fixtures test_lint_rules.py/test_derive_bom.py already use, so a future
-edit to those fixtures is caught here too.
+Same extraction pattern as test_callee_ref_resolver.py: pulls the step's
+real run script from the workflow YAML and executes it against real
+compose fixtures via a real `docker buildx bake --print` + derive_bom.py
+invocation (no mocking), reusing fixtures test_derive_bom.py already uses.
 
-Requires `docker buildx` on PATH; skipped otherwise (CI runners always
-have it, matching this repo's other bake-dependent tests).
+Requires `docker buildx` on PATH; skipped otherwise.
 """
 
 from __future__ import annotations
@@ -82,11 +78,8 @@ def _targets(output_text: str) -> list[str] | None:
 
 
 def _workspace_for(fixture_dir: Path, tmp_path: Path) -> Path:
-    """derive_bom.py is invoked via `.ci-scans/scripts/lib/derive_bom.py`
-    relative to $GITHUB_WORKSPACE -- symlink this checkout in as
-    `.ci-scans` (the same tree the real "Resolve callee (ci-scans) ref" +
-    checkout steps produce) and copy the fixture's compose file in
-    alongside it, exactly like the real job's own two checkouts land."""
+    """Symlinks this checkout in as `.ci-scans` and copies the fixture's
+    compose file in, mirroring the real job's own two checkouts."""
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     (workspace / ".ci-scans").symlink_to(REPO_ROOT)
@@ -144,9 +137,8 @@ def test_allow_list_naming_an_unknown_target_fails_closed(tmp_path):
 
 @requires_buildx
 def test_allow_list_naming_the_local_profile_excluded_target_fails_closed(tmp_path):
-    """svc-local is a real compose service but never a publishable
-    target (profiles: [local]) -- naming it in publish_targets must fail
-    the same way an entirely unknown name does, not silently pass."""
+    """svc-local is a real compose service but never publishable (profiles:
+    [local]); naming it must fail the same way an unknown name does."""
     workspace = _workspace_for(FIXTURES / "n3-local-profile", tmp_path)
     result, output = _run(workspace, "docker-compose.yml", publish_targets="svc-local")
     assert result.returncode == 1

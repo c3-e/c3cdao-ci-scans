@@ -1,8 +1,7 @@
 """Unit tests for the gate-job-id caller-structure lint rule (v0.6 API).
 
-Ported from the pre-cutover footgun-enforcement work (main) at the v0.6
-reconciliation merge: the rule survives the cutover, the v0.5 contract
-API (`load_contract`/`lint`) does not.
+This rule survives the v0.5 -> v0.6 API cutover; the removed v0.5 contract
+API (`load_contract`/`lint`) does not apply here.
 """
 
 from __future__ import annotations
