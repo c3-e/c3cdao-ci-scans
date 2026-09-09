@@ -557,8 +557,12 @@
                 <code>export-bundle</code> re-packages every per-service export, the source SBOM, and the plan
                 BOM into one <code>security-export-full-&lt;short-sha&gt;</code> artifact, then posts (or
                 updates) a PR comment summarizing each service's Trivy/Grype High+Critical counts, VEX source,
-                and any pending disposition. Convenience only: it runs <code>if: always()</code> and never
-                appears in the Security Gate's <code>needs:</code>, so it can never affect the required check.
+                and any pending disposition — High/Critical bucketed by fix availability, Medium/Low aged
+                against the <code>vex-tracking</code> OCI record with a 90-day SLA banner. On
+                <code>schedule</code>-triggered runs the same content posts instead to a persistent tracking
+                Issue, found-or-updated by a hidden marker. Convenience only: it runs <code>if: always()</code>
+                and never appears in the Security Gate's <code>needs:</code>, so it can never affect the
+                required check.
               </p>
             </div>
           </div>

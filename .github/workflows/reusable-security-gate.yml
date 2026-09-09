@@ -1457,7 +1457,6 @@ jobs:
             echo "<!-- security-export-summary -->"
             echo "### Security export summary"
             echo
-            # Check for SLA breach in pending-disposition report
             if [ -n "$pending_file" ] && [ -f "$pending_file" ] && grep -q "SLA breach — 90-day threshold exceeded" "$pending_file"; then
               echo "⚠️ **SLA breach detected:** One or more Medium/Low findings have exceeded the 90-day remediation threshold. See details below."
               echo

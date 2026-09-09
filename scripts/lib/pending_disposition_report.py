@@ -152,7 +152,6 @@ def pending_for_service(
         if existing is None or (not existing["fixed_version"] and f["fixed_version"]):
             by_id[f["id"]] = f
 
-    # Separate High/Critical from Medium/Low
     remediate = []
     vex_candidate = []
     medium_low_managed = []
@@ -165,7 +164,6 @@ def pending_for_service(
             else:
                 vex_candidate.append(f)
         else:
-            # Medium/Low: compute age and add status
             age_days = _get_cve_age_days(f["id"], service_dir, clock)
             status = "unknown"
             if age_days is not None:
