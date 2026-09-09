@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.9.0](https://github.com/c3-e/c3cdao-ci-scans/compare/v0.8.0...v0.9.0) (2026-09-09)
+
+
+### Features
+
+* wire lint_caller_publish.py into the every-PR security gate ([a498607](https://github.com/c3-e/c3cdao-ci-scans/commit/a4986075c151f9fd0ea1383266b31e5843f1aed1))
+* wire lint_caller_publish.py into the every-PR security gate ([00f3e10](https://github.com/c3-e/c3cdao-ci-scans/commit/00f3e10d6e5a12aeae07e3ee29ea2ad864d39c29))
+
+
+### Bug Fixes
+
+* **gate:** swap sast-sonarqube's service image off Iron Bank ([1ce5a0d](https://github.com/c3-e/c3cdao-ci-scans/commit/1ce5a0dab6bf88696fa7fa6d4559f20637890baa))
+* **gate:** swap sast-sonarqube's service image off Iron Bank ([982238e](https://github.com/c3-e/c3cdao-ci-scans/commit/982238eaa34c49e5afe057d0c0a49ae493f68b28))
+
 ## [0.8.0](https://github.com/c3-e/c3cdao-ci-scans/compare/v0.7.4...v0.8.0) (2026-09-09)
 
 
