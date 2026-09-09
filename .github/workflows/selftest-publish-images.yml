@@ -1,7 +1,14 @@
 name: Selftest — Publish Images (quarantine round trip)
 
-# publish-images-deferred only triggers on a real merged PR, which workflow_dispatch
-# can never satisfy — this exercises the same quarantine-push/retag/verify round trip manually.
+# publish-images-deferred only triggers on a real merged PR (its `if:` requires
+# `github.event.pull_request.merged == true`, a field that doesn't exist under
+# workflow_dispatch) — there's no supported way to fake that from a manual run.
+# Deliberately a separate workflow rather than a special-cased dry-run branch on
+# the real job's `if:`: weakening that fail-closed trigger guard for convenience
+# would run backwards to this repo's own posture. This exercises the identical
+# quarantine-push/retag/verify round trip manually instead. See
+# docs/PUBLISH-STAGING-CHART.md's "Digest-verified quarantine publish" for what
+# the mechanism itself claims and proves.
 
 on:
   workflow_dispatch:
