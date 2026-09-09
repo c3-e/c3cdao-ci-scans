@@ -203,6 +203,31 @@ repo's Settings → Rules → Rulesets, in the **disabled** state.
 `security-scan / Security Gate` listed as a required status check on the
 target branch.
 
+### 6a. Alternative: evaluate-only (operator, optional standing state)
+
+If the gate should stay loud (the check still runs and reports its real
+pass/fail on every PR, visible in the PR's checks tab and the repo's Rule
+Insights dashboard) but must never block a merge — e.g. while the gate is
+still experimental, or the repo has other contributors who need to keep
+merging regardless of gate outcome — use `--evaluate` instead of
+`--enable`:
+
+```bash
+./scripts/setup-ruleset.sh --config configs/local/<repo>.yaml --evaluate
+```
+
+This is a supported, standing target state in its own right, not just a
+transient step on the way to `--enable`. There is no time limit or
+default expiry — a repo can stay in `evaluate` indefinitely. Re-run this
+same command (or `--diff --evaluate`, see below) any time to confirm it
+hasn't drifted. Move to step 6's `--enable` only when/if the operator
+decides the gate should start blocking merges.
+
+**You should see:** the ruleset in the **evaluate** state, and
+`security-scan / Security Gate` results appearing in Settings → Rules →
+Insights, but the check is not listed as required and does not block
+merges.
+
 ## 7. Set up the scratch-branch pilot (consumer + operator)
 
 To pilot on a shared repo without touching its real trunk, cut a scratch
@@ -290,20 +315,35 @@ and the canary PR closed.
 
 The enforcement model has two knobs:
 
-- **Ruleset enable** (per-consumer): step 6 makes
-  `security-scan / Security Gate` a required check.
+- **Ruleset enforcement** (per-consumer, three states): step 5 creates it
+  `disabled`; step 6 flips it to `active` (`security-scan / Security Gate`
+  becomes a required check, blocking merges) or `evaluate` (step 6a — the
+  check still runs and reports its real result, but never blocks a merge).
+  `evaluate` is a standing state a repo can stay in indefinitely, not only
+  a waypoint to `active`.
 - **`SECURITY_SCAN_BLOCKING` repo variable** (gate-internal): hard-fail
-  posture for cluster-smoke and image-scan findings. Until it is `true`
-  they warn instead of failing; a skipped/cancelled/errored blocking job
-  still fails the gate. Flipping it to `true` is the **final** acceptance
-  step; see [REQUIREMENTS-MAP.md](REQUIREMENTS-MAP.md).
+  posture for cluster-smoke's health-probe outcome and image-scan
+  findings. Until it is `true` they warn instead of failing. This does
+  **not** cover a `cluster-smoke` install/provisioning failure (the chart
+  doesn't even come up) — that always blocks via the job's own `result`,
+  regardless of this flag. A skipped/cancelled/errored blocking job still
+  fails the gate regardless of the flag too. Flipping it to `true` is the
+  **final** acceptance step; see [REQUIREMENTS-MAP.md](REQUIREMENTS-MAP.md).
+
+Note this variable is orthogonal to ruleset enforcement: setting
+`SECURITY_SCAN_BLOCKING=true` on a repo whose ruleset is still `evaluate`
+sharpens which findings the *gate itself* treats as failing (vs. warning)
+in its own internal logic and job summary, but the ruleset staying in
+`evaluate` still means none of it can block a merge — only *active*
+does that.
 
 ```bash
 gh variable set SECURITY_SCAN_BLOCKING --body true --repo <owner>/<repo>
 ```
 
 **You should see:** the repo variable set to `true`, and subsequent gate
-runs hard-failing (not warning) on cluster-smoke / image-scan findings.
+runs hard-failing (not warning) on cluster-smoke's health-probe / image-scan
+findings.
 
 ## 12. Suppress dispositioned CVEs with OpenVEX (consumer, optional)
 

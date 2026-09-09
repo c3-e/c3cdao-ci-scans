@@ -59,9 +59,12 @@ def evaluate(
     if bad:
         print("Blocking jobs not successful:", bad)
         return 1
-    # smoke_ok reflects the real probe outcome despite the job's own
-    # continue-on-error masking; gated behind SECURITY_SCAN_BLOCKING like
-    # the other advisory scans so it doesn't block merges during the ramp.
+    # cluster-smoke's own `result` above already unconditionally catches a
+    # real install/provisioning failure (that step has no continue-on-error
+    # tied to this flag). smoke_ok narrowly reflects only the health-probe
+    # outcome (`helm test` / HTTP probe), whose continue-on-error IS gated
+    # on SECURITY_SCAN_BLOCKING like the other advisory scans, so a flaky
+    # probe doesn't block merges during the ramp.
     if security_scan_blocking and "cluster-smoke" in blocking:
         smoke = needs.get("cluster-smoke") or {}
         smoke_ok = (smoke.get("outputs") or {}).get("smoke_ok")

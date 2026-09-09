@@ -3,12 +3,17 @@
 # docs/RUNBOOK.md Appendix E. Consumer contract (inputs, lint rules):
 # docs/CI-CONTRACT.md.
 #
-# Blocking: plan, build, secrets-scan always block. helm-check and cluster-smoke
-# block unless image_only. cluster-smoke and image-scan hard-fail only when the
-# SECURITY_SCAN_BLOCKING repo variable is true, but a skipped/cancelled/errored
-# run of either still fails the gate regardless — a broken build can never sign
-# off green. sast-semgrep and sast-sonarqube are continue-on-error (warn-only)
-# until the harden baseline lands.
+# Blocking: plan, build, secrets-scan always block. helm-check and
+# cluster-smoke's own job result (provisioning + `helm install`) always
+# block unless image_only — a chart that doesn't install is never
+# advisory, regardless of SECURITY_SCAN_BLOCKING. Only the narrower
+# health-probe outcome (`helm test` / HTTP probe, surfaced as
+# cluster-smoke's smoke_ok output) and image-scan findings hard-fail when
+# the SECURITY_SCAN_BLOCKING repo variable is true; until then they warn.
+# A skipped/cancelled/errored run of any blocking job still fails the gate
+# regardless of that flag — a broken build can never sign off green.
+# sast-semgrep and sast-sonarqube are continue-on-error (warn-only) until
+# the harden baseline lands.
 
 name: Reusable Security Gate
 
@@ -752,7 +757,9 @@ jobs:
           uv run .ci-scans/scripts/lib/assert_restricted_pss.py /tmp/rendered-chart.yaml
 
   # helm-check is a static render; it can't catch a chart that renders clean
-  # but crash-loops on boot. Warn-only unless SECURITY_SCAN_BLOCKING.
+  # but crash-loops on boot. Install/provisioning failure here always
+  # blocks; only the health-probe outcome (smoke_ok) is warn-only unless
+  # SECURITY_SCAN_BLOCKING.
   cluster-smoke:
     name: Cluster Smoke (kind + helm + health)
     runs-on: ubuntu-latest
@@ -824,9 +831,17 @@ jobs:
 
       - name: provision catalog + helm deploy
         id: smoke
-        # Outcome recorded below so security-gate can fail closed even when
-        # this step continues on error (job result stays success).
-        continue-on-error: ${{ vars.SECURITY_SCAN_BLOCKING != 'true' }}
+        # No continue-on-error here, unconditionally: a chart that fails to
+        # provision/install is never advisory, regardless of
+        # SECURITY_SCAN_BLOCKING. (Older revisions gated this on the var,
+        # which — because a continue-on-error'd failing step still reports
+        # conclusion: success — let install failures mask as a green
+        # cluster-smoke job result. See CHANGELOG.md / RUNBOOK.md.) A real
+        # failure here fails this step's conclusion, so the job's own
+        # `result` (needs.cluster-smoke.result) is `failure`, which
+        # evaluate_security_gate.py's unconditional blocking-jobs check
+        # already catches. Only the narrower health-probe outcome below
+        # (smoke_ok) stays governed by SECURITY_SCAN_BLOCKING.
         env:
           SMOKE_RESOURCES: ${{ inputs.smoke_resources }}
           HELM_CHART_PATH: ${{ inputs.chart_path }}
