@@ -305,6 +305,36 @@ def test_build_context_excludes_passes_with_required_entries(tmp_path):
     )
 
 
+def test_build_context_excludes_passes_with_recursive_superset_glob(tmp_path):
+    """`**/.env` excludes root-level `.env` too (`**` matches zero or more
+    directories) — a strict superset of the literal line, so it satisfies
+    the rule same as petegpt's `**/.env`/`**/.env.*` convention."""
+    compose_path = tmp_path / "docker-compose.yml"
+    (tmp_path / ".dockerignore").write_text(
+        "**/.env\n**/.env.*\n*.pem\n*.key\n*credentials*\n"
+    )
+    compose = {"services": {"app": build_service("app:1")}}
+    assert (
+        build_context_excludes(compose_path, compose, classify(compose)) == []
+    )
+
+
+def test_build_context_excludes_still_blocks_unrelated_patterns(tmp_path):
+    """A pattern that isn't the literal line or its `**/`-anchored form
+    doesn't satisfy the rule — e.g. `.env.local` alone doesn't cover
+    `.env` itself."""
+    compose_path = tmp_path / "docker-compose.yml"
+    (tmp_path / ".dockerignore").write_text(
+        ".env.local\n*.pem\n*.key\n*credentials*\n"
+    )
+    compose = {"services": {"app": build_service("app:1")}}
+    v = only_rule(
+        build_context_excludes(compose_path, compose, classify(compose)),
+        "build-context-excludes",
+    )
+    assert ".env" in v["message"]
+
+
 # --- chart-declaration consistency ----------------------------------------------
 
 
