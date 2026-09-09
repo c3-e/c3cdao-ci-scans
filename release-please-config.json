@@ -1,4 +1,5 @@
 {
+  "pull-request-header": "Auto generated release tag candidate",
   "release-type": "simple",
   "bump-minor-pre-major": true,
   "include-v-in-tag": true,
