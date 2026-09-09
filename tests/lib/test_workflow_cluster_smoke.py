@@ -122,14 +122,31 @@ def test_probe_target_is_chart_derived():
 # --- warn-only semantics survive the rewiring -----------------------------------
 
 
-def test_smoke_step_keeps_advisory_gating_and_outcome_output():
+def test_smoke_step_keeps_outcome_output():
     smoke = _smoke()
     assert smoke["outputs"]["smoke_ok"] == "${{ steps.smoke_outcome.outputs.ok }}"
-    step = next(s for s in smoke["steps"] if s.get("id") == "smoke")
-    assert (
-        step["continue-on-error"]
-        == "${{ vars.SECURITY_SCAN_BLOCKING != 'true' }}"
-    )
+
+
+def test_install_step_is_never_advisory():
+    """Regression guard: the `smoke` (provision+install) step must never
+    carry a SECURITY_SCAN_BLOCKING-gated continue-on-error. That combo lets
+    a real `helm install` failure report step conclusion: success (GHA
+    continue-on-error semantics), which makes the job's own `result` read
+    success too — completely hiding a broken chart from
+    evaluate_security_gate.py whenever SECURITY_SCAN_BLOCKING is unset."""
+    step = next(s for s in _smoke()["steps"] if s.get("id") == "smoke")
+    assert "continue-on-error" not in step
+
+
+def test_helm_test_and_probe_fallback_keep_advisory_gating():
+    """Unlike install, the narrower health-probe outcome is an intentional,
+    documented ramp: it may stay continue-on-error until
+    SECURITY_SCAN_BLOCKING=true."""
+    for step_id in ("helm-test", "probe-fallback"):
+        step = next(s for s in _smoke()["steps"] if s.get("id") == step_id)
+        assert (
+            step["continue-on-error"] == "${{ vars.SECURITY_SCAN_BLOCKING != 'true' }}"
+        )
 
 
 # --- helm test hook detection (temporary migration scaffolding) ----------------

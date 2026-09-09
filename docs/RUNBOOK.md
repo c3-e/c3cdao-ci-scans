@@ -293,17 +293,21 @@ The enforcement model has two knobs:
 - **Ruleset enable** (per-consumer): step 6 makes
   `security-scan / Security Gate` a required check.
 - **`SECURITY_SCAN_BLOCKING` repo variable** (gate-internal): hard-fail
-  posture for cluster-smoke and image-scan findings. Until it is `true`
-  they warn instead of failing; a skipped/cancelled/errored blocking job
-  still fails the gate. Flipping it to `true` is the **final** acceptance
-  step; see [REQUIREMENTS-MAP.md](REQUIREMENTS-MAP.md).
+  posture for cluster-smoke's health-probe outcome and image-scan
+  findings. Until it is `true` they warn instead of failing. This does
+  **not** cover a `cluster-smoke` install/provisioning failure (the chart
+  doesn't even come up) — that always blocks via the job's own `result`,
+  regardless of this flag. A skipped/cancelled/errored blocking job still
+  fails the gate regardless of the flag too. Flipping it to `true` is the
+  **final** acceptance step; see [REQUIREMENTS-MAP.md](REQUIREMENTS-MAP.md).
 
 ```bash
 gh variable set SECURITY_SCAN_BLOCKING --body true --repo <owner>/<repo>
 ```
 
 **You should see:** the repo variable set to `true`, and subsequent gate
-runs hard-failing (not warning) on cluster-smoke / image-scan findings.
+runs hard-failing (not warning) on cluster-smoke's health-probe / image-scan
+findings.
 
 ## 12. Suppress dispositioned CVEs with OpenVEX (consumer, optional)
 

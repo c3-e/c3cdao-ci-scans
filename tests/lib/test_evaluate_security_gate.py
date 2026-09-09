@@ -99,6 +99,32 @@ def test_smoke_failure_blocks_once_blocking_flag_set():
     assert mod.evaluate(needs, image_only=False, security_scan_blocking=True) == 1
 
 
+def test_cluster_smoke_install_failure_blocks_even_when_not_blocking():
+    """Regression test for the masking bug: a real `helm install` failure
+    inside cluster-smoke must fail the *job's own result* (not just
+    smoke_ok), and blocking_jobs() must catch that unconditionally — even
+    when SECURITY_SCAN_BLOCKING is unset/false. Before the fix, the
+    `smoke` step's continue-on-error was tied to SECURITY_SCAN_BLOCKING,
+    so a hard install failure reported job result: success (GHA reports a
+    continue-on-error'd failing step's *conclusion* as success, and job
+    result derives from step conclusions) and was invisible to this
+    function. Here we simulate that already-fixed job result directly:
+    cluster-smoke's `result` is 'failure' whenever its install step
+    genuinely fails, full stop, independent of security_scan_blocking."""
+    needs = _needs(
+        {
+            "plan": "success",
+            "build": "success",
+            "secrets-scan": "success",
+            "image-scan": "success",
+            "helm-check": "success",
+            "cluster-smoke": "failure",
+        }
+    )
+    assert mod.evaluate(needs, image_only=False, security_scan_blocking=False) == 1
+    assert mod.evaluate(needs, image_only=False, security_scan_blocking=True) == 1
+
+
 def test_matrixed_build_failure_blocks():
     # Extras are legs of the matrixed build job: any failed leg fails the
     # whole job, so a single result covers every extra.

@@ -19,7 +19,7 @@ here.
 | `sast-semgrep` | SAST | Semgrep | source | warn-only (`continue-on-error`) | intentional ramp |
 | `sast-sonarqube` | SAST | SonarQube | source | warn-only (`continue-on-error`) | intentional ramp |
 | `helm-check` | Helm lint + restricted-PSS | helm + PSS assert | chart | blocking unless `image_only` | aligned |
-| `cluster-smoke` | kind deploy + health probe (catalog `smoke_resources` provisioned before install; probe target derived from the rendered chart) | kind + kubectl + helm | chart+images | skipped when `image_only`; else advisory until `SECURITY_SCAN_BLOCKING=true` | intentional ramp |
+| `cluster-smoke` | kind deploy + health probe (catalog `smoke_resources` provisioned before install; probe target derived from the rendered chart) | kind + kubectl + helm | chart+images | skipped when `image_only`; install/provisioning failure always blocks; health-probe outcome (`smoke_ok`) advisory until `SECURITY_SCAN_BLOCKING=true` | intentional ramp (probe only) |
 | `image-scan` | Image + SBOM vuln scan (matrixed over the same derived targets as `build`; one designated leg carries the source-SBOM scans) | Trivy (image+source SBOM) + Grype (image+source+image SBOM) | images + SBOM | advisory until `SECURITY_SCAN_BLOCKING=true` | aligned |
 | `export-bundle` | (convenience, not a spec gate) re-package the per-service export bundles + `sbom-source` + `plan-bom` into one `security-export-full-<short-sha>` download | `actions/download-artifact` (pattern) + `actions/upload-artifact` | evidence artifacts | `if: always()`; excluded from `security-gate`'s `needs:`, so it can never block | aligned (never gates) |
 | `security-gate` | aggregate required check | — | — | the one required check (`security-scan / Security Gate`) | aligned |
@@ -28,14 +28,18 @@ here.
 
 These are intentional posture choices, not gaps to remediate now.
 
-### Warn-only SAST and advisory cluster-smoke/image-scan are a verification ramp
+### Warn-only SAST and advisory cluster-smoke health-probe/image-scan are a verification ramp
 
-Semgrep and SonarQube run warn-only, and cluster-smoke and image-scan stay
-advisory, until the operator sets the `SECURITY_SCAN_BLOCKING=true` repo
-variable. This is a deliberate ramp: it lets a consumer verify the
-technical implementation (that every job runs, resolves its inputs, and
-produces signal) before findings can block a merge. The spec's "all
-Phase 2 blocking" state is reached by flipping
+Semgrep and SonarQube run warn-only, and cluster-smoke's health-probe
+outcome (`smoke_ok`) and image-scan stay advisory, until the operator
+sets the `SECURITY_SCAN_BLOCKING=true` repo variable. This is a
+deliberate ramp: it lets a consumer verify the technical implementation
+(that every job runs, resolves its inputs, and produces signal) before
+findings can block a merge. It does **not** extend to `cluster-smoke`'s
+install/provisioning step: a chart that fails to `helm install` always
+fails the job's own `result`, unconditionally — installation succeeding
+or not is never advisory, only the narrower post-install health check is.
+The spec's "all Phase 2 blocking" state is reached by flipping
 `SECURITY_SCAN_BLOCKING=true` as the **final acceptance step**, taken only
 after that verification. That flip is the last milestone to steady-state,
 never a defect. A skipped, cancelled, or errored blocking job still fails
