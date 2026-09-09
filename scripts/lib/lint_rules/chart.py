@@ -148,11 +148,9 @@ def _has_test_hook(rendered: list[dict[str, Any]]) -> bool:
     """True if any rendered resource declares a `helm.sh/hook` annotation
     whose value contains "test" (e.g. `helm.sh/hook: test`).
 
-    A chart carrying its own helm test hook is health-checked via
-    `helm test` instead of the derived-target port-forward+curl probe
-    (see reusable-security-gate.yml's cluster-smoke job and
-    composed-smoke.yml) — the backed-candidate count is irrelevant to
-    that path.
+    A chart with its own test hook is health-checked via `helm test`
+    instead of the port-forward+curl probe, so backed-candidate count
+    doesn't matter for it.
     """
     for doc in rendered:
         if not isinstance(doc, dict):
@@ -164,24 +162,12 @@ def _has_test_hook(rendered: list[dict[str, Any]]) -> bool:
 
 
 def smoke_target(rendered: list[dict[str, Any]]) -> list[Verdict]:
-    """Exactly one Service-backed HTTP readiness target must exist —
-    UNLESS the chart carries its own `helm.sh/hook: test` resource, in
-    which case this rule passes regardless of the backed-candidate count
-    (0, 1, or many).
+    """Exactly one Service-backed HTTP readiness target must exist, unless
+    the chart carries its own `helm.sh/hook: test` resource (then this
+    passes regardless of candidate count).
 
-    TEMPORARY migration scaffolding: the hook-annotation exemption above
-    is temporary dual-path scaffolding for the fleet-wide migration to
-    `helm test` hooks, not a permanent design — see docs/CI-CONTRACT.md's
-    own note on this migration (tracked for deletion, alongside the
-    fallback branches in cluster-smoke and composed-smoke, once every
-    onboarded pilot has adopted a hook). `smoke_candidates()` and
-    derive_smoke_target.py are left untouched by this exemption: they
-    remain the enforcement/derivation mechanism for hook-less charts.
-
-    Candidates (for hook-less charts) are containers with an httpGet
-    readinessProbe whose probe port is routed by a Service selecting the
-    workload's pods; the post-deploy curl check needs one unambiguous
-    target.
+    Temporary: this hook exemption scaffolds the fleet-wide migration to
+    `helm test` hooks and should be removed once every pilot adopts one.
     """
     if _has_test_hook(rendered):
         return []

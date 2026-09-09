@@ -4,17 +4,14 @@
 # ///
 """Fail-closed convention lint for the derived security gate (v0.6).
 
-Replaces the v0.5.x Makefile.ci contract validation: the gate derives the
-build/scan set from the consumer's committed Compose file, Dockerfiles, and
-rendered Helm chart (see derive_bom.py), and this module enforces the plan's
-conventions before any build starts. One function per rule id (rule groups
-live in lint_rules/); every finding is a verdict object:
+Derives the build/scan set from the consumer's Compose file, Dockerfiles,
+and rendered Helm chart (see derive_bom.py); one function per rule id.
+Each finding is a verdict object:
 
     {"rule_id": ..., "level": "block" | "warn", "message": ...,
      "remediation_ref": "docs/CI-CONTRACT.md#rule-<rule-id>"}
 
-Any block verdict fails the run (exit 1); warn verdicts are reported and
-never block.
+A block verdict fails the run; warn verdicts are reported but never block.
 
 Rule ids: compose-missing, compose-no-builds, matrix-cap, compose-image-tag,
 compose-healthcheck, dependency-shape, build-input-explicit,
@@ -22,20 +19,6 @@ build-context-excludes, compose-platform, bake-resolve,
 chart-missing, chart-undeclared, chart-resolve, chart-readiness,
 smoke-target, ship-set, smoke-resource-unknown, built-unscheduled,
 suppression-format, gate-job-id.
-
-Caller structure rules carried over from v0.5.x (load-bearing only):
-gate-ref-pin (the reusable-workflow ref is a full 40-hex commit SHA),
-gate-job-id (the calling job id is exactly 'security-scan', half of the
-required check context), decoy-gate-job (exactly one job may call
-the gate workflow, run or not — a second is a decoy vector against the
-callee-ref resolver's first-match parse), no-secrets-inherit +
-missing-secret-map (all four registry secrets mapped explicitly),
-unknown-input (the with: surface is
-exactly the v0.6 inputs; removed v0.5.x inputs are rejected by name), and
-unreadable-caller (fail closed on an unparseable caller).
-
-Remediation refs point at onboarding-doc anchors authored at the docs
-cutover; the anchor names are stable now.
 """
 
 from __future__ import annotations
@@ -91,17 +74,11 @@ KNOWN_INPUTS = (
 )
 REMOVED_INPUTS = ("contract_file", "require_hardened_bases", "scan_image")
 _FULL_SHA_RE = re.compile(r"@[0-9a-f]{40}$")
-# Helm vendors chart dependencies into a `charts/` subdirectory (tgz or,
-# once unpacked, a nested chart tree with its own Chart.yaml), excluded
-# from the repo-wide chart-undeclared glob so a legitimate dependency tree
-# never false-positives (e.g. a repo vendoring a template chart).
+# Helm-vendored dependency charts live here; exclude them so a legit
+# dependency tree doesn't false-positive the repo-wide chart glob.
 _VENDORED_CHART_DIR = "charts"
-# The plan job checks out this repo's own tooling into `.ci-scans/` inside
-# the consumer's $GITHUB_WORKSPACE (--consumer-root). That checkout carries
-# this repo's own test fixtures, several with intentional Chart.yaml
-# files, which the repo-wide chart-undeclared glob would otherwise
-# misattribute to the consumer (every image_only consumer would
-# false-positive on this repo's own fixtures).
+# This repo's own tooling checkout (under --consumer-root) carries test
+# fixtures with intentional Chart.yaml files; exclude them from the glob.
 _GATE_CHECKOUT_DIR = ".ci-scans"
 
 
@@ -121,11 +98,9 @@ def chart_missing(chart_path: Path) -> list[Verdict]:
 def chart_undeclared(repo_root: Path) -> list[Verdict]:
     """An image_only consumer must not carry an undeclared chart anywhere.
 
-    Repo-wide glob (not chart_path-only): an image_only caller has no
-    chart_path checked by anything downstream, so a chart living at any
-    other path in the repo would otherwise evade detection entirely
-    (an owned chart at a nonstandard path while declaring
-    image_only: true).
+    Repo-wide glob, not chart_path-only: an image_only caller has no
+    chart_path check downstream, so a chart at any other path would
+    otherwise evade detection.
     """
     found = [
         p
@@ -147,12 +122,11 @@ def chart_undeclared(repo_root: Path) -> list[Verdict]:
 
 
 def suppression_format(repo_root: Path) -> list[Verdict]:
-    """No `.trivyignore` / `.grype.yaml` suppression content — OpenVEX is
-    the only sanctioned way to dispose of a finding (a VEX statement
-    carries `status` + `justification`; a raw ignore entry carries neither).
+    """No `.trivyignore` / `.grype.yaml` suppression content — OpenVEX is the
+    only sanctioned way to dispose of a finding (it carries `status` +
+    `justification`; a raw ignore entry carries neither).
 
-    Empty/absent files pass (the gate itself defaults empty ones so Trivy/
-    Grype have a config path); any real entry blocks with a remediation
+    Empty/absent files pass; any real entry blocks with a remediation
     pointing at the OpenVEX template.
     """
     verdicts: list[Verdict] = []
@@ -204,11 +178,8 @@ def chart_resolve(
     """Resolve the rendered chart, converting a render failure into a verdict.
 
     Mirrors `bake_resolve`: `helm template` fails closed (SystemExit) when
-    a chart's dependencies were never built: missing repo/path, or
-    not vendored (the plan job runs `helm dependency build`
-    first, but a broken dependency still fails here). This
-    converts that failure into a named, remediation-linked block instead
-    of letting the SystemExit surface as a raw stack trace.
+    chart dependencies were never built. This turns that into a named,
+    remediation-linked verdict instead of a raw traceback.
     """
     try:
         return render_chart(chart_path, values), []
@@ -230,12 +201,8 @@ def _find_gate_job(jobs: dict[str, Any]) -> tuple[str, dict[str, Any]] | None:
 
 
 def lint_caller_workflow(caller_path: Path) -> list[Verdict]:
-    """Structure rules for the consumer's caller workflow file.
-
-    Carried over from v0.5.x by user decision (load-bearing only):
-    gate-ref-pin, no-secrets-inherit + missing-secret-map, unknown-input
-    (which also rejects the removed v0.5.x inputs by name), and the
-    fail-closed unreadable-caller.
+    """Structure rules for the consumer's caller workflow file (carried
+    over from v0.5.x, load-bearing).
     """
     try:
         wf = load_gha_workflow(caller_path)
@@ -257,15 +224,10 @@ def lint_caller_workflow(caller_path: Path) -> list[Verdict]:
     verdicts = []
     gate_jobs = _find_gate_jobs(jobs)
     if len(gate_jobs) > 1:
-        # A second gate-calling job — even one gated behind
-        # `if: false` and never actually run — is a decoy vector. The
-        # callee-ref resolver (reusable-security-gate.yml) takes the FIRST
-        # uses: match in the caller file; without this rule, a decoy job
-        # pinned to an older, weaker gate SHA ahead of the real one would
-        # make the real run check out lint rules, the restricted-PSS
-        # assertion, and the blocking-set evaluator from the decoy's ref
-        # while `_find_gate_job` above (first-match, same as the resolver)
-        # lints only the decoy's own, validly-pinned surface.
+        # A second gate-calling job (even if: false and never run) is a
+        # decoy vector: the callee-ref resolver takes the FIRST uses:
+        # match, so an older-pinned decoy ahead of the real job could
+        # hijack which ref runs.
         verdicts.append(
             verdict(
                 "decoy-gate-job",
@@ -356,12 +318,10 @@ def convention_verdicts(
 ) -> list[Verdict]:
     """The full fail-closed convention pipeline for one consumer checkout.
 
-    Chart rules run only for non-image_only consumers; bake resolution
-    runs only when the committed shapes are already clean, so shape
-    violations surface before bake ever executes. chart-missing/
-    chart-undeclared are verified declaration checks: image_only
-    is either backed by no chart anywhere in the repo, or a real chart
-    exists at chart_path, never a stale, unverified flag.
+    Bake resolution runs only once shape checks are already clean, so
+    shape violations surface before bake executes. chart-missing/
+    chart-undeclared verify image_only against the real chart tree, not
+    a trusted flag.
     """
     presence = compose_missing(compose_path)
     if presence:
