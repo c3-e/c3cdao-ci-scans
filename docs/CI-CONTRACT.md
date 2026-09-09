@@ -261,9 +261,12 @@ override any arg value.
 ### Rule: build-context-excludes
 
 Every build context directory needs its own `.dockerignore` containing the
-four literal lines `.env`, `*.pem`, `*.key`, `*credentials*`. Stricter
-equivalents do not satisfy the check. Remediation: append the exact four
-lines.
+four literal lines `.env`, `*.pem`, `*.key`, `*credentials*` — or, for any of
+the four, its `**/`-anchored superset (e.g. `**/.env` satisfies `.env`; `**/`
+matches zero or more directories, so it still excludes the root-level file
+too). Other stricter equivalents do not satisfy the check. Remediation:
+append the exact four lines, or their `**/`-anchored form if you want the
+same exclusion applied recursively.
 
 ### Rule: compose-platform
 

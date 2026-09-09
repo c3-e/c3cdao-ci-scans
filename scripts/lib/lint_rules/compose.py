@@ -264,14 +264,30 @@ def _build_contexts(
     return contexts
 
 
+def _dockerignore_satisfies(entry: str, lines: set[str]) -> bool:
+    """Does `lines` exclude everything `entry` excludes?
+
+    Exact match, or the same pattern recursively anchored (`**/<entry>`).
+    `**` matches zero or more directories, so `**/<entry>` matches every
+    path `<entry>` matches (root included) plus the same name at any depth
+    — a strict superset, never a narrower or unrelated pattern. This is
+    the one broadening real callers actually write (petegpt's
+    `**/.env`/`**/.env.*`, "keep every .env out of the image, not just the
+    root one") and it satisfies the rule's actual intent — the entry can
+    never enter the build context — at least as well as the literal line.
+    """
+    return entry in lines or f"**/{entry}" in lines
+
+
 def build_context_excludes(
     compose_path: Path, compose: dict[str, Any], classified: dict[str, Any]
 ) -> list[Verdict]:
     """Every build context excludes env/credential/private-key material.
 
     Each context directory needs a `.dockerignore` carrying every entry in
-    REQUIRED_DOCKERIGNORE, so `.env` files and key material can never enter
-    an image build.
+    REQUIRED_DOCKERIGNORE — or its `**/`-anchored superset, see
+    `_dockerignore_satisfies` — so `.env` files and key material can never
+    enter an image build.
     """
     verdicts = []
     for context, services in sorted(
@@ -294,7 +310,9 @@ def build_context_excludes(
                 )
             )
             continue
-        missing = [e for e in REQUIRED_DOCKERIGNORE if e not in lines]
+        missing = [
+            e for e in REQUIRED_DOCKERIGNORE if not _dockerignore_satisfies(e, lines)
+        ]
         if missing:
             verdicts.append(
                 verdict(
