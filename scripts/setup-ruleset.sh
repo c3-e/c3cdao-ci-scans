@@ -7,27 +7,39 @@ source "$ROOT/scripts/lib/common.sh"
 
 usage() {
   cat <<'EOF'
-usage: setup-ruleset.sh --config <yaml> [--enable] [--dry-run] [--diff]
+usage: setup-ruleset.sh --config <yaml> [--enable | --evaluate] [--dry-run] [--diff]
 
 Creates/updates ruleset requiring the security-scan / Security Gate check.
 Default enforcement: disabled (safe rollout).
 
+--enable: enforcement=active — the check blocks merges.
+--evaluate: enforcement=evaluate — the check still runs and reports its
+real pass/fail on every PR (and in the repo's Rule Insights dashboard),
+but never blocks the merge button. This is a supported, standing target
+state in its own right (e.g. "keep this loud but non-blocking while the
+gate is still experimental and other work needs to keep merging"), not
+just a transient step on the way to --enable. --enable and --evaluate are
+mutually exclusive; omitting both keeps/produces disabled.
+
 --diff: read-only drift check — fetch the live ruleset from GitHub and diff
 it against what this config would produce. Exit 0 when in sync, 3 on drift
 (prints a unified diff), dies if no live ruleset exists. The expected
-enforcement derives from --enable, so pass --enable with --diff when the
-ruleset is expected to be active.
+enforcement derives from --enable/--evaluate, so pass the same flag with
+--diff that matches the ruleset's intended standing state (e.g. --evaluate
+--diff to confirm a repo deliberately left in evaluate hasn't drifted).
 EOF
 }
 
 CONFIG=""
 ENABLE=0
+EVALUATE=0
 DRY_RUN=0
 DIFF=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --config) CONFIG="$2"; shift 2 ;;
     --enable) ENABLE=1; shift ;;
+    --evaluate) EVALUATE=1; shift ;;
     --dry-run) DRY_RUN=1; shift ;;
     --diff) DIFF=1; shift ;;
     -h|--help) usage; exit 0 ;;
@@ -35,6 +47,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 [[ -n "$CONFIG" ]] || { usage; exit 1; }
+[[ "$ENABLE" -eq 1 && "$EVALUATE" -eq 1 ]] && die "--enable and --evaluate are mutually exclusive"
 
 require_cmd gh
 require_cmd jq
@@ -58,6 +71,7 @@ ref_include="[\"~DEFAULT_BRANCH\"]"
 
 enforcement="disabled"
 [[ "$ENABLE" -eq 1 ]] && enforcement="active"
+[[ "$EVALUATE" -eq 1 ]] && enforcement="evaluate"
 
 # The one supported profile (unified-gate) always resolved to this single
 # check context; the profile YAML indirection was removed as dead weight.
