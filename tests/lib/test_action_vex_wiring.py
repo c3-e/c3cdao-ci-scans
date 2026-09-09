@@ -85,16 +85,12 @@ def test_trivy_step_consumes_vex_via_trivy_config_input():
     assert trivy["with"]["trivyignores"] == ".trivyignore"
 
 
-# --- job-local registry (Grype VEX product identity, F-T6-2) --------------------
+# --- job-local registry (Grype VEX product identity) -----------------------
 
 
 def test_registry_publish_step_precedes_scans_and_exports_scan_ref():
-    """Grype derives VEX product identity exclusively from repoDigests; a
-    docker-load'ed local build has none, so without the registry publish
-    every committed product PURL silently no-ops on the Grype image leg
-    (F-T6-2, petegpt canary). The step must push to the deterministic
-    localhost:5000 identity, verify the repoDigest actually exists
-    (fail-closed), and publish SCAN_REF for the scan steps."""
+    """A docker-load'ed local build has no repoDigest, which Grype's VEX
+    matching requires — this step must run before scans and publish one."""
     names = [s.get("name") for s in _steps()]
     publish_idx = names.index("Publish image to job-local registry (VEX product identity)")
     assert names.index("Load image into local daemon") < publish_idx
@@ -102,8 +98,8 @@ def test_registry_publish_step_precedes_scans_and_exports_scan_ref():
     run = _step("Publish image to job-local registry (VEX product identity)")["run"]
     assert "localhost:5000/" in run
     assert "SCAN_REF=" in run and "$GITHUB_ENV" in run
-    # Fail-closed repoDigest verification — a missing digest must fail the
-    # step, not silently degrade back to the F-T6-2 no-op.
+    # Fail-closed: a missing repoDigest must fail the step, not degrade
+    # to a silent no-op.
     assert "RepoDigests" in run and "exit 1" in run
 
 

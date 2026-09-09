@@ -1,22 +1,16 @@
 """Hardened-registry login: declared-tier scoping + fail-closed exit-status.
 
-Two things this module guards, both real bugs/gaps found by fleet survey:
+Guards two real bugs found by fleet survey:
+1. `login_retry`'s exit status was never checked, so a login that merely
+   found a credential was reported "authenticated" even if it failed,
+   defeating the fail-closed require-hardened-bases check.
+2. The action always attempted both Chainguard and Iron Bank logins even
+   for a pilot pinned to one tier. `hardened-base-registry` lets the
+   caller declare its tier so the unused registry is never attempted.
 
-1. (bug) `login_retry`'s exit status was never checked — the step
-   unconditionally printed "authenticated" and set the ok-flag whenever a
-   credential was merely *present*, regardless of whether the docker login
-   actually succeeded. That defeats the fail-closed
-   require-hardened-bases check below it.
-2. (design gap) the action always attempted both Chainguard and Iron Bank
-   logins even for a pilot pinned to exactly one hardened registry, wasting
-   retry/backoff time on a registry it never uses. `hardened-base-registry`
-   (chainguard | ironbank | both, default both) lets the caller declare its
-   actual tier so the unused registry's login is never attempted at all.
-
-Same approach as tests/lib/test_callee_ref_resolver.py: extract the real
-`run:` script from the action YAML (not a reimplementation) and execute it
-for real via subprocess, against a stub `docker` (and a no-op `sleep`, so
-the retry/backoff loop doesn't actually sleep) placed on PATH.
+Same approach as test_callee_ref_resolver.py: extracts the real `run:`
+script from the action YAML and executes it via subprocess against a
+stub `docker` and no-op `sleep` on PATH.
 """
 
 from __future__ import annotations
@@ -91,9 +85,8 @@ def _write_stub(path: Path, body: str) -> None:
 
 
 def _make_bin_dir(tmp_path: Path) -> Path:
-    """A stub `docker` (records invocations, exit code per-registry
-    configurable via env) and a no-op `sleep` (so login_retry's real
-    15/30/60s backoff never actually sleeps in the test)."""
+    """Stub `docker` (records invocations, per-registry exit code via env)
+    and a no-op `sleep` so login_retry's real backoff never sleeps."""
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     _write_stub(
@@ -175,9 +168,8 @@ def test_chainguard_tier_only_attempts_chainguard_login(tmp_path):
 
 
 def test_chainguard_tier_login_failure_fails_closed_and_is_not_reported_authenticated(tmp_path):
-    """Regression test for the exit-status bug: a failed docker login under
-    a chainguard-only tier must not be reported as authenticated, and (since
-    Iron Bank is never attempted) must fail the run closed."""
+    """Regression test for the exit-status bug: a failed login must not be
+    reported authenticated, and (Iron Bank never attempted) must fail closed."""
     result, invocations, _ = run_login_script(
         tmp_path,
         hardened_base_registry="chainguard",
@@ -268,9 +260,8 @@ def test_both_tier_total_failure_fails_closed(tmp_path):
 
 
 def test_warn_posture_still_no_false_authenticated_claim(tmp_path):
-    """With require_hardened_bases=false the run doesn't fail, but a failed
-    login must still never be reported as authenticated (the bug's exact
-    shape: ok-flag set unconditionally on credential presence)."""
+    """require_hardened_bases=false must not fail the run, but a failed login
+    must still never be reported authenticated (the bug's exact shape)."""
     result, invocations, _ = run_login_script(
         tmp_path,
         hardened_base_registry="chainguard",
@@ -284,19 +275,12 @@ def test_warn_posture_still_no_false_authenticated_claim(tmp_path):
 
 
 def test_invalid_hardened_base_registry_value_fails_closed_with_error(tmp_path):
-    """The case statement's `*)` arm (unrecognized hardened-base-registry
-    value) had zero coverage. It must fail closed with a specific
-    ::error:: message before any login is even attempted, regardless of
-    require_hardened_bases -- the case statement's own `exit 1` fires
-    ahead of the later require-hardened-bases branch, so this is
-    exercised with require_hardened_bases=false to make sure the failure
-    comes from the `*)` arm itself and not from that later fail-closed
-    check (which would also exit non-zero under require_hardened_bases=true
-    even if the `*)` arm's own exit were missing).
+    """The `*)` case arm (invalid hardened-base-registry value) had zero
+    coverage; it must fail closed with a specific error before any login
+    is attempted. Tested with require_hardened_bases=false to confirm the
+    failure comes from the `*)` arm itself, not the later fail-closed check.
 
-    Note: unlike the script's other ::error:: lines (which print to
-    stdout), this arm's echo is explicitly redirected to stderr
-    (`>&2`) in the action -- confirmed by running the real script.
+    Note: unlike other ::error:: lines, this arm's echo goes to stderr.
     """
     result, invocations, _ = run_login_script(
         tmp_path,

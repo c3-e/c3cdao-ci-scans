@@ -1,7 +1,5 @@
-# Reclaim hosted-runner disk before large image builds/loads. The backend
-# image is large (WeasyPrint + psql deps); building it, loading it into
-# Docker, and `docker save`-ing it for the artifact exhausts the hosted
-# runner's ~14 GB free disk. Reclaim ~20 GB of unused toolchains.
+# The backend image (WeasyPrint + psql deps) plus its docker save/load
+# routinely exhausts the hosted runner's ~14 GB free disk.
 name: Free disk space
 description: >-
   Remove unused hosted-runner toolchains (dotnet, ghc, android, CodeQL) and
