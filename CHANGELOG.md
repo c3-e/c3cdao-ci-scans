@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.9.1](https://github.com/c3-e/c3cdao-ci-scans/compare/v0.9.0...v0.9.1) (2026-09-11)
+
+
+### Bug Fixes
+
+* **gate:** keep publish-chart-routes-unrendered warn-only on helm fail ([ef7f0e5](https://github.com/c3-e/c3cdao-ci-scans/commit/ef7f0e5172c8b09a86df939052c110994faa878a))
+* **gate:** keep publish-chart-routes-unrendered warn-only on helm fail ([441b808](https://github.com/c3-e/c3cdao-ci-scans/commit/441b808f3c06273828ea1af7edd44ad651ff5932))
+
 ## [0.9.0](https://github.com/c3-e/c3cdao-ci-scans/compare/v0.8.0...v0.9.0) (2026-09-09)
 
 
