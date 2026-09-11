@@ -54,7 +54,9 @@ blocks when the bullet is false.
   (`build-context-excludes`); the Compose file resolves under
   `docker buildx bake --print` (`bake-resolve`).
 - The chart renders with your local values; every workload container has
-  a `readinessProbe` (`chart-readiness`); exactly one container exposes an
+  a `readinessProbe` (`chart-readiness`); every workload is selected by a
+  rendered `NetworkPolicy` (`chart-networkpolicy-missing`, warn-only for
+  now); exactly one container exposes an
   HTTP readiness target through a Service whose `targetPort` matches the
   probe port (`smoke-target`) — **or** the chart carries a
   `helm.sh/hook: test` resource, in which case cluster-smoke health-checks
@@ -586,7 +588,8 @@ Every verdict names its rule and links a remediation anchor in the
 `chart-undeclared`, `chart-resolve`, `chart-readiness`,
 `smoke-target`, `ship-set`, `smoke-resource-unknown`,
 `suppression-format`, plus the warn-only
-`built-unscheduled`. Caller-structure rules: `gate-ref-pin`,
+`built-unscheduled` and `chart-networkpolicy-missing`. Caller-structure
+rules: `gate-ref-pin`,
 `gate-job-id`, `decoy-gate-job`, `no-secrets-inherit`, `missing-secret-map`,
 `unknown-input`, `unreadable-caller`.
 

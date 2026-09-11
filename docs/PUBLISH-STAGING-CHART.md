@@ -431,6 +431,7 @@ without blocking. Everything else blocks the run.
 | [`publish-packages-write-missing`](#rule-publish-packages-write-missing) | block | `publish_images: true` is set but no `permissions:` block grants `packages: write` |
 | [`publish-permissions-both-levels`](#rule-publish-permissions-both-levels) | block | `permissions:` is declared at both the workflow level and the calling job level |
 | [`publish-chart-routes-missing`](#rule-publish-chart-routes-missing) | warn | the chart's `values.yaml` declares no non-empty `routes:` key |
+| [`publish-chart-routes-unrendered`](#rule-publish-chart-routes-unrendered) | warn | `values.yaml` declares `routes:` but no template renders an `HTTPRoute` |
 | [`unreadable-caller`](#rule-unreadable-caller) | block | the caller workflow cannot be parsed, or no job's `uses:` matches `publish-staging-chart.yml` |
 
 ### Rule: publish-ref-pin
@@ -479,6 +480,22 @@ warning rather than a block because a brand-new pilot's chart may not
 exist yet at lint time; the real, blocking enforcement of this contract
 remains the runtime `check-jsonschema` step. Fixing it before merge avoids
 discovering the gap only when the merge-time step fails.
+
+### Rule: publish-chart-routes-unrendered
+
+**Warn only** — new, incomplete convention; making it blocking today would
+fail-closed the entire fleet's next gate run (at least one real consumer
+chart currently declares `routes:` in `values.yaml` with zero `HTTPRoute`
+template). When `values.yaml` declares a non-empty `routes:` key (the same
+check `publish-chart-routes-missing` performs), the chart must also
+`helm template` to at least one rendered document with `kind: HTTPRoute`
+— declaring routes in `values.yaml` without ever rendering an `HTTPRoute`
+leaves the chart unreachable via the umbrella's real Gateway routing
+despite passing the routes-declared check. Remediation: add an
+`HTTPRoute` template (chart-owned, per pilot — the umbrella's own
+`templates/` only creates the shared `Gateway` object). Follow-up: promote
+to block once the fleet has closed this gap (tracked separately; not
+decided by this rule's introduction).
 
 ### Rule: unreadable-caller
 

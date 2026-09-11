@@ -21,6 +21,7 @@ sys.path.insert(0, str(REPO_ROOT / "scripts" / "lib"))
 
 from lint_caller_publish import (  # noqa: E402
     chart_routes_missing,
+    chart_routes_unrendered,
     lint_caller_workflow,
 )
 
@@ -135,6 +136,78 @@ def test_routes_missing_file_warns_not_blocks(tmp_path):
     verdicts = chart_routes_missing(tmp_path / "does-not-exist" / "values.yaml")
     assert len(verdicts) == 1
     assert verdicts[0]["level"] == "warn"
+
+
+# --- publish-chart-routes-unrendered (warn) ---------------------------------
+
+
+def _write_chart(tmp_path: Path, values: dict, templates: dict[str, str]) -> Path:
+    """A minimal renderable helm chart: Chart.yaml + values.yaml + the
+    given {filename: contents} templates."""
+    chart_dir = tmp_path / "chart"
+    (chart_dir / "templates").mkdir(parents=True)
+    (chart_dir / "Chart.yaml").write_text(
+        "apiVersion: v2\nname: fixture-chart\nversion: 0.1.0\n"
+    )
+    (chart_dir / "values.yaml").write_text(yaml.safe_dump(values))
+    for name, contents in templates.items():
+        (chart_dir / "templates" / name).write_text(contents)
+    return chart_dir
+
+
+_HTTPROUTE_TEMPLATE = """\
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: web
+spec:
+  rules:
+    - matches:
+        - path: {type: PathPrefix, value: /}
+"""
+
+_DEPLOYMENT_TEMPLATE = """\
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+spec:
+  selector: {matchLabels: {app: web}}
+  template:
+    metadata: {labels: {app: web}}
+    spec: {containers: [{name: web, image: "app:1"}]}
+"""
+
+
+def test_routes_unrendered_passes_when_httproute_renders(tmp_path):
+    chart_path = _write_chart(
+        tmp_path,
+        {"routes": [{"path": "/", "service": "web"}]},
+        {"httproute.yaml": _HTTPROUTE_TEMPLATE, "deployment.yaml": _DEPLOYMENT_TEMPLATE},
+    )
+    assert chart_routes_unrendered(chart_path, chart_path / "values.yaml") == []
+
+
+def test_routes_unrendered_flags_no_httproute_template(tmp_path):
+    chart_path = _write_chart(
+        tmp_path,
+        {"routes": [{"path": "/", "service": "web"}]},
+        {"deployment.yaml": _DEPLOYMENT_TEMPLATE},
+    )
+    verdicts = chart_routes_unrendered(chart_path, chart_path / "values.yaml")
+    assert len(verdicts) == 1
+    v = verdicts[0]
+    assert v["rule_id"] == "publish-chart-routes-unrendered"
+    assert v["level"] == "warn"
+
+
+def test_routes_unrendered_silent_when_no_routes_declared(tmp_path):
+    chart_path = _write_chart(
+        tmp_path,
+        {"image": {"repository": "x", "tag": "1"}},
+        {"deployment.yaml": _DEPLOYMENT_TEMPLATE},
+    )
+    assert chart_routes_unrendered(chart_path, chart_path / "values.yaml") == []
 
 
 def test_routes_check_is_warn_never_blocks_the_cli(tmp_path, capsys):
