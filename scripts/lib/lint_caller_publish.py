@@ -226,7 +226,21 @@ def chart_routes_unrendered(chart_path: Path, values_path: Path) -> list[Verdict
         # Chart doesn't fully exist yet (e.g. brand-new pilot mid-onboarding)
         # -- chart-missing/chart-resolve territory, not this rule's job.
         return []
-    rendered = render_chart(chart_path)
+    try:
+        rendered = render_chart(chart_path)
+    except SystemExit as e:
+        # render_chart fail-closes; this rule is warn-only. Charts that
+        # require values-local (external DB) must not turn a warn check
+        # into a Plan failure.
+        return [
+            _v(
+                "publish-chart-routes-unrendered",
+                f"'{chart_path}' did not render under default values.yaml "
+                f"({e}); cannot verify an HTTPRoute template. This check "
+                "stays warn-only",
+                level="warn",
+            )
+        ]
     if any(
         isinstance(doc, dict) and doc.get("kind") == "HTTPRoute" for doc in rendered
     ):
