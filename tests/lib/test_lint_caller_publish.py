@@ -201,6 +201,20 @@ def test_routes_unrendered_flags_no_httproute_template(tmp_path):
     assert v["level"] == "warn"
 
 
+def test_routes_unrendered_warns_when_helm_template_fails(tmp_path):
+    """A chart that fail()s under default values (external-DB charts)
+    must not SystemExit out of this warn-only rule."""
+    chart_path = _write_chart(
+        tmp_path,
+        {"routes": [{"path": "/", "service": "web"}]},
+        {"secret.yaml": "{{ fail \"Database required\" }}\n"},
+    )
+    verdicts = chart_routes_unrendered(chart_path, chart_path / "values.yaml")
+    assert len(verdicts) == 1
+    assert verdicts[0]["rule_id"] == "publish-chart-routes-unrendered"
+    assert verdicts[0]["level"] == "warn"
+
+
 def test_routes_unrendered_silent_when_no_routes_declared(tmp_path):
     chart_path = _write_chart(
         tmp_path,
