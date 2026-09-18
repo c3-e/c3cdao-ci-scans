@@ -113,3 +113,14 @@ def test_kind_load_drops_host_image_after_each_load():
     assert run.index("docker pull") < run.index("kind load docker-image")
     assert run.index("kind load docker-image") < run.index("docker rmi")
 
+
+
+def test_health_check_probes_installed_release_not_bare_subchart():
+    """Umbrella overlays (petegpt fullnameOverride + service.port: 80) do
+    not apply when templating charts/${name} alone. apps#33 solo-smoke
+    35385780952 port-forwarded svc/umbrella-ci-petegpt:8080 (chart
+    defaults) against the installed Service petegpt:80 and got 000000.
+    """
+    text = str(_step("health").get("run", ""))
+    assert "helm get manifest" in text
+    assert 'helm template umbrella-ci "charts/${name}"' not in text

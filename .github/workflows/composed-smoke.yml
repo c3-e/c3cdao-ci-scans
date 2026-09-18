@@ -552,18 +552,31 @@ jobs:
             fi
             chart_ref="$(jq -r '.chart_ref' <<<"$pilot")"
             echo "=== health-checking pilot: ${name} ==="
-            if ! helm template umbrella-ci "charts/${name}" \
-              -n "${NAMESPACE}" > "/tmp/rendered-${name}.yaml" 2>/tmp/render-err.txt; then
-              echo "::error::${name}: helm template failed for smoke-target derivation"
+            # Use the INSTALLED release, not a bare `helm template charts/${name}`.
+            # Umbrella overlays (fullnameOverride, service.port) do not apply
+            # to a subchart template, so probe_targets would port-forward a
+            # Service/port that was never installed (petegpt solo 35385780952:
+            # svc/umbrella-ci-petegpt:8080 vs installed petegpt:80).
+            if ! helm get manifest umbrella-ci -n "${NAMESPACE}" \
+              > "/tmp/rendered-${name}.yaml" 2>/tmp/render-err.txt; then
+              echo "::error::${name}: helm get manifest failed for smoke-target derivation"
               cat /tmp/render-err.txt
               printf '%s\t%s\tFAIL (render)\tn/a\n' "$name" "$chart_ref" >> /tmp/pilot-results.tsv
               fail_any=1
               continue
             fi
             if ! uv run --with pyyaml python3 /tmp/probe_targets.py "/tmp/rendered-${name}.yaml" \
+              | jq -c --arg n "$name" 'select(.service | contains($n))' \
               > "/tmp/targets-${name}.jsonl" 2>/tmp/derive-err.txt; then
               echo "::error::${name}: smoke-target derivation failed"
               cat /tmp/derive-err.txt
+              printf '%s\t%s\tFAIL (no target)\tn/a\n' "$name" "$chart_ref" >> /tmp/pilot-results.tsv
+              fail_any=1
+              continue
+            fi
+            if [ ! -s "/tmp/targets-${name}.jsonl" ]; then
+              echo "::error::${name}: no installed Service matching this pilot"
+              cat /tmp/derive-err.txt || true
               printf '%s\t%s\tFAIL (no target)\tn/a\n' "$name" "$chart_ref" >> /tmp/pilot-results.tsv
               fail_any=1
               continue
