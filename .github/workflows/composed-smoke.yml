@@ -219,7 +219,28 @@ jobs:
       # sourced from a registry pull first instead of a same-run build.
       # GHCR auth was already established above (covers both charts-staging
       # and images-staging, the same private registry host).
-      - name: Pull every declared image ref
+      # ubuntu-latest is ~14 GB free after tool caches. Seven-pilot
+      # composed-smoke (apps#33) filled both host docker and kind's
+      # containerd (ENOSPC extracting data-science/backend, runs
+      # 34864047286 / 35371813764). Drop unused runner SDKs before
+      # kind exists, then pull+load+rmi one ref at a time so host
+      # never holds the full set while kind accumulates it.
+      - name: Free runner disk
+        run: |
+          set -euo pipefail
+          df -h
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /opt/hostedtoolcache/CodeQL /usr/local/share/powershell \
+            /usr/share/swift || true
+          sudo docker system prune -af
+          df -h
+
+      - name: Create kind cluster
+        uses: helm/kind-action@ef37e7f390d99f746eb8b610417061a60e82a6cc # v1.14.0
+        with:
+          cluster_name: umbrella-ci
+
+      - name: Pull, load into kind, drop host copy
         id: pullimages
         run: |
           set -euo pipefail
@@ -238,22 +259,14 @@ jobs:
               echo "pulling ${ref}"
               docker pull "$ref"
               echo "$ref" >> /tmp/pulled-tags.txt
+              kind load docker-image "${ref}" --name umbrella-ci \
+                || { echo "::error::kind load failed for ${ref}"; exit 1; }
+              docker rmi "${ref}" \
+                || echo "::warning::could not rmi ${ref} after kind load"
+              df -h /
             done
           done < /tmp/pilots.jsonl
           echo "pulled $(wc -l < /tmp/pulled-tags.txt | tr -d ' ') image ref(s)"
-
-      - name: Create kind cluster
-        uses: helm/kind-action@ef37e7f390d99f746eb8b610417061a60e82a6cc # v1.14.0
-        with:
-          cluster_name: umbrella-ci
-
-      - name: Load pulled images into kind
-        run: |
-          set -euo pipefail
-          while IFS= read -r ref; do
-            kind load docker-image "${ref}" --name umbrella-ci \
-              || { echo "::error::kind load failed for ${ref}"; exit 1; }
-          done < /tmp/pulled-tags.txt
 
       # Same provision_module() logic as reusable-security-gate.yml's own
       # cluster-smoke step (readiness-gated BEFORE any helm install, same
@@ -405,7 +418,15 @@ jobs:
           : > /tmp/nohook-pilots.txt
           while IFS= read -r pilot; do
             name="$(jq -r '.name' <<<"$pilot")"
-            helm template umbrella-ci "charts/${name}" -n "${NAMESPACE}" > "/tmp/rendered-${name}.yaml"
+            # Engine wrappers declare fullstack-template in Chart.yaml but
+            # helm pull --untar of the GHCR OCI package omits the nested
+            # tgz. helm template then fail-closes before yq can see
+            # helm.sh/hook: test in the wrapper's own templates/. Strip
+            # .dependencies on a copy so we still render wrapper hooks.
+            render_src="$(mktemp -d)"
+            cp -a "charts/${name}/." "${render_src}/"
+            yq -i 'del(.dependencies)' "${render_src}/Chart.yaml"
+            helm template umbrella-ci "${render_src}" -n "${NAMESPACE}" > "/tmp/rendered-${name}.yaml"
             # Real YAML-aware parse, not a text grep — mirrors
             # reusable-security-gate.yml's own hook-detect step (see its
             # comment for the full rationale: quoted annotation keys
@@ -531,18 +552,31 @@ jobs:
             fi
             chart_ref="$(jq -r '.chart_ref' <<<"$pilot")"
             echo "=== health-checking pilot: ${name} ==="
-            if ! helm template umbrella-ci "charts/${name}" \
-              -n "${NAMESPACE}" > "/tmp/rendered-${name}.yaml" 2>/tmp/render-err.txt; then
-              echo "::error::${name}: helm template failed for smoke-target derivation"
+            # Use the INSTALLED release, not a bare `helm template charts/${name}`.
+            # Umbrella overlays (fullnameOverride, service.port) do not apply
+            # to a subchart template, so probe_targets would port-forward a
+            # Service/port that was never installed (petegpt solo 35385780952:
+            # svc/umbrella-ci-petegpt:8080 vs installed petegpt:80).
+            if ! helm get manifest umbrella-ci -n "${NAMESPACE}" \
+              > "/tmp/rendered-${name}.yaml" 2>/tmp/render-err.txt; then
+              echo "::error::${name}: helm get manifest failed for smoke-target derivation"
               cat /tmp/render-err.txt
               printf '%s\t%s\tFAIL (render)\tn/a\n' "$name" "$chart_ref" >> /tmp/pilot-results.tsv
               fail_any=1
               continue
             fi
             if ! uv run --with pyyaml python3 /tmp/probe_targets.py "/tmp/rendered-${name}.yaml" \
+              | jq -c --arg n "$name" 'select(.service | contains($n))' \
               > "/tmp/targets-${name}.jsonl" 2>/tmp/derive-err.txt; then
               echo "::error::${name}: smoke-target derivation failed"
               cat /tmp/derive-err.txt
+              printf '%s\t%s\tFAIL (no target)\tn/a\n' "$name" "$chart_ref" >> /tmp/pilot-results.tsv
+              fail_any=1
+              continue
+            fi
+            if [ ! -s "/tmp/targets-${name}.jsonl" ]; then
+              echo "::error::${name}: no installed Service matching this pilot"
+              cat /tmp/derive-err.txt || true
               printf '%s\t%s\tFAIL (no target)\tn/a\n' "$name" "$chart_ref" >> /tmp/pilot-results.tsv
               fail_any=1
               continue

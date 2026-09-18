@@ -87,3 +87,40 @@ def test_nohook_per_target_loop_unchanged_markers_present():
     assert "derive_smoke_target" not in text  # composed-smoke calls smoke_candidates directly
     assert "smoke_candidates" in text
     assert "port-forward" in text
+
+def _pull_load_step() -> dict:
+    return next(s for s in _steps() if s.get("id") == "pullimages")
+
+
+def test_free_runner_disk_before_kind_create():
+    names = [s.get("name") for s in _steps()]
+    assert "Free runner disk" in names
+    assert "Create kind cluster" in names
+    assert names.index("Free runner disk") < names.index("Create kind cluster")
+    assert names.index("Create kind cluster") < names.index(
+        "Pull, load into kind, drop host copy"
+    )
+
+
+def test_kind_load_drops_host_image_after_each_load():
+    """Host docker and kind both hold every image until rmi. On a
+    7-pilot umbrella that filled ubuntu-latest (ENOSPC during docker
+    save of data-science/backend, apps#33 run 34864047286)."""
+    run = str(_pull_load_step().get("run", ""))
+    assert "docker pull" in run
+    assert "kind load docker-image" in run
+    assert "docker rmi" in run
+    assert run.index("docker pull") < run.index("kind load docker-image")
+    assert run.index("kind load docker-image") < run.index("docker rmi")
+
+
+
+def test_health_check_probes_installed_release_not_bare_subchart():
+    """Umbrella overlays (petegpt fullnameOverride + service.port: 80) do
+    not apply when templating charts/${name} alone. apps#33 solo-smoke
+    35385780952 port-forwarded svc/umbrella-ci-petegpt:8080 (chart
+    defaults) against the installed Service petegpt:80 and got 000000.
+    """
+    text = str(_step("health").get("run", ""))
+    assert "helm get manifest" in text
+    assert 'helm template umbrella-ci "charts/${name}"' not in text
