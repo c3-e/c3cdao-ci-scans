@@ -418,7 +418,15 @@ jobs:
           : > /tmp/nohook-pilots.txt
           while IFS= read -r pilot; do
             name="$(jq -r '.name' <<<"$pilot")"
-            helm template umbrella-ci "charts/${name}" -n "${NAMESPACE}" > "/tmp/rendered-${name}.yaml"
+            # Engine wrappers declare fullstack-template in Chart.yaml but
+            # helm pull --untar of the GHCR OCI package omits the nested
+            # tgz. helm template then fail-closes before yq can see
+            # helm.sh/hook: test in the wrapper's own templates/. Strip
+            # .dependencies on a copy so we still render wrapper hooks.
+            render_src="$(mktemp -d)"
+            cp -a "charts/${name}/." "${render_src}/"
+            yq -i 'del(.dependencies)' "${render_src}/Chart.yaml"
+            helm template umbrella-ci "${render_src}" -n "${NAMESPACE}" > "/tmp/rendered-${name}.yaml"
             # Real YAML-aware parse, not a text grep — mirrors
             # reusable-security-gate.yml's own hook-detect step (see its
             # comment for the full rationale: quoted annotation keys

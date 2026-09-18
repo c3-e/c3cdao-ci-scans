@@ -129,3 +129,24 @@ def test_mixed_hook_and_hookless_pilots_partition_independently(tmp_path):
     assert result.returncode == 0, result.stderr
     assert _lines("/tmp/hook-pilots.txt") == ["pilot-e"]
     assert _lines("/tmp/nohook-pilots.txt") == ["pilot-f"]
+
+
+def test_wrapper_missing_engine_dep_still_partitions(tmp_path):
+    """OCI engine wrappers declare fullstack-template in Chart.yaml but
+    helm pull --untar often omits the nested tgz. helm template then
+    exits before yq can see helm.sh/hook: test in the wrapper templates.
+    """
+    _make_chart(tmp_path, "copa", "helm.sh/hook: test")
+    chart_yaml = tmp_path / "charts" / "copa" / "Chart.yaml"
+    chart_yaml.write_text(
+        "apiVersion: v2\n"
+        "name: copa\n"
+        "version: 0.1.0\n"
+        "dependencies:\n"
+        "  - name: fullstack-template\n"
+        "    version: 0.2.2\n"
+        "    repository: \"file://../fullstack-template\"\n"
+    )
+    result = _run(tmp_path, ["copa"])
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert _lines("/tmp/hook-pilots.txt") == ["copa"]
