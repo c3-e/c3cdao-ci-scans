@@ -38,6 +38,10 @@ V06_SECRETS = {
     "IRONBANK_TOKEN",
     "IRONBANK_USERNAME",
 }
+# The `harbor` tier (Chainguard images mirrored into a Harbor project) takes
+# its own credential pair. Optional: a caller on any other tier maps only the
+# four above, and lint_caller's REQUIRED_SECRETS is unchanged.
+HARBOR_SECRETS = {"HARBOR_TOKEN", "HARBOR_USERNAME"}
 REMOVED_INPUTS = (
     "builder_image",
     "cluster_name",
@@ -61,9 +65,11 @@ def test_workflow_call_inputs_are_exactly_the_v06_set():
     assert set(call["inputs"]) == V06_INPUTS
 
 
-def test_workflow_call_secrets_are_exactly_the_four():
+def test_workflow_call_secrets_are_the_four_plus_optional_harbor():
     call = _workflow()[True]["workflow_call"]
-    assert set(call["secrets"]) == V06_SECRETS
+    assert set(call["secrets"]) == V06_SECRETS | HARBOR_SECRETS
+    for name in HARBOR_SECRETS:
+        assert call["secrets"][name].get("required") is False, name
 
 
 def test_no_job_references_a_removed_input():

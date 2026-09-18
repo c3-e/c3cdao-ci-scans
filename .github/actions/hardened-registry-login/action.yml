@@ -2,8 +2,9 @@
 # never specialize this action per build-matrix leg.
 name: Login to hardened base registries
 description: >-
-  Docker-login to Chainguard (cgr.dev) and/or Iron Bank, scoped to the
-  hardened-base-registry tier (chainguard | ironbank | both), when their
+  Docker-login to Chainguard (cgr.dev), Iron Bank and/or a Harbor mirror of
+  Chainguard images, scoped to the hardened-base-registry tier
+  (chainguard | ironbank | harbor | both), when their
   credential pairs are present (with retry; a failed login is never reported
   as authenticated), resolve the effective builder/runtime base images (Iron
   Bank failover only when CGR is absent and Iron Bank present), and fail or
@@ -30,8 +31,20 @@ inputs:
   ironbank-registry:
     description: "Iron Bank registry host (inputs.ironbank_registry)."
     required: true
+  harbor-token:
+    description: "Harbor token / CLI secret (secrets.HARBOR_TOKEN); empty when unset. For a caller whose Dockerfiles pin Chainguard images MIRRORED into a Harbor project rather than cgr.dev."
+    required: false
+    default: ""
+  harbor-username:
+    description: "Harbor username (secrets.HARBOR_USERNAME); empty when unset."
+    required: false
+    default: ""
+  harbor-registry:
+    description: "Harbor registry host (inputs.harbor_registry)."
+    required: false
+    default: "registry.gamewarden.io"
   hardened-base-registry:
-    description: "Caller-declared hardened-base tier (inputs.hardened_base_registry): 'chainguard' attempts only the Chainguard login, 'ironbank' attempts only Iron Bank, 'both' (default) attempts both, matching prior behavior."
+    description: "Caller-declared hardened-base tier (inputs.hardened_base_registry): 'chainguard' attempts only the Chainguard login, 'ironbank' attempts only Iron Bank, 'harbor' attempts only the Harbor mirror of Chainguard images, 'both' (default) attempts Chainguard and Iron Bank, matching prior behavior."
     required: false
     default: "both"
   builder-image:
@@ -70,6 +83,9 @@ runs:
         IRONBANK_TOKEN: ${{ inputs.ironbank-token }}
         IRONBANK_USERNAME: ${{ inputs.ironbank-username }}
         IRONBANK_REGISTRY: ${{ inputs.ironbank-registry }}
+        HARBOR_TOKEN: ${{ inputs.harbor-token }}
+        HARBOR_USERNAME: ${{ inputs.harbor-username }}
+        HARBOR_REGISTRY: ${{ inputs.harbor-registry }}
         BUILDER_IMAGE_IN: ${{ inputs.builder-image }}
         RUNTIME_IMAGE_IN: ${{ inputs.runtime-image }}
         IB_BUILDER_IMAGE: ${{ inputs.ironbank-builder-image }}
@@ -88,15 +104,30 @@ runs:
         }
         builder="$BUILDER_IMAGE_IN"
         runtime="$RUNTIME_IMAGE_IN"
-        cgr_ok=0; ib_ok=0
+        cgr_ok=0; ib_ok=0; hb_ok=0
         # Skip login_retry for a registry the caller didn't declare (avoids rate-limit risk).
-        attempt_cgr=0; attempt_ib=0
+        attempt_cgr=0; attempt_ib=0; attempt_hb=0
         case "$HARDENED_BASE_REGISTRY" in
           chainguard) attempt_cgr=1 ;;
           ironbank) attempt_ib=1 ;;
+          harbor) attempt_hb=1 ;;
           both) attempt_cgr=1; attempt_ib=1 ;;
-          *) echo "::error::hardened-base-registry must be 'chainguard', 'ironbank', or 'both' (got '${HARDENED_BASE_REGISTRY}')" >&2; exit 1 ;;
+          *) echo "::error::hardened-base-registry must be 'chainguard', 'ironbank', 'harbor', or 'both' (got '${HARDENED_BASE_REGISTRY}')" >&2; exit 1 ;;
         esac
+        # Harbor is a MIRROR of Chainguard images (the psp7 pattern: cgr.dev images
+        # copied by digest into <harbor>/<project>/psp7-chainguard/*, so the
+        # Dockerfiles pin the mirror and never cgr.dev). It is its own tier
+        # because its credential is neither Chainguard's nor Iron Bank's, and it
+        # takes part in no failover: the consumer Dockerfile already names the
+        # mirror, so there is no base to swap.
+        if [ "$attempt_hb" = 1 ] && [ -n "${HARBOR_TOKEN:-}" ]; then
+          if login_retry "$HARBOR_REGISTRY" "$HARBOR_USERNAME" "$HARBOR_TOKEN"; then
+            echo "Hardened bases: Harbor mirror of Chainguard (${HARBOR_REGISTRY}) authenticated"
+            hb_ok=1
+          else
+            echo "::error::Harbor (${HARBOR_REGISTRY}) login failed"
+          fi
+        fi
         if [ "$attempt_cgr" = 1 ] && [ -n "${CGR_PULL_TOKEN:-}" ]; then
           if login_retry cgr.dev "$CGR_PULL_USERNAME" "$CGR_PULL_TOKEN"; then
             echo "Hardened bases: Chainguard (cgr.dev) authenticated"
@@ -120,10 +151,11 @@ runs:
           [ -n "$IB_RUNTIME_IMAGE" ] && runtime="$IB_RUNTIME_IMAGE"
           echo "::notice::CGR_PULL_TOKEN not configured — using Iron Bank (${IRONBANK_REGISTRY}) for primary bases"
         fi
-        if [ "$cgr_ok" = 0 ] && [ "$ib_ok" = 0 ]; then
+        if [ "$cgr_ok" = 0 ] && [ "$ib_ok" = 0 ] && [ "$hb_ok" = 0 ]; then
           case "$HARDENED_BASE_REGISTRY" in
             chainguard) hint="add CGR_PULL_TOKEN/CGR_PULL_USERNAME (Chainguard)" ;;
             ironbank) hint="add IRONBANK_TOKEN/IRONBANK_USERNAME (Iron Bank)" ;;
+            harbor) hint="add HARBOR_TOKEN/HARBOR_USERNAME (the Harbor mirror of Chainguard images)" ;;
             *) hint="add CGR_PULL_TOKEN/CGR_PULL_USERNAME (Chainguard) and/or IRONBANK_TOKEN/IRONBANK_USERNAME (Iron Bank)" ;;
           esac
           if [ "$REQUIRE_HARDENED_BASES" = 'true' ]; then
