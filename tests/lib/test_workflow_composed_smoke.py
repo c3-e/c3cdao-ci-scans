@@ -87,3 +87,17 @@ def test_nohook_per_target_loop_unchanged_markers_present():
     assert "derive_smoke_target" not in text  # composed-smoke calls smoke_candidates directly
     assert "smoke_candidates" in text
     assert "port-forward" in text
+
+def _load_images_step() -> dict:
+    return next(s for s in _steps() if s.get("name") == "Load pulled images into kind")
+
+
+def test_kind_load_drops_host_image_after_each_load():
+    """Host docker and kind both hold every image until rmi. On a
+    7-pilot umbrella that filled ubuntu-latest (ENOSPC during docker
+    save of data-science/backend, apps#33 run 34864047286)."""
+    run = str(_load_images_step().get("run", ""))
+    assert "kind load docker-image" in run
+    assert "docker rmi" in run
+    assert run.index("kind load docker-image") < run.index("docker rmi")
+

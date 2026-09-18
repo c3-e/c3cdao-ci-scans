@@ -253,6 +253,10 @@ jobs:
           while IFS= read -r ref; do
             kind load docker-image "${ref}" --name umbrella-ci \
               || { echo "::error::kind load failed for ${ref}"; exit 1; }
+            # Host copy is now inside kind. Drop it so later `docker save`
+            # (kind load) does not fill ubuntu-latest (apps#33 ENOSPC on
+            # data-science/backend, run 34864047286, 30 MB free).
+            docker rmi "${ref}"               || echo "::warning::could not rmi ${ref} after kind load"
           done < /tmp/pulled-tags.txt
 
       # Same provision_module() logic as reusable-security-gate.yml's own
