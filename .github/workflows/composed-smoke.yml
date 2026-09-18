@@ -219,7 +219,28 @@ jobs:
       # sourced from a registry pull first instead of a same-run build.
       # GHCR auth was already established above (covers both charts-staging
       # and images-staging, the same private registry host).
-      - name: Pull every declared image ref
+      # ubuntu-latest is ~14 GB free after tool caches. Seven-pilot
+      # composed-smoke (apps#33) filled both host docker and kind's
+      # containerd (ENOSPC extracting data-science/backend, runs
+      # 34864047286 / 35371813764). Drop unused runner SDKs before
+      # kind exists, then pull+load+rmi one ref at a time so host
+      # never holds the full set while kind accumulates it.
+      - name: Free runner disk
+        run: |
+          set -euo pipefail
+          df -h
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /opt/hostedtoolcache/CodeQL /usr/local/share/powershell \
+            /usr/share/swift || true
+          sudo docker system prune -af
+          df -h
+
+      - name: Create kind cluster
+        uses: helm/kind-action@ef37e7f390d99f746eb8b610417061a60e82a6cc # v1.14.0
+        with:
+          cluster_name: umbrella-ci
+
+      - name: Pull, load into kind, drop host copy
         id: pullimages
         run: |
           set -euo pipefail
@@ -238,26 +259,14 @@ jobs:
               echo "pulling ${ref}"
               docker pull "$ref"
               echo "$ref" >> /tmp/pulled-tags.txt
+              kind load docker-image "${ref}" --name umbrella-ci \
+                || { echo "::error::kind load failed for ${ref}"; exit 1; }
+              docker rmi "${ref}" \
+                || echo "::warning::could not rmi ${ref} after kind load"
+              df -h /
             done
           done < /tmp/pilots.jsonl
           echo "pulled $(wc -l < /tmp/pulled-tags.txt | tr -d ' ') image ref(s)"
-
-      - name: Create kind cluster
-        uses: helm/kind-action@ef37e7f390d99f746eb8b610417061a60e82a6cc # v1.14.0
-        with:
-          cluster_name: umbrella-ci
-
-      - name: Load pulled images into kind
-        run: |
-          set -euo pipefail
-          while IFS= read -r ref; do
-            kind load docker-image "${ref}" --name umbrella-ci \
-              || { echo "::error::kind load failed for ${ref}"; exit 1; }
-            # Host copy is now inside kind. Drop it so later `docker save`
-            # (kind load) does not fill ubuntu-latest (apps#33 ENOSPC on
-            # data-science/backend, run 34864047286, 30 MB free).
-            docker rmi "${ref}"               || echo "::warning::could not rmi ${ref} after kind load"
-          done < /tmp/pulled-tags.txt
 
       # Same provision_module() logic as reusable-security-gate.yml's own
       # cluster-smoke step (readiness-gated BEFORE any helm install, same
