@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.0](https://github.com/c3-e/c3cdao-ci-scans/compare/v0.9.1...v0.10.0) (2026-09-18)
+
+
+### Features
+
+* harbor hardened-base tier for Chainguard images mirrored into Harbor ([#73](https://github.com/c3-e/c3cdao-ci-scans/issues/73)) ([ed6e6d3](https://github.com/c3-e/c3cdao-ci-scans/commit/ed6e6d3c1a88345783ce34e3a7ec8d03fb8bdbd3))
+
 ## [0.9.1](https://github.com/c3-e/c3cdao-ci-scans/compare/v0.9.0...v0.9.1) (2026-09-11)
 
 
