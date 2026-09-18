@@ -96,6 +96,7 @@ def _make_bin_dir(tmp_path: Path) -> Path:
         'if [ "$1" = "login" ]; then\n'
         '  case "$2" in\n'
         '    cgr.dev) exit "${CGR_LOGIN_EXIT:-0}" ;;\n'
+    '    registry.gamewarden.io) exit "${HB_LOGIN_EXIT:-0}" ;;\n'
         f'    {IRONBANK_REGISTRY}) exit "${{IB_LOGIN_EXIT:-0}}" ;;\n'
         "  esac\n"
         "fi\n"
@@ -111,8 +112,10 @@ def run_login_script(
     hardened_base_registry: str = "both",
     cgr_token: str = "",
     ib_token: str = "",
+    hb_token: str = "",
     cgr_login_exit: int = 0,
     ib_login_exit: int = 0,
+    hb_login_exit: int = 0,
     require_hardened_bases: str = "true",
 ) -> tuple[subprocess.CompletedProcess, list[str], str]:
     bin_dir = _make_bin_dir(tmp_path)
@@ -127,6 +130,10 @@ def run_login_script(
         "GITHUB_OUTPUT": str(gh_output),
         "CGR_LOGIN_EXIT": str(cgr_login_exit),
         "IB_LOGIN_EXIT": str(ib_login_exit),
+        "HB_LOGIN_EXIT": str(hb_login_exit),
+        "HARBOR_TOKEN": hb_token,
+        "HARBOR_USERNAME": "hb-user",
+        "HARBOR_REGISTRY": "registry.gamewarden.io",
         "CGR_PULL_TOKEN": cgr_token,
         "CGR_PULL_USERNAME": "cgr-user",
         "IRONBANK_TOKEN": ib_token,
@@ -294,7 +301,49 @@ def test_invalid_hardened_base_registry_value_fails_closed_with_error(tmp_path):
     )
     assert result.returncode != 0, "an invalid hardened-base-registry value must fail closed"
     assert (
-        "::error::hardened-base-registry must be 'chainguard', 'ironbank', or 'both'"
+        "::error::hardened-base-registry must be 'chainguard', 'ironbank', 'harbor', or 'both'"
         in result.stderr
     ), result.stdout + result.stderr
     assert "garbage" in result.stderr
+
+
+def test_harbor_tier_attempts_only_harbor_and_authenticates(tmp_path):
+    """`harbor` is the tier for a caller whose Dockerfiles pin Chainguard
+    images mirrored into a Harbor project: only the Harbor login runs, a
+    success counts as a hardened-registry login, and the primary bases are
+    left exactly as the consumer specified (no failover exists for it)."""
+    result, invocations, gh_output = run_login_script(
+        tmp_path,
+        hardened_base_registry="harbor",
+        cgr_token="cgr-tok",
+        ib_token="ib-tok",
+        hb_token="hb-tok",
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert invocations == ["login registry.gamewarden.io -u hb-user --password-stdin"], invocations
+    assert "Harbor mirror of Chainguard (registry.gamewarden.io) authenticated" in result.stdout
+    assert "builder_image=cgr.dev/chainguard/python:latest-dev" in gh_output
+    assert "runtime_image=cgr.dev/chainguard/python:latest" in gh_output
+
+
+def test_harbor_tier_without_credentials_fails_closed(tmp_path):
+    result, invocations, _ = run_login_script(
+        tmp_path,
+        hardened_base_registry="harbor",
+        cgr_token="cgr-tok",
+        hb_token="",
+    )
+    assert invocations == [], invocations
+    assert result.returncode != 0
+    assert "add HARBOR_TOKEN/HARBOR_USERNAME" in result.stdout + result.stderr
+
+
+def test_harbor_tier_login_failure_is_not_authenticated(tmp_path):
+    result, invocations, _ = run_login_script(
+        tmp_path,
+        hardened_base_registry="harbor",
+        hb_token="hb-tok",
+        hb_login_exit=1,
+    )
+    assert result.returncode != 0
+    assert "::error::Harbor (registry.gamewarden.io) login failed" in result.stdout + result.stderr
